@@ -41,6 +41,7 @@ import { AgentAccount, AgentAccountId, AgentAccounts } from './agent-account'
 import { ExternalSession, ExternalSessionRef } from './session-import'
 import { ProjectStarIdentity, ProjectStarResult, ProjectStarStatus } from './project-star'
 import { Bookmark, BookmarkFields, BookmarkImport, MAX_BOOKMARKS } from './bookmarks'
+import { AgentSmokeTestResult } from './agent-smoke-test'
 
 // Bump only for breaking changes; additive optional fields keep the version.
 export const PROTOCOL_VERSION = 18
@@ -269,6 +270,7 @@ export const rpcMethods = {
   'accounts.setAutoSwitch': { params: z.object({ autoSwitch: z.boolean() }), result: AgentAccounts },
   // What of git and the agent CLIs core finds on its path; the last answer, unless asked to look again.
   'system.environment': { params: z.object({ refresh: z.boolean().optional() }), result: Environment },
+  'agent.smokeTest': { params: z.object({ agent: AgentKind.optional() }), result: AgentSmokeTestResult },
   'system.agentCliStatus': { params: z.object({ agent: AgentKind.optional(), refresh: z.boolean().optional() }), result: z.array(AgentCliStatus) },
   'system.upgradeAgentCli': { params: z.object({ agent: AgentKind }), result: AgentCliUpgrade },
   'system.cancelAgentCliUpgrade': { params: z.object({ agent: AgentKind }), result: AgentCliStatus },

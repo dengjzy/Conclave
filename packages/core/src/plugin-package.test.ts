@@ -42,7 +42,7 @@ describe('plugin packages', () => {
     await expect(readManifest(root, version)).resolves.toEqual(manifest)
   })
 
-  it.each(['0.14.99', '0.14.99-beta.2', '1.0.0', '1.1.0-beta.1', '2.0.0', 'invalid'])('rejects hosts outside the declared range or invalid: %s', async (version) => {
+  it.each(['0.0.0', '0.0.0-beta.2', '1.0.0', '1.1.0-beta.1', '2.0.0', 'invalid'])('rejects hosts outside the declared range or invalid: %s', async (version) => {
     await pluginFixture(root)
     await expect(readManifest(root, version)).rejects.toThrow('不兼容')
   })

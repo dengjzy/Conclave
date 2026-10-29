@@ -1,7 +1,7 @@
 import { getLocale, t, tr } from '../i18n'
 import { useEffect, useId, useState, type ReactNode } from 'react'
-import { AGENT_KINDS, agentDescriptor, agentReadiness, type AgentCliInstallation, type AgentKind, type DetectedAgent, type EnvironmentCheck } from '@conclave/protocol'
-import { refreshAgentCli, upgradeAgentCli, cancelAgentCliUpgrade, selectConversation, installAgentCli, refreshEnvironment, showTerminal, useCore } from '../core-store'
+import { AGENT_KINDS, agentDescriptor, agentReadiness, type AgentCliInstallation, type AgentKind, type DetectedAgent, type EnvironmentCheck, type AgentSmokeTestReport } from '@conclave/protocol'
+import { refreshAgentCli, upgradeAgentCli, cancelAgentCliUpgrade, selectConversation, installAgentCli, refreshEnvironment, runSmokeTest, showTerminal, useCore } from '../core-store'
 import { cliStatusText, cliErrorText, cliBackendOutdated, cliChannelText } from '../agent-cli-text'
 import { checkStatusText } from '../environment-text'
 import { agentLabel } from '../labels'
@@ -135,7 +135,7 @@ function CliMaintenance({ kind, check }: { kind: AgentKind; check: EnvironmentCh
   )
 }
 
-function AgentRow({ kind, check, enabled, last }: { kind: AgentKind; check: EnvironmentCheck; enabled: boolean; last: boolean }) {
+function AgentRow({ kind, check, enabled, last, smokeReport }: { kind: AgentKind; check: EnvironmentCheck; enabled: boolean; last: boolean; smokeReport?: AgentSmokeTestReport }) {
   const labelId = useId()
   const environment = useCore((s) => s.environment)
   const providers = useCore((s) => s.modelProviders)
@@ -158,6 +158,16 @@ function AgentRow({ kind, check, enabled, last }: { kind: AgentKind; check: Envi
             </span>
           )}
         </div>
+        {smokeReport && (
+          <div className="agent-smoke-summary">
+            {smokeReport.checks.map((chk) => (
+              <span key={chk.id} className="agent-smoke-pill" data-status={chk.status} title={chk.message}>
+                <span className="agent-smoke-dot" />
+                <span className="agent-smoke-name">{chk.name}</span>
+              </span>
+            ))}
+          </div>
+        )}
         {check.status === 'unknown' && <p className="settings-row-description">{tr('InstalledAgentsSettings.checkWhetherTheCliCanStart', { value1: checkStatusText(check), value2: agentDescriptor(kind, getLocale()).environment.outdated?.hint ?? '' })}</p>}
         {(readiness.state === 'needs-account' || readiness.state === 'needs-provider' || readiness.state === 'unknown-auth' || readiness.state === 'authorize-on-use') && <Fix label={t('InstalledAgentsSettings.signIn')} command={agentDescriptor(kind, getLocale()).environment.signIn} />}
         <CliMaintenance kind={kind} check={check} />
@@ -281,6 +291,8 @@ export function InstalledAgentsSettings() {
   useEffect(() => { if (maintenanceSupported) void refreshAgentCli() }, [maintenanceSupported])
   const disabled = usePreferences((s) => s.disabledAgents)
   const [checking, setChecking] = useState(false)
+  const [smokeReports, setSmokeReports] = useState<Record<string, AgentSmokeTestReport>>({})
+  const [doctorRunning, setDoctorRunning] = useState(false)
   const checkOf = (kind: AgentKind) => environment?.checks.find((each) => each.tool === kind)
   const found = AGENT_KINDS.flatMap((kind) => {
     const check = checkOf(kind)
@@ -297,14 +309,40 @@ export function InstalledAgentsSettings() {
       setChecking(false)
     }
   }
+  const onRunDoctor = async () => {
+    setDoctorRunning(true)
+    try {
+      const res = await runSmokeTest()
+      if (res?.reports) {
+        const map: Record<string, AgentSmokeTestReport> = {}
+        for (const rep of res.reports) {
+          map[rep.agent] = rep
+        }
+        setSmokeReports(map)
+      }
+    } finally {
+      setDoctorRunning(false)
+    }
+  }
   return (
     <div className="agent-list">
       <div className="agent-list-head">
         <span className="agent-list-title">{t('InstalledAgentsSettings.agentsOnThisComputer')}</span>
-        <button type="button" className="button ghost agent-list-refresh" onClick={() => void recheck()} disabled={checking} title={t('InstalledAgentsSettings.scanAgainAfterInstallingOrSigningIn')}>
-          <RefreshIcon />
-          {checking ? t('InstalledAgentsSettings.scanning') : t('InstalledAgentsSettings.scanAgain')}
-        </button>
+        <div className="agent-list-actions">
+          <button
+            type="button"
+            className="button secondary agent-list-doctor"
+            onClick={() => void onRunDoctor()}
+            disabled={doctorRunning}
+            title={t('InstalledAgentsSettings.smokeTest')}
+          >
+            {doctorRunning ? t('InstalledAgentsSettings.testingSmoke') : t('InstalledAgentsSettings.smokeTest')}
+          </button>
+          <button type="button" className="button ghost agent-list-refresh" onClick={() => void recheck()} disabled={checking} title={t('InstalledAgentsSettings.scanAgainAfterInstallingOrSigningIn')}>
+            <RefreshIcon />
+            {checking ? t('InstalledAgentsSettings.scanning') : t('InstalledAgentsSettings.scanAgain')}
+          </button>
+        </div>
       </div>
       {!environment && <p className="settings-row-description agent-list-note">{t('InstalledAgentsSettings.notScannedYet')}</p>}
       {maintenanceSupported && found.some(({ kind }) => cliBackendOutdated(cliStatuses[kind]?.error ?? null)) && (
@@ -318,7 +356,7 @@ export function InstalledAgentsSettings() {
       )}
       <Group title={t('InstalledAgentsSettings.installed')} count={found.length}>
         {found.map(({ kind, check }) => (
-          <AgentRow key={kind} kind={kind} check={check} enabled={!disabled.includes(kind)} last={enabledCount <= 1} />
+          <AgentRow key={kind} kind={kind} check={check} enabled={!disabled.includes(kind)} last={enabledCount <= 1} smokeReport={smokeReports[kind]} />
         ))}
       </Group>
       <Group title={t('InstalledAgentsSettings.availableToInstall')} count={missing.length} folded={found.length > 0}>
