@@ -1,0 +1,194 @@
+import { describe, expect, it } from 'vitest'
+import { checkCancel, checkChangePrimary, checkChatResume, checkContinue, checkEditProjects, checkEditReference, checkEditStart, checkMove, checkRedo, checkReopen, checkSavePlan, checkStart, checkStartMode, checkSubmit, checkTaskHandoff, isStartRef, reopenStatus, startKind, type Task } from './task'
+
+function task(overrides: Partial<Task> = {}): Task {
+  return {
+    id: '00000000-0000-4000-8000-000000000000',
+    title: 'Refactor login',
+    details: '',
+    status: 'pending',
+    repos: [],
+    dependsOn: [],
+    agent: null,
+    slug: null,
+    derivedFrom: null,
+    abandonReason: null,
+    attempts: [],
+    source: null,
+    sourceSnapshot: null,
+    images: [],
+    awaitingInput: false,
+    conversationId: null,
+    plan: null,
+    launch: {},
+    createdAt: 0,
+    updatedAt: 0,
+    ...overrides
+  }
+}
+
+describe('checkEditProjects', () => {
+  it('locks projects for live, launching and abandoned tasks', () => {
+    expect(checkEditProjects(task({ status: 'running' }))).toBe('task-running')
+    expect(checkEditProjects(task({ status: 'abandoned' }))).toBe('task-abandoned')
+    expect(checkEditProjects(task(), true)).toBe('run-in-progress')
+    for (const status of ['pending', 'review', 'done'] as const) {
+      expect(checkEditProjects(task({ status }))).toBeNull()
+    }
+  })
+})
+
+describe('checkEditStart', () => {
+  it('lets a start be picked until the repo has its branch, when projects may be edited', () => {
+    expect(checkEditStart(task(), { branch: null })).toBeNull()
+    expect(checkEditStart(task({ status: 'review' }), { branch: 'conclave/00000000-refactor-login' })).toBe('branch-exists')
+    expect(checkEditStart(task({ status: 'running' }), { branch: null })).toBe('task-running')
+    expect(checkEditStart(task(), { branch: null }, true)).toBe('run-in-progress')
+  })
+})
+
+describe('checkEditReference', () => {
+  it('makes only an additional project one to read, and never one that has its worktree', () => {
+    const repo = (path: string, more: object = {}) => ({ path, worktreePath: null, branch: null, ...more })
+    const twoRepos = task({ repos: [{ ...repo('/app'), startRef: null, start: null }, { ...repo('/docs'), startRef: null, start: null }] })
+    expect(checkEditReference(twoRepos, repo('/docs'))).toBeNull()
+    expect(checkEditReference(twoRepos, repo('/app'))).toBe('primary-reference')
+    expect(checkEditReference(twoRepos, repo('/docs', { worktreePath: '/wt/docs', branch: 'conclave/x' }))).toBe('worktree-exists')
+    expect(checkEditReference(twoRepos, repo('/docs', { reference: true }))).toBeNull()
+    expect(checkEditReference(task({ ...twoRepos, status: 'running' }), repo('/docs'))).toBe('task-running')
+  })
+})
+
+describe('isStartRef', () => {
+  it('takes HEAD and branches by their full name, nothing a shell or git would read as more', () => {
+    for (const ref of ['HEAD', 'refs/heads/release/2.4', 'refs/remotes/origin/main']) expect(isStartRef(ref)).toBe(true)
+    for (const ref of ['main', 'origin/main', 'refs/tags/v1', '--upload-pack=x', 'refs/heads/a b', 'refs/heads/']) expect(isStartRef(ref)).toBe(false)
+  })
+})
+
+describe('checkChangePrimary', () => {
+  it('keeps the primary project once a task\'s chat has begun', () => {
+    expect(checkChangePrimary(task({ conversationId: 'chat' }))).toBe('primary-fixed')
+    expect(checkChangePrimary(task({ status: 'review' }))).toBeNull()
+    expect(checkChangePrimary(task())).toBeNull()
+  })
+})
+
+describe('checkMove', () => {
+  it('lets a running task be closed, but never moves a done task back', () => {
+    expect(checkMove(task({ status: 'running' }), 'done')).toBeNull()
+    expect(checkMove(task({ status: 'done' }), 'pending')).toBe('invalid-transition')
+    expect(checkMove(task({ status: 'done' }), 'abandoned')).toBe('invalid-transition')
+  })
+
+  it('never allows a manual move into running', () => {
+    expect(checkMove(task(), 'running')).toBe('invalid-transition')
+    expect(checkMove(task({ status: 'running' }), 'running')).toBe('invalid-transition')
+  })
+
+  it('accepts a task under review, and moves it nowhere else', () => {
+    expect(checkMove(task({ status: 'review' }), 'done')).toBeNull()
+    expect(checkMove(task({ status: 'review' }), 'pending')).toBe('invalid-transition')
+    expect(checkMove(task({ status: 'review' }), 'running')).toBe('invalid-transition')
+  })
+
+  it('lets a pending task be closed without running', () => {
+    expect(checkMove(task(), 'done')).toBeNull()
+  })
+})
+
+describe('checkContinue and checkRedo', () => {
+  const repos = [{ path: '/repo', worktreePath: '/wt', branch: 'conclave/x', startRef: null, start: null }]
+
+  it('continues only finished tasks, under review or accepted, whose dependencies are still accepted', () => {
+    const done = task({ status: 'done', repos, agent: 'claude' })
+    expect(checkContinue(done, [])).toBeNull()
+    expect(checkContinue(task({ status: 'review', repos, agent: 'claude' }), [])).toBeNull()
+    expect(checkContinue(done, [{ status: 'running' }])).toBe('blocked')
+    expect(checkContinue(task({ repos, agent: 'claude' }), [])).toBe('not-done')
+  })
+
+  it('redoes only finished tasks', () => {
+    expect(checkRedo(task({ status: 'done' }))).toBeNull()
+    expect(checkRedo(task({ status: 'review' }))).toBeNull()
+    expect(checkRedo(task({ status: 'running' }))).toBe('not-done')
+    expect(checkRedo(task({ status: 'abandoned' }))).toBe('not-done')
+  })
+})
+
+describe('cancelling and reopening', () => {
+  it('cancels a task not yet accepted, and reopens one cancelled where its work stands', () => {
+    expect((['pending', 'running', 'review'] as const).map((status) => checkCancel(task({ status })))).toEqual([null, null, null])
+    expect(checkCancel(task({ status: 'done' }))).toBe('task-done')
+    expect(checkCancel(task({ status: 'abandoned' }))).toBe('task-cancelled')
+    expect(checkReopen(task({ status: 'review' }), null)).toBe('not-cancelled')
+    expect(checkReopen(task({ status: 'abandoned' }), null)).toBeNull()
+    expect(checkReopen(task({ status: 'abandoned' }), { id: 'successor' })).toBe('task-redone')
+    const repo = { path: '/app', worktreePath: null, branch: null, startRef: null, start: null }
+    expect(reopenStatus(task({ repos: [repo] }))).toBe('pending')
+    expect(reopenStatus(task({ repos: [{ ...repo, worktreePath: '/wt/app', branch: 'conclave/x' }] }))).toBe('review')
+  })
+})
+
+describe('a task in the chat view', () => {
+  const ready = { repos: [{ path: '/code/app', worktreePath: null, branch: null, startRef: null, start: null }], agent: 'claude' as const }
+  const done = [{ status: 'done' as const }]
+  const unfinished = [{ status: 'done' as const }, { status: 'review' as const }]
+
+  it('allows only planning until dependencies are accepted', () => {
+    expect(checkStartMode(unfinished, 'plan')).toBeNull()
+    for (const mode of ['ask', 'acceptEdits', 'auto', 'bypass', 'readOnly']) {
+      expect(checkStartMode(unfinished, mode)).toBe('dependencies-unfinished')
+      expect(checkStartMode(done, mode)).toBeNull()
+      expect(checkStartMode([], mode)).toBeNull()
+    }
+  })
+
+  it('starts by planning, carrying the plan out only once what it builds on is done', () => {
+    expect(startKind(done)).toBe('execute')
+    expect(startKind([])).toBe('execute')
+    expect(startKind(unfinished)).toBe('plan')
+    expect(checkStart(task(ready), unfinished)).toBeNull()
+    expect(checkStart(task({ ...ready, conversationId: 'c' }), unfinished)).toBe('planning')
+    expect(checkStart(task({ ...ready, conversationId: 'c' }), done)).toBeNull()
+    expect(checkStart(task({ ...ready, status: 'running' }), done)).toBe('not-pending')
+    expect(checkStart(task({ agent: 'claude' }), done)).toBe('missing-repo')
+    expect(checkStart(task({ ...ready, agent: null }), done)).toBe('missing-agent')
+  })
+
+  it('hands a running chat task in for review, never mid-turn', () => {
+    const running = task({ ...ready, status: 'running', conversationId: 'c' })
+    expect(checkSubmit(running, 'idle')).toBeNull()
+    expect(checkSubmit(running, null)).toBeNull()
+    expect(checkSubmit(running, 'running')).toBe('agent-working')
+    expect(checkSubmit(running, 'awaiting')).toBe('agent-working')
+    expect(checkSubmit(task({ ...ready, status: 'running' }), 'idle')).toBe('not-chat')
+    expect(checkSubmit(task({ ...ready, status: 'review', conversationId: 'c' }), 'idle')).toBe('not-running')
+  })
+
+  it('goes on by message while planning or working, and reopens a finished task as continuing does', () => {
+    const chat = { ...ready, conversationId: 'c' }
+    expect(checkChatResume(task(chat), unfinished)).toBeNull()
+    expect(checkChatResume(task({ ...chat, status: 'running' }), done)).toBeNull()
+    expect(checkChatResume(task({ ...chat, status: 'review' }), done)).toBeNull()
+    expect(checkChatResume(task({ ...chat, status: 'done' }), unfinished)).toBe('blocked')
+    expect(checkChatResume(task({ ...chat, status: 'abandoned' }), done)).toBe('abandoned')
+    expect(checkChatResume(task(ready), done)).toBe('no-chat')
+  })
+
+  it('hands a chat to another agent where a message could go on with it, once its agent is idle', () => {
+    const chat = { ...ready, conversationId: 'c' }
+    expect(checkTaskHandoff(task({ ...chat, status: 'running' }), done, 'idle')).toBeNull()
+    expect(checkTaskHandoff(task({ ...chat, status: 'review' }), done, null)).toBeNull()
+    expect(checkTaskHandoff(task({ ...chat, status: 'running' }), done, 'running')).toBe('chat-busy')
+    expect(checkTaskHandoff(task({ ...chat, status: 'running' }), done, 'awaiting')).toBe('chat-busy')
+    expect(checkTaskHandoff(task({ ...chat, status: 'abandoned' }), done, 'idle')).toBe('abandoned')
+    expect(checkTaskHandoff(task(ready), done, null)).toBe('no-chat')
+  })
+
+  it('keeps a plan for later only while the task cannot run', () => {
+    expect(checkSavePlan(task({ ...ready, conversationId: 'c' }))).toBeNull()
+    expect(checkSavePlan(task({ ...ready, conversationId: 'c', status: 'running' }))).toBe('not-pending')
+    expect(checkSavePlan(task(ready))).toBe('no-chat')
+  })
+})

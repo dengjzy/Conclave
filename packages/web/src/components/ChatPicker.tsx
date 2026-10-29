@@ -1,0 +1,208 @@
+import { t } from '../i18n'
+import { useCallback, useRef, useState, type ReactNode } from 'react'
+import { ContextMenu, type MenuPoint } from './ContextMenu'
+import { CheckIcon, ChevronDownIcon } from './icons'
+
+// `icon`: a mark before the label, in the menu and on the button, as an agent's.
+export type PickerOption = { value: string; label: string; description?: string | null; disabled?: boolean; icon?: ReactNode }
+export type PickerSize = 'large' | 'field'
+
+// A choice in the composer's toolbar: its value as a small button as wide as its words, and a menu
+// above it. A native select is as wide as its longest option, which left most values far from their
+// arrow.
+function PickerShell({ label, spoken, tone, disabled, title, align, placement = 'above', size, value, onClose, children }: {
+  label: string
+  // The button's name for a screen reader, which cannot see the value's colour or suffix.
+  spoken: string
+  tone?: string
+  disabled: boolean
+  title?: string
+  align: 'start' | 'end'
+  // Above in the composer, where below is the rest of it; below for one at the top of a panel.
+  placement?: 'above' | 'below'
+  // Large: as tall as a button, for a row of buttons rather than the composer's toolbar. Field: as
+  // large, and as wide as its form, for a labelled field in a dialog or editor.
+  size?: PickerSize
+  value: ReactNode
+  onClose?: () => void
+  children: (close: () => void) => ReactNode
+}) {
+  const button = useRef<HTMLButtonElement>(null)
+  const [at, setAt] = useState<MenuPoint | null>(null)
+  const close = useCallback(() => {
+    setAt(null)
+    onClose?.()
+  }, [onClose])
+  const open = () => {
+    const box = button.current?.getBoundingClientRect()
+    if (box) setAt({ x: align === 'end' ? box.right : box.left, y: placement === 'above' ? box.top : box.bottom + 4 })
+  }
+  return (
+    <>
+      <button
+        ref={button}
+        type="button"
+        className="chat-picker"
+        data-tone={tone}
+        data-size={size}
+        aria-haspopup="menu"
+        aria-expanded={at !== null}
+        aria-label={spoken}
+        title={title}
+        disabled={disabled}
+        onClick={() => (at ? close() : open())}
+      >
+        <span className="chat-picker-value">{value}</span>
+        <ChevronDownIcon />
+      </button>
+      {at && (
+        <ContextMenu at={at} align={align} above={placement === 'above'} trigger={button.current} label={label} onClose={close}>
+          {children(close)}
+        </ContextMenu>
+      )}
+    </>
+  )
+}
+
+export function PickerItem({ option, checked, onSelect }: { option: PickerOption; checked: boolean; onSelect: () => void }) {
+  return (
+    <button
+      type="button"
+      role="menuitemradio"
+      aria-checked={checked}
+      className="menu-item chat-picker-item"
+      disabled={option.disabled}
+      onClick={onSelect}
+    >
+      {option.icon && <span className="chat-picker-icon" aria-hidden="true">{option.icon}</span>}
+      <span className="chat-picker-item-text">
+        <span className="chat-picker-item-label">{option.label}</span>
+        {option.description && <span className="chat-picker-item-description">{option.description}</span>}
+      </span>
+      {checked && <span className="menu-check"><CheckIcon /></span>}
+    </button>
+  )
+}
+
+// One setting: its options listed with what each means, the current one checked.
+export function ChatPicker({ label, value, placeholder, options, onChange, disabled = false, title, tone, align = 'start', placement, size, footer }: {
+  label: string
+  value: string | null
+  placeholder: string
+  options: readonly PickerOption[]
+  onChange: (value: string) => void
+  disabled?: boolean
+  title?: string
+  // Colours the value, as the permission mode does for plan and bypass.
+  tone?: string
+  align?: 'start' | 'end'
+  placement?: 'above' | 'below'
+  size?: PickerSize
+  // What else the menu offers below the choices, as a folder picker beside recent projects.
+  footer?: (close: () => void) => ReactNode
+}) {
+  const picked = options.find((option) => option.value === value)
+  const current = picked?.label ?? placeholder
+  const shown = picked?.icon ? <><span className="chat-picker-icon" aria-hidden="true">{picked.icon}</span>{current}</> : current
+  return (
+    <PickerShell label={label} spoken={`${label}：${current}`} tone={tone} disabled={disabled} title={title} align={align} placement={placement} size={size} value={shown}>
+      {(close) => (
+        <>
+          <div className="chat-picker-heading">{label}</div>
+          {options.map((option) => (
+            <PickerItem
+              key={option.value}
+              option={option}
+              checked={option.value === value}
+              onSelect={() => {
+                close()
+                if (option.value !== value) onChange(option.value)
+              }}
+            />
+          ))}
+          {footer && <><div className="menu-separator" role="separator" />{footer(close)}</>}
+        </>
+      )}
+    </PickerShell>
+  )
+}
+
+export type ModelOption = PickerOption & { efforts: readonly PickerOption[] }
+
+// The model and how hard it thinks, as one button: "Opus 5.5 · 高". Its menu lists the models
+// first, then the picked one's efforts as chips pinned to its foot, so a long list cannot scroll
+// them away. Picking a model that has efforts keeps the menu open for them.
+export function ChatModelPicker({ models, model, effort, onModel, onEffort, disabled = false, title, align = 'end', placement, size }: {
+  models: readonly ModelOption[]
+  model: string | null
+  effort: string | null
+  onModel: (model: string) => void
+  onEffort: (effort: string) => void
+  disabled?: boolean
+  title?: string
+  align?: 'start' | 'end'
+  placement?: 'above' | 'below'
+  size?: PickerSize
+}) {
+  // A switch a running agent has yet to confirm: its efforts show, but wait for it.
+  const [picked, setPicked] = useState<string | null>(null)
+  const switching = picked !== null && picked !== model ? picked : null
+  const shown = models.find((each) => each.value === (switching ?? model))
+  const efforts = shown?.efforts ?? []
+  const modelLabel = models.find((each) => each.value === model)?.label ?? t('ChatPicker.defaultModel')
+  const effortLabel = models.find((each) => each.value === model)?.efforts.find((each) => each.value === effort)?.label ?? null
+  const forget = useCallback(() => setPicked(null), [])
+  return (
+    <PickerShell
+      label={t('ChatPicker.modelAndReasoningEffort')}
+      spoken={t('ChatPicker.model', { modelLabel: modelLabel, value2: effortLabel ? t('ChatPicker.reasoningEffort', { effortLabel: effortLabel }) : '' })}
+      disabled={disabled}
+      title={title}
+      align={align}
+      placement={placement}
+      size={size}
+      value={<>{modelLabel}{effortLabel && <span className="chat-picker-suffix"> · {effortLabel}</span>}</>}
+      onClose={forget}
+    >
+      {(close) => (
+        <>
+          <div className="chat-picker-heading">{t('AgentModelPicker.model')}</div>
+          {models.map((option) => (
+            <PickerItem
+              key={option.value}
+              option={option}
+              checked={option.value === (switching ?? model)}
+              onSelect={() => {
+                if (option.efforts.length === 0) close()
+                else setPicked(option.value)
+                if (option.value !== model) onModel(option.value)
+              }}
+            />
+          ))}
+          {efforts.length > 0 && (
+            <div className="chat-picker-efforts">
+              <div className="chat-picker-heading">{t('ChatPicker.reasoningEffort_373')}</div>
+              <div className="chat-picker-chips">
+                {efforts.map((each) => (
+                  <button
+                    key={each.value}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={switching === null && each.value === effort}
+                    className="chat-picker-chip"
+                    disabled={switching !== null}
+                    onClick={() => {
+                      if (each.value !== effort) onEffort(each.value)
+                    }}
+                  >
+                    {each.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </PickerShell>
+  )
+}

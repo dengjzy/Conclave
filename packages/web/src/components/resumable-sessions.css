@@ -1,0 +1,15 @@
+.resumable-sessions { display: grid; width: 100%; margin: 0; padding: 0; list-style: none; }
+.resumable-session { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; column-gap: 12px; padding: 8px 0; }
+.resumable-session + .resumable-session { border-top: 1px solid var(--border); }
+.resumable-session-main { display: grid; min-width: 0; }
+.resumable-session-title { overflow: hidden; color: var(--text); font-size: 13px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.resumable-session-meta { display: flex; min-width: 0; font-size: 12px; color: var(--text-3); }
+.resumable-session-meta > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.resumable-session-meta > span + span { flex-shrink: 0; }
+.resumable-session-meta > span + span::before { content: '·'; margin: 0 6px; color: var(--border-2); }
+.resumable-session .button { height: 28px; padding: 0 10px; font-size: 12px; }
+/* In the overview's card the rows run edge to edge, as its other rows do. */
+.overview-panel .resumable-sessions { width: auto; margin: 0 -16px; }
+.overview-panel .resumable-session { padding: 10px 16px; border-top: 1px solid var(--border); }
+.overview-panel .resumable-note { margin: 0 0 12px; font-size: 12px; color: var(--text-muted); }
+.overview-panel .resumable-more { margin: 0 -16px; padding: 10px 16px; border-top: 1px solid var(--border); }

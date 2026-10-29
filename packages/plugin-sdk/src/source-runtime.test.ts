@@ -1,0 +1,113 @@
+import { PassThrough } from 'node:stream'
+import { afterEach, describe, expect, it } from 'vitest'
+import { PluginManifest, PluginMessage } from '../../protocol/src/plugin'
+import { runSourcePlugin } from './source-runtime'
+import { SourceError } from './source-error'
+import type { SourcePlugin } from './source-plugin'
+
+const manifest = PluginManifest.parse({
+  id: 'test.source', version: '1.0.0', engines: { conclave: '>=0.0.1-0 <1.0.0' },
+  contributes: { sources: [{ id: 'demo', name: 'Demo', settings: [] }] },
+  entry: { runtime: 'node', main: 'main.mjs' }
+})
+const source: SourcePlugin = {
+  id: 'demo', normalizeSettings: (settings) => ({ ...settings }),
+  login: async (session) => {
+    session.notify({ message: 'Signing in' })
+    const account = await session.prompt({ kind: 'text', label: 'Account' })
+    const token = await session.prompt({ kind: 'secret', label: 'Token' })
+    return { account, credential: { kind: 'token', payload: { token } } }
+  },
+  list: async () => [],
+  fetch: async () => { throw new SourceError('not-found', 'No such issue') }
+}
+
+const cleanup: (() => void)[] = []
+afterEach(() => { for (const close of cleanup.splice(0)) close() })
+
+function harness(overrides: Partial<SourcePlugin> = {}) {
+  const input = new PassThrough()
+  const output = new PassThrough()
+  const messages: (typeof PluginMessage._output)[] = []
+  output.on('data', (chunk: Buffer) => messages.push(PluginMessage.parse(JSON.parse(chunk.toString()))))
+  const runtime = runSourcePlugin({ manifest, sources: [{ ...source, ...overrides }], input, output })
+  cleanup.push(() => { runtime.close(); input.destroy(); output.destroy() })
+  const send = (value: unknown) => input.write(`${JSON.stringify(value)}\n`)
+  const call = (method: string, params: unknown) => send({ type: 'call', id: method, method, params })
+  const tick = () => new Promise<void>((resolve) => setImmediate(resolve))
+  return { input, messages, send, call, tick, async hello() { call('handshake', { protocolVersion: 1 }); await tick() } }
+}
+
+describe('source SDK protocol runtime', () => {
+  it('uses the existing v1 handshake and default optional methods', async () => {
+    const h = harness()
+    await h.hello()
+    expect(h.messages[0]).toMatchObject({ type: 'result', result: { protocolVersion: 1, sources: ['demo'] } })
+    h.call('normalizeKey', { source: 'demo', key: 'DEMO-1' })
+    await h.tick()
+    expect(h.messages[1]).toEqual({ type: 'result', id: 'normalizeKey', result: 'DEMO-1' })
+  })
+
+  it('keeps sequential login questions and notifications in the same operation', async () => {
+    const h = harness()
+    await h.hello()
+    h.call('login', { source: 'demo', settings: {} })
+    await h.tick()
+    expect(h.messages[1]).toEqual({ type: 'notify', notice: { message: 'Signing in' } })
+    expect(h.messages[2]).toMatchObject({ type: 'prompt', id: 'prompt-1' })
+    h.send({ type: 'answer', id: 'prompt-1', value: 'alice' })
+    await h.tick()
+    expect(h.messages[3]).toMatchObject({ type: 'prompt', id: 'prompt-2', prompt: { kind: 'secret' } })
+    h.send({ type: 'answer', id: 'prompt-2', value: 'secret' })
+    await h.tick()
+    expect(h.messages[4]).toEqual({ type: 'result', id: 'login', result: { account: 'alice', credential: { kind: 'token', payload: { token: 'secret' } } } })
+  })
+
+  it('rejects operations before handshake and unsupported protocol versions', async () => {
+    const h = harness()
+    h.call('list', { source: 'demo', settings: {}, credential: { kind: 'token', payload: {} } })
+    await h.tick()
+    expect(h.messages[0]).toMatchObject({ type: 'error', error: { code: 'request-failed' } })
+    const other = harness()
+    other.call('handshake', { protocolVersion: 2 })
+    await other.tick()
+    expect(other.messages[0]).toMatchObject({ type: 'error' })
+  })
+
+  it('validates returned issues without exposing the invalid payload', async () => {
+    const h = harness({ list: async () => [{ key: '../secret', title: 'token-secret', url: '', status: '', statusCategory: 'todo', type: '', priority: null, updatedAt: null }] })
+    await h.hello()
+    h.call('list', { source: 'demo', settings: {}, credential: { kind: 'token', payload: {} } })
+    await h.tick()
+    expect(h.messages[1]).toMatchObject({ type: 'error', error: { code: 'request-failed' } })
+    expect(JSON.stringify(h.messages)).not.toContain('token-secret')
+  })
+
+  it('preserves deliberate source errors and hides unexpected failures', async () => {
+    const h = harness()
+    await h.hello()
+    h.call('fetch', { source: 'demo', settings: {}, credential: { kind: 'token', payload: {} }, key: 'DEMO-1' })
+    await h.tick()
+    expect(h.messages[1]).toMatchObject({ type: 'error', error: { code: 'not-found', message: 'No such issue' } })
+    const other = harness({ list: async () => { throw new Error('token-secret') } })
+    await other.hello()
+    other.call('list', { source: 'demo', settings: {}, credential: { kind: 'token', payload: {} } })
+    await other.tick()
+    expect(JSON.stringify(other.messages)).not.toContain('token-secret')
+  })
+
+  it('aborts a running operation when the host disconnects', async () => {
+    let signal: AbortSignal | undefined
+    const h = harness({ list: async (_settings, _credential, current) => { signal = current; return new Promise(() => {}) } })
+    await h.hello()
+    h.call('list', { source: 'demo', settings: {}, credential: { kind: 'token', payload: {} } })
+    await h.tick()
+    h.input.end()
+    await h.tick()
+    expect(signal?.aborted).toBe(true)
+  })
+
+  it('rejects duplicate source registrations', () => {
+    expect(() => runSourcePlugin({ manifest, sources: [source, source] })).toThrow('match the manifest')
+  })
+})

@@ -1,0 +1,944 @@
+import { readFileSync } from 'node:fs'
+import { describe, expect, it } from 'vitest'
+import type { ChatItem } from '@conclave/protocol'
+import type { ChatRecord, ChatStageOptions } from '../../chat-driver'
+import { parseChatRecord } from '../../chat-log'
+import { ClaudeStream } from './claude-stream'
+
+const OPTIONS: ChatStageOptions = { cwd: '/work/repo', extraDirs: [], resume: null }
+
+// Recorded from Claude Code 2.1.282 (claude -p stream-json, --model haiku), then stripped of local paths.
+function fixture(name: string): ChatRecord[] {
+  return readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8')
+    .split('\n')
+    .flatMap((line) => {
+      const record = line.trim() ? parseChatRecord(line) : null
+      return record ? [record] : []
+    })
+}
+
+function replay(records: readonly ChatRecord[], options: ChatStageOptions = OPTIONS): ClaudeStream {
+  const driver = new ClaudeStream('stage-1', options)
+  records.forEach((record) => driver.apply(record))
+  return driver
+}
+
+const ofKind = <K extends ChatItem['kind']>(items: ChatItem[], kind: K) =>
+  items.filter((item): item is Extract<ChatItem, { kind: K }> => item.kind === kind)
+
+// Items as the chat view shows them. Revisions count the updates that led there, and a streamed
+// item is first seen when its text starts rather than when its complete frame arrives.
+const shown = (items: ChatItem[]) => items.map(({ revision: _revision, at: _at, ...item }) => item)
+
+describe('ClaudeStream', () => {
+  it('turns a recorded session into messages, tool calls, an approval and turn outcomes', () => {
+    const driver = replay(fixture('claude-session.jsonl'))
+    const items = driver.items.list()
+
+    expect(ofKind(items, 'user').map((item) => item.text)).toEqual([
+      'Create a file named hello.txt containing the single word hi, then run `cat hello.txt` with the Bash tool. Answer in one short sentence.',
+      'Use the Read tool to read hello.txt and tell me what it says, in one sentence.',
+      'Count from 1 to 300, one number per line, no other text.',
+      'Say "done" and nothing else.'
+    ])
+    const assistant = ofKind(items, 'assistant')
+    expect(assistant.map((item) => item.streaming)).toEqual([false, false, false, false])
+    expect(assistant.map((item) => item.text.split('\n')[0])).toEqual([
+      'File created and `cat hello.txt` displays: hi',
+      'The file contains the single word "hi".',
+      '1',
+      'done'
+    ])
+
+    const tools = ofKind(items, 'tool')
+    expect(tools.map((tool) => [tool.name, tool.title, tool.status])).toEqual([
+      ['Write', '/work/repo/hello.txt', 'done'],
+      ['Bash', 'cat hello.txt', 'done'],
+      ['Read', '/work/repo/hello.txt', 'done']
+    ])
+    expect(tools[0]?.diffs).toEqual([{ path: '/work/repo/hello.txt', change: 'add', patch: '+hi' }])
+    expect(tools[1]?.output).toBe('hi')
+    expect(tools[1]?.execution).toEqual({ status: 'completed', exitCode: null })
+    expect(tools[0]?.execution).toBeUndefined()
+    // The words Claude gave the command, which only Bash carries; the result keeps them.
+    expect(tools.map((tool) => tool.description)).toEqual([null, 'Display contents of hello.txt', null])
+
+    const [approval] = ofKind(items, 'approval')
+    expect(approval).toMatchObject({ tool: 'Write', title: '/work/repo/hello.txt', resolution: 'allowed', toolItemId: tools[0]?.id })
+    expect(approval?.decisions).toEqual(['allow', 'allowForSession', 'deny'])
+
+    expect(ofKind(items, 'turn').map((turn) => turn.state)).toEqual(['completed', 'completed', 'interrupted', 'completed'])
+    expect(driver.activity()).toBe('idle')
+    expect(driver.ready()).toBe(false)
+    expect(driver.providerSessionId()).toBe('6f81960b-d2d8-4380-a15d-efb1386b5db5')
+  })
+
+  it('says which of the user\'s MCP servers did not start, once, the same when rebuilt from its log', () => {
+    const at = 1_790_000_000_000
+    const init = { type: 'system', subtype: 'init', session_id: 's-1', mcp_servers: [
+      { name: 'conclave', status: 'failed', source: 'dynamic' },
+      { name: 'github', status: 'failed', source: 'dynamic' },
+      { name: 'docs', status: 'connected', source: 'dynamic' },
+      { name: 'own', status: 'failed', source: 'user' }
+    ] }
+    const live = replay([{ dir: 'in', at, frame: init }, { dir: 'in', at, frame: init }])
+    const notices = ofKind(live.items.list(), 'notice')
+    expect(notices).toMatchObject([{ id: 'mcp:github', level: 'warning', text: expect.stringContaining('MCP 服务器 github 没连上') }])
+    const logged = live.logged(init)
+    expect(logged).toMatchObject({ mcp_servers: [{ name: 'github', status: 'failed', source: 'dynamic' }] })
+    expect(shown(ofKind(replay([{ dir: 'in', at, frame: logged }]).items.list(), 'notice'))).toEqual(shown(notices))
+  })
+
+  it('keeps a background subagent running until it reports, and opens the turn the CLI starts for it', () => {
+    const at = 1_790_000_000_000
+    const tool = (id: string, input: Record<string, unknown>) => ({ type: 'tool_use', id, name: 'Agent', input })
+    const records: ChatRecord[] = [
+      { dir: 'out', at, frame: { type: 'user', message: { role: 'user', content: '派个 Agent 去数' } }, ref: 'ref-1' },
+      { dir: 'in', at, frame: { type: 'system', subtype: 'init', session_id: 's-1', model: 'claude-x' } },
+      { dir: 'in', at, frame: { type: 'assistant', message: { id: 'm1', content: [tool('A1', { subagent_type: 'Explore', description: 'Count packages', prompt: 'count' })] } } },
+      { dir: 'in', at, frame: { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'A1', content: [{ type: 'text', text: 'Async agent launched successfully. (internal)' }] }] }, tool_use_result: { isAsync: true, status: 'async_launched', agentId: 'a1' } } },
+      { dir: 'in', at, frame: { type: 'assistant', message: { id: 'm2', content: [{ type: 'text', text: '等它回来。' }] } } },
+      { dir: 'in', at, frame: { type: 'result', subtype: 'success', is_error: false, duration_ms: 1000 } }
+    ]
+    const driver = replay(records)
+    // The turn ended, but the subagent is still out: the tool stays running and so does the stage.
+    expect(ofKind(driver.items.list(), 'tool')).toMatchObject([{ name: 'Agent', status: 'running', output: null }])
+    expect(driver.activity()).toBe('running')
+    expect(ofKind(driver.items.list(), 'state')[0]).toMatchObject({ activity: '等 1 个子 Agent 回来' })
+
+    const resumed: ChatRecord[] = [
+      { dir: 'in', at, frame: { type: 'system', subtype: 'init', session_id: 's-1', model: 'claude-x' } },
+      { dir: 'in', at, frame: { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'A1', content: [{ type: 'text', text: '[Subagent hand-back] The text below is the final report.\nThe report follows:\n  Seven packages.\n  Done.' }] }] }, tool_use_result: { status: 'completed', agentId: 'a1', content: [{ type: 'text', text: 'Seven packages.\nDone.' }], totalToolUseCount: 7, totalTokens: 2300, totalDurationMs: 5000 } } },
+      { dir: 'in', at, frame: { type: 'assistant', message: { id: 'm3', content: [{ type: 'text', text: '有 7 个。' }] } } }
+    ]
+    resumed.slice(0, 1).forEach((record) => driver.apply(record))
+    expect(driver.activity()).toBe('running')
+    resumed.slice(1).forEach((record) => driver.apply(record))
+    expect(ofKind(driver.items.list(), 'tool')[0]).toMatchObject({ status: 'done', output: 'Seven packages.\nDone.', metrics: { tools: 7, tokens: 2300, durationMs: 5000 } })
+    driver.apply({ dir: 'in', at, frame: { type: 'result', subtype: 'success', is_error: false, duration_ms: 800, origin: { kind: 'task-notification' } } })
+    expect(ofKind(driver.items.list(), 'turn').map((turn) => [turn.state, turn.resumed ?? false])).toEqual([['completed', false], ['completed', true]])
+    expect(driver.activity()).toBe('idle')
+    expect(ofKind(driver.items.list(), 'state')[0]).toMatchObject({ activity: null })
+  })
+
+  it('settles a background subagent from the result\'s count when no hand-back frame comes', () => {
+    const at = 1_790_000_000_000
+    const records: ChatRecord[] = [
+      { dir: 'out', at, frame: { type: 'user', message: { role: 'user', content: '数一下' } }, ref: 'ref-1' },
+      { dir: 'in', at, frame: { type: 'system', subtype: 'init', session_id: 's-1' } },
+      { dir: 'in', at, frame: { type: 'assistant', message: { id: 'm1', content: [{ type: 'tool_use', id: 'A1', name: 'Agent', input: { subagent_type: 'Explore', description: 'Count', prompt: 'p', run_in_background: true } }] } } },
+      { dir: 'in', at, frame: { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'A1', content: [{ type: 'text', text: 'Async agent launched successfully.' }] }] }, tool_use_result: { isAsync: true, status: 'async_launched' } } },
+      { dir: 'in', at, frame: { type: 'result', subtype: 'success', is_error: false, duration_ms: 900, subagent_stats: { completed: 0 } } },
+      { dir: 'in', at, frame: { type: 'assistant', parent_tool_use_id: 'A1', message: { id: 's1', content: [{ type: 'text', text: 'There are 5 files.' }] } } },
+      { dir: 'in', at, frame: { type: 'system', subtype: 'init', session_id: 's-1' } },
+      { dir: 'in', at, frame: { type: 'assistant', message: { id: 'm2', content: [{ type: 'text', text: '有 5 个。' }] } } },
+      { dir: 'in', at, frame: { type: 'result', subtype: 'success', is_error: false, duration_ms: 300, origin: { kind: 'task-notification' }, subagent_stats: { completed: 1 } } }
+    ]
+    const driver = replay(records)
+    expect(ofKind(driver.items.list(), 'tool')[0]).toMatchObject({ name: 'Agent', status: 'done', output: 'There are 5 files.' })
+    expect(ofKind(driver.items.list(), 'turn').map((turn) => turn.resumed ?? false)).toEqual([false, true])
+    expect(driver.activity()).toBe('idle')
+  })
+
+  // As Claude Code 2.1.288 ran three Explore subagents: each reports, the CLI answers it in a turn
+  // of its own, and that turn's result counts every subagent finished so far.
+  it('keeps a background subagent running until it reports, when others reported before it', () => {
+    const at = 1_790_000_000_000
+    const launch = (n: number): ChatRecord[] => [
+      { dir: 'in', at, frame: { type: 'system', subtype: 'task_started', task_id: `T${n}`, tool_use_id: `A${n}`, task_type: 'local_agent', is_backgrounded: true } },
+      { dir: 'in', at, frame: { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `A${n}`, content: [{ type: 'text', text: 'Async agent launched successfully.' }] }] }, tool_use_result: { isAsync: true, status: 'async_launched' } } }
+    ]
+    const report = (n: number, completed: number): ChatRecord[] => [
+      { dir: 'in', at, frame: { type: 'system', subtype: 'task_notification', task_id: `T${n}`, tool_use_id: `A${n}`, status: 'completed', summary: `Report ${n}.` } },
+      { dir: 'in', at, frame: { type: 'system', subtype: 'init', session_id: 's-1' } },
+      { dir: 'in', at, frame: { type: 'assistant', message: { id: `r${n}`, content: [{ type: 'text', text: `第 ${n} 份到了。` }] } } },
+      { dir: 'in', at, frame: { type: 'result', subtype: 'success', is_error: false, duration_ms: 300, num_turns: 1, origin: { kind: 'task-notification' }, subagent_stats: { completed } } }
+    ]
+    const driver = replay([
+      { dir: 'out', at, frame: { type: 'user', message: { role: 'user', content: '摸清三处代码' } }, ref: 'ref-1' },
+      { dir: 'in', at, frame: { type: 'system', subtype: 'init', session_id: 's-1' } },
+      { dir: 'in', at, frame: { type: 'assistant', message: { id: 'm1', content: [1, 2, 3].map((n) => ({ type: 'tool_use', id: `A${n}`, name: 'Agent', input: { subagent_type: 'Explore', description: `Map ${n}`, prompt: 'p', run_in_background: true } })) } } },
+      ...launch(1), ...launch(2), ...launch(3),
+      { dir: 'in', at, frame: { type: 'result', subtype: 'success', is_error: false, duration_ms: 900, num_turns: 4, subagent_stats: { completed: 0 } } }
+    ])
+    const statuses = () => ofKind(driver.items.list(), 'tool').map((tool) => tool.status)
+
+    report(3, 1).forEach((record) => driver.apply(record))
+    expect(statuses()).toEqual(['running', 'running', 'done'])
+    expect(driver.activity()).toBe('running')
+
+    report(1, 2).forEach((record) => driver.apply(record))
+    expect(statuses()).toEqual(['done', 'running', 'done'])
+    expect(driver.activity()).toBe('running')
+
+    report(2, 3).forEach((record) => driver.apply(record))
+    expect(statuses()).toEqual(['done', 'done', 'done'])
+    expect(driver.activity()).toBe('idle')
+  })
+
+  it('keeps a background subagent running when one run in the foreground finishes beside it', () => {
+    const at = 1_790_000_000_000
+    const driver = replay([
+      { dir: 'out', at, frame: { type: 'user', message: { role: 'user', content: '一个后台，一个前台' } }, ref: 'ref-1' },
+      { dir: 'in', at, frame: { type: 'system', subtype: 'init', session_id: 's-1' } },
+      { dir: 'in', at, frame: { type: 'assistant', message: { id: 'm1', content: [
+        { type: 'tool_use', id: 'A1', name: 'Agent', input: { subagent_type: 'Explore', description: 'Slow', prompt: 'p', run_in_background: true } },
+        { type: 'tool_use', id: 'A2', name: 'Agent', input: { subagent_type: 'Explore', description: 'Quick', prompt: 'p' } }
+      ] } } },
+      { dir: 'in', at, frame: { type: 'system', subtype: 'task_started', task_id: 'T1', tool_use_id: 'A1', task_type: 'local_agent', is_backgrounded: true } },
+      { dir: 'in', at, frame: { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'A1', content: [{ type: 'text', text: 'Async agent launched successfully.' }] }] }, tool_use_result: { isAsync: true, status: 'async_launched' } } },
+      { dir: 'in', at, frame: { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'A2', content: [{ type: 'text', text: 'Two files.' }] }] }, tool_use_result: { status: 'completed', content: [{ type: 'text', text: 'Two files.' }], totalToolUseCount: 2, totalTokens: 900, totalDurationMs: 1200 } } },
+      { dir: 'in', at, frame: { type: 'assistant', message: { id: 'm2', content: [{ type: 'text', text: '快的那个回来了，慢的还在跑。' }] } } },
+      { dir: 'in', at, frame: { type: 'result', subtype: 'success', is_error: false, duration_ms: 1500, num_turns: 2, subagent_stats: { completed: 1 } } }
+    ])
+    expect(ofKind(driver.items.list(), 'tool').map((tool) => tool.status)).toEqual(['running', 'done'])
+    expect(driver.activity()).toBe('running')
+  })
+
+  it('names an MCP tool as Claude Code does for people, and a call it says nothing of by its own name', () => {
+    const at = 1_790_000_000_000
+    const records: ChatRecord[] = [
+      { dir: 'out', at, frame: { type: 'user', message: { role: 'user', content: '看下工单' } }, ref: 'ref-1' },
+      { dir: 'in', at, frame: { type: 'system', subtype: 'init', session_id: 's-1' } },
+      { dir: 'in', at, frame: { type: 'assistant', message: { id: 'm1', content: [
+        { type: 'tool_use', id: 'J1', name: 'mcp__claude_ai_Atlassian__getJiraIssue', input: { cloudId: 'chowbus.atlassian.net', issueIdOrKey: 'IN-1' } },
+        { type: 'tool_use', id: 'J2', name: 'mcp__notes__find', input: {} }
+      ] }, tool_use_meta: [{ id: 'J1', display_name: 'Get issue', server_display_name: 'Atlassian', icon_url: 'https://example.com/a.png' }] } },
+      // The result rebuilds the call's item, which keeps its name.
+      { dir: 'in', at, frame: { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'J1', content: [{ type: 'text', text: '{}' }] }] } } }
+    ]
+    const [jira, notes] = ofKind(replay(records).items.list(), 'tool')
+    expect(jira).toMatchObject({ name: 'mcp__claude_ai_Atlassian__getJiraIssue', display: { name: 'Get issue', server: 'Atlassian' } })
+    expect(notes?.display).toBeUndefined()
+  })
+
+  it('records one user and one final assistant message per turn under keys a replay repeats', () => {
+    const messages = replay(fixture('claude-session.jsonl')).takeMessages()
+    expect(messages.filter((message) => message.role === 'user').map((message) => message.eventKey))
+      .toEqual(['chat:ref-1:user', 'chat:ref-2:user', 'chat:ref-3:user', 'chat:ref-4:user'])
+    expect(messages.find((message) => message.eventKey === 'chat:ref-1:assistant')?.text)
+      .toBe('File created and `cat hello.txt` displays: hi')
+    expect(replay(fixture('claude-session.jsonl')).takeMessages()).toEqual(messages)
+  })
+
+  it.each(['claude-session.jsonl', 'claude-options.jsonl'])('rebuilds the same items from what it logs as from everything it saw (%s)', (name) => {
+    const records = fixture(name)
+    const live = replay(records)
+    const logger = new ClaudeStream('stage-1', OPTIONS)
+    const kept = records.flatMap((record): ChatRecord[] => {
+      if (record.dir !== 'in') return [record]
+      const frame = logger.logged(record.frame)
+      return frame === null ? [] : [{ ...record, frame }]
+    })
+    expect(kept.length).toBeLessThan(name === 'claude-session.jsonl' ? records.length / 2 : records.length)
+    expect(shown(replay(kept).items.list())).toEqual(shown(live.items.list()))
+  })
+
+  it('streams text into an item that the complete frame then finishes', () => {
+    const records = fixture('claude-session.jsonl')
+    const driver = new ClaudeStream('stage-1', OPTIONS)
+    const counting = records.findIndex((record) => record.dir === 'out' && JSON.stringify(record.frame).includes('Count from 1'))
+    records.slice(0, counting + 1).forEach((record) => driver.apply(record))
+    driver.items.drain()
+    let streamed = ''
+    let started: ChatItem | undefined
+    for (const record of records.slice(counting + 1)) {
+      driver.apply(record)
+      const { items, deltas } = driver.items.drain()
+      started ??= items.find((item) => item.kind === 'assistant' && item.streaming)
+      streamed += deltas.map((delta) => delta.append).join('')
+      if (items.some((item) => item.kind === 'turn')) break
+    }
+    expect(started).toBeDefined()
+    expect(streamed.startsWith('1\n2\n3')).toBe(true)
+    const finished = driver.items.get(started?.id ?? '')
+    expect(finished).toMatchObject({ kind: 'assistant', streaming: false })
+    expect(ofKind(driver.items.list(), 'assistant').filter((item) => item.text.startsWith('1\n'))).toHaveLength(1)
+  })
+
+  it('marks a denied call and records the answer to a question', () => {
+    const items = replay(fixture('claude-approvals.jsonl')).items.list()
+    const [write] = ofKind(items, 'tool')
+    expect(write).toMatchObject({ name: 'Write', status: 'denied' })
+    const [approval] = ofKind(items, 'approval')
+    expect(approval?.resolution).toBe('denied')
+    expect(ofKind(items, 'tool').map((tool) => tool.name)).toEqual(['Write'])
+    const [question] = ofKind(items, 'question')
+    expect(question?.questions[0]).toMatchObject({ question: 'Which beverage do you prefer?', multiSelect: false })
+    expect(question?.questions[0]?.options.map((option) => option.label)).toEqual(['Tea', 'Coffee'])
+    expect(question).toMatchObject({ resolution: 'answered', answers: { 'Which beverage do you prefer?': ['Coffee'] } })
+  })
+})
+
+describe('ClaudeStream state', () => {
+  // Plan mode, two TaskCreate calls, ExitPlanMode approved into acceptEdits, then TaskUpdate and TaskList.
+  const records = fixture('claude-options.jsonl')
+  const stateOf = (driver: ClaudeStream) => ofKind(driver.items.list(), 'state')[0]
+
+  it('reports the mode, model, effort and context the stage runs with', () => {
+    const state = stateOf(replay(records))
+    expect(state).toMatchObject({ permissionMode: 'acceptEdits', model: 'haiku', permissionModes: ['ask', 'acceptEdits', 'plan'] })
+    expect(state?.models.map((model) => model.id)).toContain('sonnet')
+    expect(state?.models.find((model) => model.id === 'sonnet')?.efforts).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+    expect(state?.context?.window).toBe(200_000)
+    expect(state?.context?.used).toBeGreaterThan(10_000)
+  })
+
+  it('offers only a provider\'s models on a provider, and keeps no cost for its turns', () => {
+    const providerModels = [
+      { id: 'glm-5.3[1m]', label: 'GLM-5.3', description: null, efforts: [], isDefault: true },
+      { id: 'glm-5.3-flash', label: 'GLM-5.3 Flash', description: null, efforts: [], isDefault: false }
+    ]
+    const driver = replay(records.filter((record) => record.dir !== 'exit'), { ...OPTIONS, providerModels })
+    const state = stateOf(driver)
+    expect(state?.models.map((model) => [model.id, model.isDefault, model.autoMode])).toEqual([['glm-5.3[1m]', true, undefined], ['glm-5.3-flash', false, undefined]])
+    expect(() => driver.setOption('model', 'sonnet')).toThrow(expect.objectContaining({ reason: 'chat-option-invalid' }))
+    expect(driver.setOption('model', 'glm-5.3-flash')).toMatchObject([{ request: { subtype: 'set_model', model: 'glm-5.3-flash' } }])
+    const turns = ofKind(driver.items.list(), 'turn').filter((turn) => turn.metering)
+    expect(turns.length).toBeGreaterThan(0)
+    for (const turn of turns) {
+      expect(turn.metering?.reportedCostUsd).toBeNull()
+      expect(turn.metering?.models.every((model) => model.costUsd === null && model.input > 0)).toBe(true)
+    }
+  })
+
+  it('empties the context ring to what a compaction left', () => {
+    const boundary = (metadata: object) => ({ type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'manual', pre_tokens: 180_000, ...metadata } })
+    const compacted = (metadata: object): ChatRecord => ({ dir: 'in', at: 9e12, frame: boundary(metadata) })
+    const driver = replay([...records, compacted({ post_tokens: 9_881 })])
+    expect(stateOf(driver)?.context).toEqual({ used: 9_881, window: 200_000 })
+    expect(driver.logged(boundary({ post_tokens: 9_881 }))).toEqual({ type: 'system', subtype: 'compact_boundary', compact_metadata: { post_tokens: 9_881 } })
+    // An older CLI names only what there was.
+    expect(stateOf(replay([...records, compacted({})]))?.context).toBeNull()
+  })
+
+  it('follows the permission mode as the CLI reports it change', () => {
+    const driver = new ClaudeStream('stage-1', OPTIONS)
+    const modes: Array<string | null> = []
+    for (const record of records) {
+      driver.apply(record)
+      const mode = stateOf(driver)?.permissionMode ?? null
+      if (modes.at(-1) !== mode) modes.push(mode)
+    }
+    expect(modes).toEqual([null, 'ask', 'plan', 'acceptEdits'])
+  })
+
+  it('carries a plan out in the mode asked for, where the stage offers it, and says which', () => {
+    const asks = records.findIndex((record) => record.dir === 'in' && JSON.stringify(record.frame).includes('"subtype":"can_use_tool","tool_name":"ExitPlanMode"'))
+    const requestId = JSON.parse(JSON.stringify(records[asks])).frame.request_id
+    // Not started to allow bypass, the stage refuses it; nor does planning carry a plan out.
+    const plain = replay(records.slice(0, asks + 1))
+    expect(() => plain.respond(requestId, { decision: 'allow', mode: 'bypass' })).toThrow(expect.objectContaining({ reason: 'chat-option-invalid' }))
+    expect(() => plain.respond(requestId, { decision: 'allow', mode: 'plan' })).toThrow(expect.objectContaining({ reason: 'chat-option-invalid' }))
+    const driver = replay(records.slice(0, asks + 1), { ...OPTIONS, allowBypass: true })
+    // The model it ran then has no auto mode.
+    expect(() => driver.respond(requestId, { decision: 'allow', mode: 'auto' })).toThrow(expect.objectContaining({ reason: 'chat-option-invalid' }))
+    const [answer] = driver.respond(requestId, { decision: 'allowForSession', mode: 'bypass' })
+    expect(answer).toMatchObject({ response: { response: { behavior: 'allow', updatedPermissions: [{ type: 'setMode', mode: 'bypassPermissions', destination: 'session' }] } } })
+    driver.apply({ dir: 'out', at: 1, frame: answer })
+    expect(ofKind(driver.items.list(), 'approval').at(-1)).toMatchObject({ resolution: 'allowedForSession', mode: 'bypass' })
+    expect(stateOf(driver)?.permissionMode).toBe('bypass')
+  })
+
+  it('records the mode a recorded plan was carried out in', () => {
+    expect(ofKind(replay(records).items.list(), 'approval').find((item) => item.tool === 'ExitPlanMode')).toMatchObject({ resolution: 'allowedForSession', mode: 'acceptEdits' })
+  })
+
+  it('knows the model before the first turn reports it', () => {
+    const init = records.findIndex((record) => record.dir === 'in' && JSON.stringify(record.frame).includes('"subtype":"init"'))
+    const before = records.slice(0, init)
+    expect(stateOf(replay(before))).toMatchObject({ model: 'opus', permissionModes: ['ask', 'acceptEdits', 'plan', 'auto'] })
+    expect(stateOf(replay(before, { ...OPTIONS, preferred: { model: 'sonnet' } }))?.model).toBe('sonnet')
+  })
+
+  it('reports the effort it was started with, which the settings leave out', () => {
+    const settled = records.findIndex((record) => record.dir === 'in' && JSON.stringify(record.frame).includes('"request_id":"conclave-settings"'))
+    const before = records.slice(0, settled + 1)
+    expect(stateOf(replay(before))?.effort).toBeNull()
+    expect(stateOf(replay(before, { ...OPTIONS, preferred: { effort: 'low' } }))?.effort).toBe('low')
+  })
+
+  it('offers auto only for a model that has it, and bypass only when the user allows it', () => {
+    const allowed = replay(records.map((record) => record), { ...OPTIONS, allowBypass: true })
+    expect(stateOf(allowed)?.permissionModes).toEqual(['ask', 'acceptEdits', 'plan', 'bypass'])
+    // The catalog says which models have it, for a chat that starts in it.
+    const models = stateOf(allowed)?.models ?? []
+    expect(models.find((model) => model.id === 'opus')?.autoMode).toBe(true)
+    expect(models.find((model) => model.id === 'haiku')?.autoMode).toBeUndefined()
+  })
+
+  it('turns task tool calls into a checklist instead of tool cards', () => {
+    const driver = replay(records)
+    const items = driver.items.list()
+    expect(ofKind(items, 'tool').map((tool) => tool.name)).not.toEqual(expect.arrayContaining(['TaskCreate', 'TaskUpdate', 'TaskList', 'ToolSearch']))
+    expect(stateOf(driver)?.todos).toEqual([
+      { content: 'Create notes.md file', status: 'completed', activeForm: null },
+      { content: 'Write two short lines to notes.md', status: 'completed', activeForm: null }
+    ])
+    // The first turn created and finished both; the second listed them unchanged.
+    expect(ofKind(items, 'todos').map((item) => item.id)).toEqual(['todos:ref-1'])
+  })
+
+  it('shows the plan an ExitPlanMode call proposes, and not the draft it wrote first', () => {
+    const tools = ofKind(replay(records).items.list(), 'tool')
+    const [plan] = tools.filter((tool) => tool.name === 'ExitPlanMode')
+    expect(plan).toMatchObject({ title: '计划', status: 'done' })
+    expect(plan?.input).toContain('# Add notes.md')
+    expect(tools.map((tool) => tool.title)).not.toContainEqual(expect.stringContaining('/.claude/plans/'))
+    expect(tools.filter((tool) => tool.name === 'Write')).toHaveLength(1)
+  })
+
+  it('keeps no account details from initialize in what it logs', () => {
+    const driver = new ClaudeStream('stage-1', OPTIONS)
+    const kept = driver.logged({
+      type: 'control_response',
+      response: { subtype: 'success', request_id: 'conclave-init', response: { account: { email: 'someone@example.com' }, commands: [{ name: 'x' }], current_permission_mode: 'default', models: [] } }
+    })
+    expect(JSON.stringify(kept)).not.toContain('example.com')
+  })
+})
+
+describe('ClaudeStream slash commands', () => {
+  const stateOf = (driver: ClaudeStream) => ofKind(driver.items.list(), 'state')[0]
+  const init: ChatRecord = { dir: 'out', at: 1, frame: { type: 'control_request', request_id: 'conclave-init', request: { subtype: 'initialize' } } }
+  const answer = (commands: unknown[]): ChatRecord => ({
+    dir: 'in',
+    at: 2,
+    frame: { type: 'control_response', response: { subtype: 'success', request_id: 'conclave-init', response: { commands, models: [], account: { email: 'someone@example.com' } } } }
+  })
+  const skill = { name: 'review-pr', description: `Review a pull request.\n${'More detail. '.repeat(40)}`, argumentHint: '<pr#>', aliases: ['rp'] }
+
+  it('offers the commands initialize lists, a line of each, and none of the CLI plumbing', () => {
+    const commands = stateOf(replay([init, answer([{ name: 'compact', description: 'Free up context', argumentHint: '' }, skill, { name: '__remote-workflow', description: '' }])]))?.commands
+    expect(commands).toEqual([
+      { name: 'compact', description: 'Free up context', argumentHint: null },
+      { name: 'review-pr', description: 'Review a pull request.', argumentHint: '<pr#>' }
+    ])
+  })
+
+  it('logs the commands it offers, so a replayed stage offers the same', () => {
+    const live = new ClaudeStream('stage-1', OPTIONS)
+    const records = [init, answer([skill])].map((record) => (record.dir === 'in' ? { ...record, frame: live.logged(record.frame) } : record))
+    expect(JSON.stringify(records)).not.toContain('example.com')
+    expect(stateOf(replay(records))?.commands).toEqual([{ name: 'review-pr', description: 'Review a pull request.', argumentHint: '<pr#>' }])
+  })
+
+  it('follows the commands as the CLI reports them change', () => {
+    const changed: ChatRecord = { dir: 'in', at: 3, frame: { type: 'system', subtype: 'commands_changed', commands: [{ name: 'init', description: 'Write CLAUDE.md' }] } }
+    const driver = new ClaudeStream('stage-1', OPTIONS)
+    expect(driver.logged(changed.frame)).toEqual({ type: 'system', subtype: 'commands_changed', commands: [{ name: 'init', description: 'Write CLAUDE.md', argumentHint: null }] })
+    expect(stateOf(replay([init, answer([skill]), changed]))?.commands.map((command) => command.name)).toEqual(['init'])
+  })
+
+  it('shows what a local command answers, which comes as a message of its own', () => {
+    const records: ChatRecord[] = [
+      init,
+      answer([]),
+      { dir: 'out', at: 3, frame: { type: 'user', message: { role: 'user', content: '/usage' } }, ref: 'ref-1' },
+      { dir: 'in', at: 4, frame: { type: 'system', subtype: 'init', session_id: 's-1', model: 'claude-haiku-4-5-20251001', permissionMode: 'default' } },
+      { dir: 'in', at: 5, frame: { type: 'assistant', message: { id: 'm-1', model: '<synthetic>', role: 'assistant', content: [{ type: 'text', text: 'Current session: 72% used' }] } } },
+      { dir: 'in', at: 6, frame: { type: 'result', subtype: 'success', is_error: false, num_turns: 0, result: '', session_id: 's-1' } }
+    ]
+    const driver = replay(records)
+    expect(ofKind(driver.items.list(), 'assistant').map((item) => item.text)).toEqual(['Current session: 72% used'])
+    expect(driver.activity()).toBe('idle')
+  })
+})
+
+describe('ClaudeStream options', () => {
+  // The recorded stage, still running: everything but its exit.
+  const live = () => replay(fixture('claude-options.jsonl').filter((record) => record.dir !== 'exit'))
+  const at = 2
+
+  it('switches the permission mode, even mid-turn, to one the stage offers', () => {
+    const driver = live()
+    expect(driver.setOption('permissionMode', 'ask')).toEqual([
+      { type: 'control_request', request_id: 'conclave-option-2', request: { subtype: 'set_permission_mode', mode: 'default' } }
+    ])
+    expect(() => driver.setOption('permissionMode', 'bypass')).toThrow(expect.objectContaining({ reason: 'chat-option-invalid' }))
+    expect(() => driver.setOption('permissionMode', 'readOnly')).toThrow(expect.objectContaining({ reason: 'chat-option-invalid' }))
+  })
+
+  it('switches the model and effort between turns only, to what the catalog lists', () => {
+    const driver = live()
+    const [frame] = driver.setOption('model', 'sonnet')
+    expect(frame).toMatchObject({ request: { subtype: 'set_model', model: 'sonnet' } })
+    expect(() => driver.setOption('model', 'gpt-6-sol')).toThrow(expect.objectContaining({ reason: 'chat-option-invalid' }))
+    // Haiku takes no effort at all.
+    expect(() => driver.setOption('effort', 'high')).toThrow(expect.objectContaining({ reason: 'chat-option-invalid' }))
+    driver.apply({ dir: 'out', at, frame })
+    driver.apply({ dir: 'in', at, frame: { type: 'control_response', response: { subtype: 'success', request_id: 'conclave-option-2' } } })
+    const state = ofKind(driver.items.list(), 'state')[0]
+    expect(state?.model).toBe('sonnet')
+    const [effort] = driver.setOption('effort', 'high')
+    expect(effort).toMatchObject({ request: { subtype: 'apply_flag_settings', settings: { effortLevel: 'high' } } })
+    driver.apply({ dir: 'out', at, frame: driver.send('go').wire, ref: 'ref-9' })
+    expect(() => driver.setOption('model', 'haiku')).toThrow(expect.objectContaining({ reason: 'chat-busy' }))
+  })
+
+  it('says so when the CLI refuses a switch', () => {
+    const driver = live()
+    driver.apply({ dir: 'out', at, frame: driver.setOption('model', 'sonnet')[0] })
+    driver.apply({ dir: 'in', at, frame: { type: 'control_response', response: { subtype: 'error', request_id: 'conclave-option-2', error: "Model 'sonnet' not found" } } })
+    expect(ofKind(driver.items.list(), 'notice').at(-1)?.text).toContain("Model 'sonnet' not found")
+    expect(ofKind(driver.items.list(), 'state')[0]?.model).toBe('haiku')
+  })
+
+  it("shows the user's note with a denial as their message, and nothing for a bare one", () => {
+    const start = () => {
+      const driver = new ClaudeStream('stage-1', OPTIONS)
+      driver.apply({ dir: 'out', at, frame: { type: 'control_request', request_id: 'conclave-init', request: { subtype: 'initialize' } } })
+      driver.apply({ dir: 'in', at, frame: { type: 'control_response', response: { subtype: 'success', request_id: 'conclave-init' } } })
+      driver.apply({ dir: 'out', at, frame: driver.send('plan it').wire, ref: 'ref-1' })
+      driver.apply({ dir: 'in', at, frame: { type: 'control_request', request_id: 'plan-1', request: { subtype: 'can_use_tool', tool_name: 'ExitPlanMode', input: { plan: '# Plan' }, tool_use_id: 'toolu_p' } } })
+      driver.apply({ dir: 'in', at, frame: { type: 'control_request', request_id: 'bash-1', request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'rm -rf build' }, tool_use_id: 'toolu_b' } } })
+      return driver
+    }
+    const noted = start()
+    noted.apply({ dir: 'out', at, frame: noted.respond('plan-1', { decision: 'deny', message: 'split step 2' })[0] })
+    noted.apply({ dir: 'out', at, frame: noted.respond('bash-1', { decision: 'deny', message: 'keep the build folder' })[0] })
+    expect(noted.items.get('a:plan-1')).toMatchObject({ resolution: 'denied' })
+    expect(ofKind(noted.items.list(), 'user').map((item) => item.text)).toEqual(['plan it', 'split step 2', 'keep the build folder'])
+    expect(noted.items.list().at(-1)).toMatchObject({ id: 'deny:bash-1', kind: 'user' })
+    const bare = start()
+    bare.apply({ dir: 'out', at, frame: bare.respond('plan-1', { decision: 'deny' })[0] })
+    bare.apply({ dir: 'out', at, frame: bare.respond('bash-1', { decision: 'deny' })[0] })
+    expect(ofKind(bare.items.list(), 'user').map((item) => item.text)).toEqual(['plan it'])
+    const saved = start()
+    saved.apply({ dir: 'out', at, frame: saved.respond('plan-1', { decision: 'deny', saved: true })[0] })
+    expect(ofKind(saved.items.list(), 'user').map((item) => item.text)).toEqual(['plan it'])
+  })
+
+  it('carries out an approved plan asking each edit, or taking edits as they come', () => {
+    const driver = new ClaudeStream('stage-1', OPTIONS)
+    driver.apply({ dir: 'out', at, frame: { type: 'control_request', request_id: 'conclave-init', request: { subtype: 'initialize' } } })
+    driver.apply({ dir: 'in', at, frame: { type: 'control_response', response: { subtype: 'success', request_id: 'conclave-init' } } })
+    driver.apply({ dir: 'out', at, frame: driver.send('plan it').wire, ref: 'ref-1' })
+    driver.apply({ dir: 'in', at, frame: { type: 'control_request', request_id: 'plan-1', request: { subtype: 'can_use_tool', tool_name: 'ExitPlanMode', input: { plan: '# Plan' }, tool_use_id: 'toolu_p' } } })
+    expect(driver.items.get('a:plan-1')).toMatchObject({ detail: '# Plan', decisions: ['allow', 'allowForSession', 'deny'] })
+    const [accept] = driver.respond('plan-1', { decision: 'allowForSession' })
+    expect(accept).toMatchObject({ response: { response: { behavior: 'allow', updatedPermissions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }] } } })
+    expect(driver.respond('plan-1', { decision: 'allow' })[0]).toMatchObject({ response: { response: { updatedPermissions: [{ mode: 'default' }] } } })
+    expect(driver.respond('plan-1', { decision: 'deny', message: 'split step 2' })[0])
+      .toMatchObject({ response: { response: { behavior: 'deny', message: 'Keep planning. split step 2' } } })
+    driver.apply({ dir: 'out', at, frame: accept })
+    expect(driver.items.get('a:plan-1')).toMatchObject({ resolution: 'allowedForSession' })
+  })
+})
+
+describe('ClaudeStream commands', () => {
+  const at = 1
+  const started = (options = OPTIONS) => {
+    const driver = new ClaudeStream('stage-1', options)
+    const [init] = driver.due()
+    driver.apply({ dir: 'out', at, frame: init })
+    driver.apply({ dir: 'in', at, frame: { type: 'control_response', response: { subtype: 'success', request_id: 'conclave-init' } } })
+    const [settings] = driver.due()
+    expect(settings).toMatchObject({ request_id: 'conclave-settings', request: { subtype: 'get_settings' } })
+    driver.apply({ dir: 'out', at, frame: settings })
+    return driver
+  }
+  const canUseTool = (requestId: string) => ({
+    type: 'control_request',
+    request_id: requestId,
+    request: {
+      subtype: 'can_use_tool',
+      tool_name: 'Bash',
+      input: { command: 'rm -rf build' },
+      tool_use_id: 'toolu_1',
+      permission_suggestions: [{ type: 'addRules', rules: [{ toolName: 'Bash' }], destination: 'session' }]
+    }
+  })
+
+  it('initializes before anything else and refuses a message until the agent answers', () => {
+    const driver = new ClaudeStream('stage-1', OPTIONS)
+    expect(driver.due()).toEqual([{ type: 'control_request', request_id: 'conclave-init', request: { subtype: 'initialize', perTaskStopAffordance: true } }])
+    driver.apply({ dir: 'out', at, frame: driver.due()[0] })
+    expect(driver.due()).toEqual([])
+    expect(() => driver.send('hi').wire).toThrow(expect.objectContaining({ reason: 'chat-starting' }))
+  })
+
+  it('takes one message at a time and waits on approvals', () => {
+    const driver = started()
+    const frame = driver.send('clean up').wire
+    expect(frame).toEqual({ type: 'user', message: { role: 'user', content: 'clean up' } })
+    driver.apply({ dir: 'out', at, frame, ref: 'ref-1' })
+    expect(driver.activity()).toBe('running')
+    expect(() => driver.send('again').wire).toThrow(expect.objectContaining({ reason: 'chat-busy' }))
+
+    driver.apply({ dir: 'in', at, frame: canUseTool('req-1') })
+    expect(driver.activity()).toBe('awaiting')
+    // rm is never remembered, whatever Claude suggests: allowing it lets this call through alone.
+    expect(driver.items.get('a:req-1')).toMatchObject({ decisions: ['allow', 'deny'] })
+    expect(driver.respond('req-1', { decision: 'allowForSession' })).toEqual([{
+      type: 'control_response',
+      response: {
+        subtype: 'success',
+        request_id: 'req-1',
+        response: { behavior: 'allow', updatedInput: { command: 'rm -rf build' } }
+      }
+    }])
+    driver.apply({ dir: 'out', at, frame: driver.respond('req-1', { decision: 'allow' })[0] })
+    expect(driver.activity()).toBe('running')
+    expect(driver.items.get('a:req-1')).toMatchObject({ resolution: 'allowed' })
+    expect(() => driver.respond('req-1', { decision: 'deny' })).toThrow(expect.objectContaining({ reason: 'chat-request-gone' }))
+  })
+
+  it('says what remembering a call would let through, and answers by the choice picked', () => {
+    const driver = started()
+    driver.apply({ dir: 'out', at, frame: driver.send('fetch').wire, ref: 'ref-1' })
+    // Claude suggests the command whole; Conclave keeps it by what it does, for this project.
+    const claudes = [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'git fetch origin main --prune' }], behavior: 'allow', destination: 'localSettings' }]
+    const suggestions = [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'git fetch *' }], behavior: 'allow', destination: 'localSettings' }]
+    const request = canUseTool('req-2')
+    const fetching = { ...request.request, input: { command: 'git fetch origin main --prune' }, permission_suggestions: claudes }
+    driver.apply({ dir: 'in', at, frame: { ...request, request: { ...fetching, decision_reason: 'Brace expansion' } } })
+    expect(driver.items.get('a:req-2')).toMatchObject({
+      reason: 'Brace expansion',
+      choices: [
+        { id: 'allow', decision: 'allow', grants: [] },
+        { id: 'allowForSession', decision: 'allowForSession', grants: [{ kind: 'rules', values: ['Bash(git fetch *)'], scope: 'local', behavior: 'allow' }] },
+        { id: 'deny', decision: 'deny', grants: [] }
+      ]
+    })
+    // Any other tool keeps what Claude suggests, which goes by the tool already.
+    const web = [{ type: 'addRules', rules: [{ toolName: 'WebFetch', ruleContent: 'domain:example.com' }], behavior: 'allow', destination: 'localSettings' }]
+    driver.apply({ dir: 'in', at, frame: { ...request, request_id: 'req-4', request: { ...request.request, tool_name: 'WebFetch', input: { url: 'https://example.com' }, permission_suggestions: web } } })
+    expect(driver.items.get('a:req-4')).toMatchObject({ choices: [{ id: 'allow' }, { id: 'allowForSession', grants: [{ kind: 'rules', values: ['WebFetch(domain:example.com)'] }] }, { id: 'deny' }] })
+    driver.apply({ dir: 'in', at, frame: { ...request, request_id: 'req-3', request: { ...request.request, decision_reason: 'This command requires approval' } } })
+    expect(driver.items.get('a:req-3')).toMatchObject({ reason: null })
+    expect(() => driver.respond('req-2', { decision: 'allow', choice: 'always' })).toThrow(expect.objectContaining({ reason: 'chat-option-invalid' }))
+    const [answer] = driver.respond('req-2', { decision: 'allow', choice: 'allowForSession' })
+    expect(answer).toMatchObject({ response: { response: { behavior: 'allow', updatedPermissions: suggestions } } })
+    driver.apply({ dir: 'out', at, frame: answer })
+    expect(driver.items.get('a:req-2')).toMatchObject({ resolution: 'allowedForSession', chosen: 'allowForSession' })
+  })
+
+  it('keeps a stage that may only plan from carrying its plan out, and keeps the plan when asked', () => {
+    const driver = started({ ...OPTIONS, planOnly: true, allowBypass: true })
+    expect(ofKind(driver.items.list(), 'state')[0]?.permissionModes).toEqual(['plan'])
+    expect(() => driver.setOption('permissionMode', 'acceptEdits')).toThrow(expect.objectContaining({ reason: 'chat-option-invalid' }))
+    driver.apply({ dir: 'out', at, frame: driver.send('plan it').wire, ref: 'ref-1' })
+    const plan = { type: 'control_request', request_id: 'req-p', request: { subtype: 'can_use_tool', tool_name: 'ExitPlanMode', input: { plan: '# Plan' }, tool_use_id: 'toolu_p' } }
+    driver.apply({ dir: 'in', at, frame: plan })
+    expect(() => driver.respond('req-p', { decision: 'allowForSession' })).toThrow(expect.objectContaining({ reason: 'plan-only' }))
+    expect(() => driver.respond('req-p', { decision: 'allow' })).toThrow(expect.objectContaining({ reason: 'plan-only' }))
+    const [kept] = driver.respond('req-p', { decision: 'deny', saved: true })
+    expect(kept).toMatchObject({ response: { response: { behavior: 'deny', message: expect.stringContaining('saved to the task') } } })
+    driver.apply({ dir: 'out', at, frame: kept })
+    expect(driver.items.get('a:req-p')).toMatchObject({ resolution: 'denied' })
+  })
+
+  it('interrupts by denying what waits and asking the agent to stop', () => {
+    const driver = started()
+    driver.apply({ dir: 'out', at, frame: driver.send('go').wire, ref: 'ref-1' })
+    driver.apply({ dir: 'in', at, frame: canUseTool('req-2') })
+    const frames = driver.interrupt()
+    expect(frames).toEqual([
+      { type: 'control_response', response: { subtype: 'success', request_id: 'req-2', response: { behavior: 'deny', message: 'The user interrupted the turn.', interrupt: true } } },
+      { type: 'control_request', request_id: 'conclave-interrupt-1', request: { subtype: 'interrupt' } }
+    ])
+    frames.forEach((frame) => driver.apply({ dir: 'out', at, frame }))
+    expect(driver.interrupt().at(-1)).toMatchObject({ request_id: 'conclave-interrupt-2' })
+    // Stopping decided nothing about the call itself.
+    expect(driver.items.get('a:req-2')).toMatchObject({ resolution: 'cancelled' })
+  })
+
+  it('marks calls the user stopped as interrupted rather than failed', () => {
+    const driver = started()
+    const call = (id: string, command: string) => ({ type: 'assistant', parent_tool_use_id: null, message: { id: `msg-${id}`, content: [{ type: 'tool_use', id, name: 'Bash', input: { command } }] } })
+    const failed = (id: string) => ({ type: 'user', parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, is_error: true, content: 'Exit code 1' }] } })
+    driver.apply({ dir: 'out', at, frame: driver.send('go').wire, ref: 'ref-1' })
+    driver.apply({ dir: 'in', at, frame: call('toolu_1', 'false') })
+    driver.apply({ dir: 'in', at, frame: failed('toolu_1') })
+    driver.apply({ dir: 'in', at, frame: call('toolu_2', 'sleep 4') })
+    driver.apply({ dir: 'in', at, frame: call('toolu_3', 'sleep 5') })
+    driver.interrupt().forEach((frame) => driver.apply({ dir: 'out', at, frame }))
+    driver.apply({ dir: 'in', at, frame: failed('toolu_2') })
+    driver.apply({ dir: 'in', at, frame: { type: 'result', subtype: 'error_during_execution', is_error: true, terminal_reason: 'aborted_tools' } })
+    expect(ofKind(driver.items.list(), 'tool').map((tool) => [tool.title, tool.status])).toEqual([
+      ['false', 'failed'],
+      ['sleep 4', 'interrupted'],
+      ['sleep 5', 'interrupted']
+    ])
+    // Text saying "Exit code 1" is not independent proof that a command completed.
+    expect(ofKind(driver.items.list(), 'tool').map((tool) => tool.execution)).toEqual([undefined, undefined, undefined])
+  })
+
+  it('asks for suggestions at initialize when the user has them on', () => {
+    const driver = new ClaudeStream('stage-1', { ...OPTIONS, promptSuggestions: true })
+    expect(driver.due()).toEqual([{ type: 'control_request', request_id: 'conclave-init', request: { subtype: 'initialize', perTaskStopAffordance: true, promptSuggestions: true } }])
+  })
+
+  it('offers the suggested next message from the end of a turn until the next message', () => {
+    const driver = started({ ...OPTIONS, promptSuggestions: true })
+    const suggest = (suggestion: string) => driver.apply({ dir: 'in', at, frame: { type: 'prompt_suggestion', suggestion, uuid: 'u-1', session_id: 's-1' } })
+    const first = driver.send('fix the bug').wire
+    driver.apply({ dir: 'out', at, frame: first, ref: 'ref-1' })
+    suggest('too early')
+    expect(driver.suggestion()).toBeNull()
+
+    driver.apply({ dir: 'in', at, frame: { type: 'result', subtype: 'success', is_error: false, duration_ms: 1000 } })
+    suggest('  run the tests ')
+    expect(driver.suggestion()).toBe('run the tests')
+
+    driver.apply({ dir: 'out', at, frame: driver.send('run the tests').wire, ref: 'ref-2' })
+    expect(driver.suggestion()).toBeNull()
+  })
+
+  it('pauses suggestions only in a stage that asked for them, and drops the one showing', () => {
+    expect(started().pauseSuggestions(true)).toEqual([])
+    const driver = started({ ...OPTIONS, promptSuggestions: true })
+    driver.apply({ dir: 'in', at, frame: { type: 'prompt_suggestion', suggestion: 'commit this', uuid: 'u-1', session_id: 's-1' } })
+    const [pause] = driver.pauseSuggestions(true)
+    expect(pause).toEqual({ type: 'control_request', request_id: 'conclave-suggestions-1', request: { subtype: 'set_prompt_suggestions_paused', paused: true } })
+    driver.apply({ dir: 'out', at, frame: pause })
+    expect(driver.suggestion()).toBeNull()
+    expect(driver.pauseSuggestions(false)).toEqual([expect.objectContaining({ request_id: 'conclave-suggestions-2' })])
+    // The CLI's answer is Conclave's own, so it is kept rather than treated as a stranger's.
+    expect(driver.logged({ type: 'control_response', response: { subtype: 'success', request_id: 'conclave-suggestions-1' } })).toEqual({
+      type: 'control_response', response: { subtype: 'success', request_id: 'conclave-suggestions-1' }
+    })
+  })
+
+  it('answers a control request it does not handle with an error, once', () => {
+    const driver = started()
+    driver.apply({ dir: 'in', at, frame: { type: 'control_request', request_id: 'hook-1', request: { subtype: 'hook_callback' } } })
+    const [reply] = driver.due()
+    expect(reply).toMatchObject({ type: 'control_response', response: { subtype: 'error', request_id: 'hook-1' } })
+    driver.apply({ dir: 'out', at, frame: reply })
+    expect(driver.due()).toEqual([])
+  })
+
+  it('closes what an exit leaves open and says why a start failed', () => {
+    const early = new ClaudeStream('stage-1', OPTIONS)
+    early.apply({ dir: 'out', at, frame: early.due()[0] })
+    early.apply({ dir: 'exit', at, code: 1, stderr: 'Invalid API key' })
+    expect(early.failure()).toBe('exited')
+    expect(ofKind(early.items.list(), 'notice')[0]?.text).toContain('Invalid API key')
+
+    const driver = started()
+    driver.apply({ dir: 'out', at, frame: driver.send('go').wire, ref: 'ref-1' })
+    driver.apply({ dir: 'in', at, frame: canUseTool('req-3') })
+    driver.apply({ dir: 'exit', at, code: 143, stderr: '' })
+    expect(driver.items.get('a:req-3')).toMatchObject({ resolution: 'cancelled' })
+    expect(driver.items.get('turn:ref-1')).toMatchObject({ state: 'interrupted' })
+    expect(driver.activity()).toBe('idle')
+  })
+  it('shows an image as its bytes before the text, and logs the message without them', () => {
+    const driver = started()
+    const image = { id: `${'a'.repeat(64)}.png`, width: 4, height: 3, mime: 'image/png' as const, path: '/store/a.png', read: () => Uint8Array.from([1, 2, 3]) }
+    const { wire, logged } = driver.send('what is this', [image])
+    expect(wire).toEqual({ type: 'user', message: { role: 'user', content: [
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AQID' } },
+      { type: 'text', text: 'what is this' }
+    ] } })
+    expect(logged).toEqual({ type: 'user', message: { role: 'user', content: 'what is this' } })
+    expect(driver.send('', [image]).wire).toMatchObject({ message: { content: [{ type: 'image' }] } })
+    const big = { ...image, read: () => new Uint8Array(5 * 1024 * 1024 + 1) }
+    expect(() => driver.send('x', [big])).toThrow(expect.objectContaining({ reason: 'chat-image-too-large' }))
+    driver.apply({ dir: 'out', at, frame: logged, ref: 'ref-1', images: [{ id: image.id, width: 4, height: 3 }] })
+    expect(driver.items.get('u:ref-1')).toMatchObject({ kind: 'user', text: 'what is this', images: [{ id: image.id, width: 4, height: 3 }] })
+    expect(driver.takeMessages()).toEqual([{ role: 'user', text: 'what is this\n\n（附了 1 张图片）', eventKey: 'chat:ref-1:user', complete: false }])
+  })
+})
+
+describe('ClaudeStream usage limits', () => {
+  const at = 1_790_000_000_000
+  const turn = (frames: unknown[]): ChatRecord[] => [
+    { dir: 'out', at, frame: { type: 'user', message: { role: 'user', content: 'go on' } }, ref: 'ref-1' },
+    { dir: 'in', at, frame: { type: 'system', subtype: 'init', session_id: 's-1' } },
+    ...frames.map((frame): ChatRecord => ({ dir: 'in', at, frame }))
+  ]
+  const refused = {
+    type: 'rate_limit_event',
+    rate_limit_info: { status: 'rejected', rateLimitType: 'five_hour', resetsAt: 1_790_003_600, overageStatus: 'rejected', isUsingOverage: false, unifiedWindows: { five_hour: { utilization: 1, resetsAt: 1_790_003_600 } } },
+    uuid: 'u-1',
+    session_id: 's-1'
+  }
+  const failed = (result: string) => ({ type: 'result', subtype: 'success', is_error: true, result, duration_ms: 40 })
+  const limits = (driver: ClaudeStream) => ofKind(driver.items.list(), 'usageLimit')
+
+  it('follows a turn the limit refused with a limit item, and keeps the refusal so a replay agrees', () => {
+    const records = turn([refused, failed("You've hit your session limit · resets 8pm")])
+    const live = replay(records)
+    expect(limits(live)).toEqual([expect.objectContaining({ id: 'limit:ref-1', message: "You've hit your session limit · resets 8pm", resetsAt: 1_790_003_600_000, status: 'waiting' })])
+
+    const logger = new ClaudeStream('stage-1', OPTIONS)
+    const kept = records.flatMap((record): ChatRecord[] => {
+      if (record.dir !== 'in') return [record]
+      const frame = logger.logged(record.frame)
+      return frame === null ? [] : [{ ...record, frame }]
+    })
+    // The refusal is kept, but not the numbers that go out live only.
+    expect(JSON.stringify(kept)).not.toContain('unifiedWindows')
+    expect(shown(replay(kept).items.list())).toEqual(shown(live.items.list()))
+  })
+
+  it('knows the limit from the words alone, with the reset the old wording gave', () => {
+    expect(limits(replay(turn([failed('Claude AI usage limit reached|1790003600')]))).map((item) => item.resetsAt)).toEqual([1_790_003_600_000])
+    expect(limits(replay(turn([failed("You've reached your weekly limit")]))).map((item) => item.resetsAt)).toEqual([null])
+  })
+
+  it('leaves other failures alone, and a refusal the turn got past', () => {
+    expect(limits(replay(turn([failed('API Error: 429 rate_limit_error')])))).toEqual([])
+    expect(limits(replay(turn([failed("You're out of usage credits")])))).toEqual([])
+    const allowed = { type: 'result', subtype: 'success', is_error: false, result: 'done', duration_ms: 40 }
+    expect(limits(replay(turn([refused, allowed])))).toEqual([])
+    // The refusal does not linger into the next turn.
+    const next = replay([...turn([refused, allowed]), ...turn([failed('API Error: 500')]).slice(0, 1).map((record) => ({ ...record, ref: 'ref-2' })), { dir: 'in', at, frame: failed('API Error: 500') }])
+    expect(limits(next)).toEqual([])
+  })
+
+  it('keeps a picture a tool returns in its bytes and logs its marker instead; a Read of an image file is left to its path', () => {
+    const id = `${'b'.repeat(64)}.png`
+    const taken: string[] = []
+    const driver = new ClaudeStream('stage-1', { ...OPTIONS, keepImage: (data) => { taken.push(data); return { id, width: 8, height: 6 } } })
+    const call = (useId: string, name: string, input: object) =>
+      ({ type: 'assistant', message: { id: `m-${useId}`, content: [{ type: 'tool_use', id: useId, name, input }] }, parent_tool_use_id: null })
+    const result = (useId: string, content: unknown[]) =>
+      ({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: useId, content }] }, parent_tool_use_id: null })
+    const picture = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } }
+    const frames = [
+      call('t1', 'mcp__playwright__browser_take_screenshot', {}), result('t1', [picture, { type: 'text', text: 'saved' }]),
+      call('t2', 'Read', { file_path: '/tmp/shot.png' }), result('t2', [picture])
+    ]
+    const logged = frames.map((frame) => {
+      driver.apply({ dir: 'in', at: 1, frame })
+      return driver.logged(frame)
+    })
+    expect(taken).toEqual(['AAAA'])
+    expect(driver.items.get('t:t1')).toMatchObject({ output: 'saved', images: [{ id, width: 8, height: 6 }] })
+    expect(driver.items.get('t:t2')).toMatchObject({ output: '[图片]' })
+    expect(driver.items.get('t:t2')).not.toHaveProperty('images')
+    expect(JSON.stringify(logged)).not.toContain('AAAA')
+    expect(JSON.stringify(logged[1])).toContain(`[conclave-image ${id} 8x6]`)
+
+    const replayed = replay(logged.flatMap((frame) => (frame === null ? [] : [{ dir: 'in' as const, at: 1, frame }])))
+    expect(replayed.items.get('t:t1')).toMatchObject({ output: 'saved', images: [{ id, width: 8, height: 6 }] })
+  })
+
+  it("shows Conclave's own screenshot once, from its image block like any tool's picture", () => {
+    const id = `${'c'.repeat(64)}.jpg`
+    const taken: string[] = []
+    const driver = new ClaudeStream('stage-1', { ...OPTIONS, keepImage: (data) => { taken.push(data); return { id, width: 1400, height: 1100 } } })
+    const call = { type: 'assistant', message: { id: 'm-shot', content: [{ type: 'tool_use', id: 'shot', name: 'mcp__conclave__browser_screenshot', input: {} }] }, parent_tool_use_id: null }
+    const result = { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'shot', content: [
+      { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'AAAA' } },
+      { type: 'text', text: '截图已保存，用户在对话里能看到这张图。' }
+    ] }] }, parent_tool_use_id: null }
+    const logged = [call, result].map((frame) => {
+      driver.apply({ dir: 'in', at: 1, frame })
+      return driver.logged(frame)
+    })
+    expect(taken).toEqual(['AAAA'])
+    expect(driver.items.get('t:shot')).toMatchObject({ output: '截图已保存，用户在对话里能看到这张图。', images: [{ id, width: 1400, height: 1100 }] })
+    expect(JSON.stringify(logged).split('[conclave-image').length - 1).toBe(1)
+    expect(JSON.stringify(logged)).not.toContain('AAAA')
+  })
+})
+
+describe('ClaudeStream stopping background work', () => {
+  // Claude Code 2.1.288: sleep 300 run with run_in_background, the turn over, then stop_task asked
+  // for its task: the task reports stopped, and the CLI starts no turn for it.
+  const records = fixture('claude-background-stop.jsonl')
+  const asked = records.findIndex((record) => record.dir === 'out' && JSON.stringify(record.frame).includes('stop_task'))
+
+  it('marks a task running in the background as one the chat can stop, and stops it by its task', () => {
+    const driver = replay(records.slice(0, asked))
+    const [command] = ofKind(driver.items.list(), 'tool')
+    expect(command).toMatchObject({ name: 'Bash', status: 'running', background: true, stoppable: true })
+    expect(driver.stopBackground(command!.id)).toEqual([{ type: 'control_request', request_id: 'conclave-stop-1', request: { subtype: 'stop_task', task_id: 'b4o6yi9l9' } }])
+    expect(() => driver.stopBackground('t:nothing')).toThrow('not running in the background')
+  })
+
+  it('says the user stopped it, and lets the stage go idle', () => {
+    const driver = replay(records)
+    const [command] = ofKind(driver.items.list(), 'tool')
+    expect(command).toMatchObject({ status: 'interrupted', stopReason: 'user' })
+    expect(driver.activity()).toBe('idle')
+    expect(() => driver.stopBackground(command!.id)).toThrow('not running in the background')
+    expect(ofKind(driver.items.list(), 'turn')).toHaveLength(1)
+  })
+
+  it('numbers its stops past those in the log, and says when the CLI could not stop one', () => {
+    const before = records.slice(0, asked)
+    const driver = replay([...before, records[asked]!])
+    expect(driver.logged({ type: 'control_response', response: { subtype: 'success', request_id: 'conclave-stop-1', response: {} } })).not.toBeNull()
+    driver.apply({ dir: 'in', at: 9_000, frame: { type: 'control_response', response: { subtype: 'error', request_id: 'conclave-stop-1', error: 'stop_task is not supported' } } })
+    expect(ofKind(driver.items.list(), 'notice').map((notice) => notice.text)).toEqual(['没能停止后台任务：stop_task is not supported'])
+    expect(driver.stopBackground(ofKind(driver.items.list(), 'tool')[0]!.id)).toMatchObject([{ request_id: 'conclave-stop-2' }])
+  })
+})
+
+describe('ClaudeStream background tasks, as recorded', () => {
+  // Claude Code 2.1.288: a command run with run_in_background, the turn ending while it runs, its
+  // task reporting, and the turn the CLI then starts for it, as Conclave logged them.
+  const records = fixture('claude-background-command.jsonl')
+  const reported = records.findIndex((record) => record.dir === 'in' && JSON.stringify(record.frame).includes('task_notification'))
+
+  it('keeps a background command running, and the stage busy, after its turn ends', () => {
+    const driver = replay(records.slice(0, reported))
+    const [command] = ofKind(driver.items.list(), 'tool')
+    expect(command).toMatchObject({ name: 'Bash', status: 'running', background: true })
+    expect(command?.execution).toBeUndefined()
+    expect(command?.output).toContain('Command running in background')
+    expect(driver.activity()).toBe('running')
+    expect(ofKind(driver.items.list(), 'state')[0]?.activity).toBe('等 1 个后台命令结束')
+  })
+
+  it('settles the command when it reports, and names it as what opened the next turn', () => {
+    const driver = replay(records)
+    const [command] = ofKind(driver.items.list(), 'tool')
+    expect(command).toMatchObject({ status: 'done', background: true })
+    expect(command?.execution).toEqual({ status: 'completed', exitCode: null })
+    expect(command?.output).toContain('completed (exit code 0)')
+    expect(ofKind(driver.items.list(), 'turn').map((turn) => [turn.resumed ?? false, turn.resumedBy ?? null])).toEqual([[false, null], [true, 'command']])
+    expect(driver.activity()).toBe('idle')
+  })
+
+  // Claude Code 2.1.288: one command with a 15 s timeout stopped at it, one with none stopped by the agent.
+  it('keeps a background command\'s time limit, and tells a stop at it from one by the agent', () => {
+    const commands = ofKind(replay(fixture('claude-background-limit.jsonl')).items.list(), 'tool').filter((tool) => tool.name === 'Bash')
+    expect(commands.map((tool) => [tool.title, tool.status, tool.backgroundLimitMs ?? null, tool.stopReason ?? null])).toEqual([
+      ['sleep 90', 'interrupted', 15000, 'timeLimit'],
+      ['sleep 300', 'interrupted', null, null]
+    ])
+  })
+
+  // The same session's Monitor: a command watched in the background, its limit timeout_ms.
+  it('shows a Monitor as the command it watches, under what the agent said it waits for', () => {
+    const monitor = ofKind(replay(fixture('claude-background-limit.jsonl')).items.list(), 'tool').find((tool) => tool.name === 'Monitor')
+    expect(monitor).toMatchObject({
+      title: 'until [ -s /tmp/bg-test ]; do sleep 2; done; echo "Step 1 completed"',
+      description: 'waiting for step 1 timeout',
+      input: 'until [ -s /tmp/bg-test ]; do sleep 2; done; echo "Step 1 completed"',
+      background: true,
+      backgroundLimitMs: 35000,
+      status: 'done'
+    })
+  })
+
+  it('tells a failed command from a subagent, and leaves out the turn the CLI opened and closed on nothing', () => {
+    const driver = replay(fixture('claude-background-mixed.jsonl'))
+    const tools = ofKind(driver.items.list(), 'tool')
+    expect(tools.map((tool) => [tool.name, tool.status, tool.background ?? false])).toEqual([['Bash', 'failed', true], ['Agent', 'done', true]])
+    expect(tools.map((tool) => tool.execution)).toEqual([{ status: 'failed', exitCode: null }, undefined])
+    // The subagent's notification opened a turn with no request in it; the command's then answered both.
+    expect(ofKind(driver.items.list(), 'turn').map((turn) => turn.resumedBy ?? null)).toEqual([null, 'command'])
+  })
+
+  it('shows no turn for one the CLI opens after a report and ends on nothing', () => {
+    const turns = (list: readonly ChatRecord[]) => ofKind(replay(list).items.list(), 'turn').length
+    const empty: ChatRecord[] = [
+      { dir: 'in', at: 99_000, frame: { type: 'system', subtype: 'init', session_id: 'x' } },
+      { dir: 'in', at: 99_016, frame: { type: 'result', subtype: 'success', is_error: false, num_turns: 0, duration_ms: 16, result: '', usage: { input_tokens: 0, output_tokens: 0 } } }
+    ]
+    expect(turns([...records, ...empty])).toBe(turns(records))
+  })
+
+  it('lets a command still running go when the agent exits', () => {
+    const driver = replay([...records.slice(0, reported), { dir: 'exit', at: 99_999, code: 0, stderr: '' }])
+    expect(ofKind(driver.items.list(), 'tool')[0]?.status).toBe('interrupted')
+  })
+})

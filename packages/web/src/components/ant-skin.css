@@ -1,0 +1,182 @@
+/* The built-in ant. A pose animates a few numbers and the figure follows: how far the legs swing
+   (gait), whether the front pair is raised (hold), whether the head looks about (curious), how
+   much it slumps (rest). Registered so they interpolate, and so one pose blends into the next
+   without a jump. Where it looks comes from the stage every frame as --ant-look-x / --ant-look-y. */
+@property --ant-gait { syntax: '<number>'; inherits: true; initial-value: 0; }
+@property --ant-hold { syntax: '<number>'; inherits: true; initial-value: 0; }
+@property --ant-curious { syntax: '<number>'; inherits: true; initial-value: 0; }
+@property --ant-rest { syntax: '<number>'; inherits: true; initial-value: 0; }
+@property --ant-swing { syntax: '<number>'; inherits: false; initial-value: 0; }
+@property --ant-lift { syntax: '<number>'; inherits: false; initial-value: 0; }
+
+.ant-skin {
+  --ant-step: .42s; --ant-offset: 0s; --ant-sway: 2.5deg; --ant-look-x: 0; --ant-look-y: 0;
+  display: block; width: 100%; height: 100%; overflow: visible;
+  transition: --ant-gait .15s, --ant-hold .3s, --ant-curious .3s, --ant-rest .4s;
+}
+.ant-skin :is(.ant-leg, .ant-antenna path) { stroke-width: 4; }
+
+/* Figure */
+.ant-shell { fill: var(--ant-body); }
+.ant-sheen { fill: var(--ant-sheen); opacity: .42; }
+.ant-stripe { fill: none; stroke: var(--ant-limb); stroke-width: 1.5; stroke-linecap: round; opacity: .55; }
+.ant-leg, .ant-antenna path { fill: none; stroke: var(--ant-limb); stroke-linecap: round; stroke-linejoin: round; }
+.ant-antenna circle { fill: var(--ant-limb); }
+.ant-legs-far, .ant-antenna-far { opacity: .6; }
+.ant-eye-white, .ant-glint { fill: var(--ant-eye); }
+.ant-pupil { fill: var(--ant-pupil); }
+.ant-eye-closed, .ant-smile, .ant-frown { fill: none; stroke: var(--ant-sheen); stroke-width: 1.6; stroke-linecap: round; }
+.ant-frown { display: none; }
+.ant-blush { fill: var(--ant-blush); opacity: .5; }
+.ant-speed { display: none; fill: none; stroke: var(--ant-limb); stroke-width: 3; stroke-linecap: round; opacity: .35; }
+.ant-spark { fill: none; stroke: var(--status-done); stroke-width: 1.8; stroke-linecap: round; opacity: 0; }
+.ant-snore { fill: var(--text-3); font: 600 9px var(--font); }
+.ant-snore text + text { font-size: 7px; }
+.ant-snore text { animation: ant-snore 2.4s ease-in-out infinite; }
+.ant-snore text + text { animation-delay: -1.2s; }
+
+.ant-pose { transform-origin: 48px 70px; }
+.ant-figure {
+  transform-origin: 48px 70px;
+  transform: translateY(calc(var(--ant-swing) * var(--ant-gait) * -1.2px));
+  animation: ant-bounce calc(var(--ant-step) / 2) var(--ant-offset) ease-in-out infinite alternate;
+}
+/* The abdomen trails the body a beat behind: the one bit of follow-through that makes it read as soft. */
+.ant-gaster {
+  transform-origin: 42px 44px;
+  transform: rotate(calc(var(--ant-swing) * var(--ant-gait) * 2.5deg));
+  animation: ant-bounce calc(var(--ant-step) / 2) calc(var(--ant-offset) - .08s) ease-in-out infinite alternate;
+}
+.ant-head {
+  transform-origin: 62px 38px;
+  transform: rotate(calc(var(--ant-curious) * -7deg + var(--ant-rest) * 7deg + var(--ant-look-y) * -12deg));
+  transition: transform .18s ease-out;
+}
+.ant-gaze { transform: translate(calc(var(--ant-look-x) * 1.4px), calc(var(--ant-look-y) * -1.4px)); transition: transform .12s ease-out; }
+.ant-antenna {
+  transform: rotate(calc(var(--ant-hold) * 30deg - var(--ant-curious) * 16deg + var(--ant-rest) * 34deg + var(--ant-swing) * 1deg + var(--ant-look-y) * -10deg));
+  animation: ant-feel 1.7s ease-in-out infinite alternate;
+  transition: transform .2s ease-out;
+}
+.ant-antenna-near { transform-origin: 74px 20px; }
+.ant-antenna-far { transform-origin: 68px 20px; animation-duration: 2.1s; animation-delay: -.7s; }
+.ant-eye { transform-origin: 77px 28px; animation: ant-blink 4.6s infinite; }
+
+.ant-leg {
+  transform: translateY(calc(var(--ant-lift) * var(--ant-gait) * -2.4px)) rotate(calc(var(--ant-swing) * var(--ant-gait) * 1deg));
+  animation: ant-stride var(--ant-step) var(--ant-offset) linear infinite;
+}
+.ant-leg[data-tripod='b'] { animation-delay: calc(var(--ant-offset) - var(--ant-step) / 2); }
+/* The front pair is the arms: at hold 1 the thigh swings up and the shin reaches forward. */
+.ant-leg-front {
+  transform: translateY(calc(var(--ant-lift) * var(--ant-gait) * (1 - var(--ant-hold)) * -2.4px))
+    rotate(calc(var(--ant-hold) * -100deg + var(--ant-swing) * var(--ant-gait) * (1 - var(--ant-hold)) * 1deg));
+}
+.ant-tibia { transform: rotate(calc(var(--ant-hold) * var(--ant-tibia-hold))); }
+.ant-leg-fn { transform-origin: 58px 46px; --ant-tibia-hold: -62deg; }
+.ant-leg-fn .ant-tibia { transform-origin: 66px 52px; }
+.ant-leg-ff { transform-origin: 61px 45px; --ant-tibia-hold: -52deg; }
+.ant-leg-ff .ant-tibia { transform-origin: 70px 51px; }
+.ant-leg-mn { transform-origin: 53px 47px; }
+.ant-leg-mf { transform-origin: 56px 46px; }
+.ant-leg-hn { transform-origin: 48px 46px; }
+.ant-leg-hf { transform-origin: 51px 45px; }
+
+/* Parcel (the nap's pillow) */
+.ant-parcel :is(path, rect) { stroke: var(--ant-parcel-line); stroke-width: 2; stroke-linejoin: round; }
+.ant-parcel-front { fill: var(--ant-parcel); }
+.ant-parcel-top { fill: var(--ant-parcel-top); }
+.ant-parcel-side { fill: var(--ant-parcel-side); }
+.ant-parcel .ant-parcel-tape { fill: var(--ant-parcel-tape); stroke: none; opacity: .85; }
+.ant-parcel .ant-parcel-mark { fill: none; stroke-linecap: round; opacity: .55; }
+.ant-cargo-rest { transform: translate(10px, 70px); }
+
+@keyframes ant-stride {
+  0% { --ant-swing: -13; --ant-lift: 0; }
+  60% { --ant-swing: 13; --ant-lift: 0; }
+  80% { --ant-lift: 1; }
+  100% { --ant-swing: -13; --ant-lift: 0; }
+}
+@keyframes ant-bounce { from { --ant-swing: 0; } to { --ant-swing: 1; } }
+@keyframes ant-feel { from { --ant-swing: -6; } to { --ant-swing: 9; } }
+@keyframes ant-blink { 0%, 93%, 100% { transform: none; } 95% { transform: scaleY(.1); } }
+@keyframes ant-spark { 0% { opacity: 0; transform: translate(48px, -2px) scale(.4); } 30% { opacity: 1; transform: translate(48px, -2px); } 100% { opacity: 0; transform: translate(48px, -2px) scale(1.15); } }
+@keyframes ant-breathe { 50% { transform: scale(1.04); } }
+@keyframes ant-snore { 0%, 100% { opacity: 0; transform: translateY(2px); } 40%, 70% { opacity: 1; transform: none; } }
+@keyframes ant-hop { 0% { transform: none; } 20% { transform: scale(1.08, .9); } 45% { transform: translateY(-12px) scale(.96, 1.06); } 75% { transform: translateY(1px) scale(1.06, .94); } 100% { transform: none; } }
+@keyframes ant-wave { 0%, 100% { transform: rotate(-100deg); } 50% { transform: rotate(-135deg); } }
+@keyframes ant-nod { from { transform: rotate(calc(var(--ant-look-y) * -12deg - 4deg)); } to { transform: rotate(calc(var(--ant-look-y) * -12deg + 5deg)); } }
+@keyframes ant-dangle { from { transform: rotate(-6deg); } to { transform: rotate(6deg); } }
+@keyframes ant-sway { from { transform: rotate(-2.5deg); } to { transform: rotate(2.5deg); } }
+@keyframes ant-speed { from { stroke-dashoffset: 0; opacity: .35; } to { stroke-dashoffset: -24; opacity: 0; } }
+@keyframes ant-sulk { 0%, 100% { transform: translateY(3px); } 50% { transform: translateY(4px); } }
+
+/* Walking: the legs stride, everything else bobs along. */
+.ant-skin[data-walking] { --ant-gait: 1; }
+
+/* Working: busy in place, head nodding, antennae quick. Not a run: the legs stay still. */
+.ant-skin[data-pose='running'] .ant-head { animation: ant-nod .5s ease-in-out infinite alternate; }
+.ant-skin[data-pose='running'] .ant-antenna { animation-duration: .5s; }
+.ant-skin[data-pose='running'] .ant-pose { transform: rotate(-3deg); }
+
+/* Asking: up on its toes, antennae high, looking at you. */
+.ant-skin[data-pose='waiting'] { --ant-curious: 1; }
+.ant-skin[data-pose='waiting'] .ant-pose { transform: translateY(-2px); }
+.ant-skin[data-pose='waiting'] .ant-antenna { animation-duration: 1.1s; }
+.ant-skin[data-pose='waiting'] .ant-eye-white { transform: scale(1.12); transform-origin: 77px 28px; }
+
+/* Looking over something: head down, antennae forward, slow. */
+.ant-skin[data-pose='review'] .ant-head { transform: rotate(calc(10deg + var(--ant-look-y) * -12deg)); }
+.ant-skin[data-pose='review'] .ant-antenna { transform: rotate(-22deg); animation-duration: 2.6s; }
+
+/* Something went wrong: drooped, antennae down, no smile. */
+.ant-skin[data-pose='failed'] { --ant-rest: 1; }
+.ant-skin[data-pose='failed'] .ant-pose { animation: ant-sulk 2.2s ease-in-out infinite; }
+.ant-skin[data-pose='failed'] .ant-smile { display: none; }
+.ant-skin[data-pose='failed'] .ant-frown { display: block; }
+.ant-skin[data-pose='failed'] .ant-antenna { transform: rotate(46deg); animation: none; }
+.ant-skin[data-pose='failed'] .ant-leg { transform: scaleY(.9); transform-origin: 50% 46px; }
+.ant-skin[data-pose='failed'] .ant-blush { opacity: 0; }
+
+/* Hello: the near front leg waves twice. Once, then the pose gives way. */
+.ant-skin[data-pose='waving'] .ant-leg-fn { transform: rotate(-100deg); animation: ant-wave .45s ease-in-out 3; }
+.ant-skin[data-pose='waving'] .ant-leg-fn .ant-tibia { transform: rotate(-62deg); }
+.ant-skin[data-pose='waving'] .ant-head { transform: rotate(-6deg); }
+
+/* A hop of delight, with a spark at the top. */
+.ant-skin[data-pose='jumping'] .ant-pose { animation: ant-hop .8s ease-out both; }
+.ant-skin[data-pose='jumping'] .ant-spark { animation: ant-spark .9s .25s ease-out both; }
+
+/* Asleep against the parcel, legs folded, breathing slowly. */
+.ant-skin[data-pose='nap'] { --ant-rest: 1; }
+.ant-skin[data-pose='nap'] .ant-pose { transform: translateY(5px); }
+.ant-skin[data-pose='nap'] :is(.ant-leg, .ant-antenna, .ant-figure) { animation: none; }
+.ant-skin[data-pose='nap'] .ant-leg { transform: scaleY(.78); transform-origin: 50% 46px; }
+.ant-skin[data-pose='nap'] .ant-gaster { animation: ant-breathe 4.8s ease-in-out infinite; transform: none; }
+
+/* Sat on a ledge: the body comes down to the line, the legs hang below it and swing. */
+.ant-skin[data-pose='sit'] .ant-pose { transform: translateY(13px); }
+.ant-skin[data-pose='sit'] .ant-figure { animation: none; }
+.ant-skin[data-pose='sit'] .ant-leg { animation: ant-dangle 1.6s ease-in-out infinite alternate; transform: rotate(34deg) scaleY(.85); transform-origin: 50% 46px; }
+.ant-skin[data-pose='sit'] .ant-leg[data-tripod='b'] { animation-delay: -.8s; }
+.ant-skin[data-pose='sit'] .ant-leg-front { transform: rotate(-40deg); animation: none; }
+.ant-skin[data-pose='sit'] .ant-antenna { animation-duration: 3s; }
+
+/* Clinging to a wall: the stage turns it; here it just hugs the surface and sways a little. */
+.ant-skin[data-pose='hang'] .ant-pose { transform: translateY(2px); animation: ant-sway 3.2s ease-in-out infinite alternate; }
+.ant-skin[data-pose='hang'] .ant-figure { animation: none; }
+.ant-skin[data-pose='hang'] .ant-leg { transform: rotate(8deg) scaleX(1.12); transform-origin: 50% 46px; animation: none; }
+
+/* Peeking out: curious, antennae up, body held low. The stage clips it to the edge it hides behind. */
+.ant-skin[data-pose='peek'] { --ant-curious: 1; }
+.ant-skin[data-pose='peek'] .ant-pose { transform: translateY(3px); }
+.ant-skin[data-pose='peek'] .ant-antenna { animation-duration: .9s; }
+
+/* Flat out: quick steps, leaning in, antennae streaming back, lines trailing. */
+.ant-skin[data-pose='sprint'] { --ant-gait: 1; --ant-step: .16s; }
+.ant-skin[data-pose='sprint'] .ant-pose { transform: rotate(-9deg); }
+.ant-skin[data-pose='sprint'] .ant-antenna { transform: rotate(36deg); animation: none; }
+.ant-skin[data-pose='sprint'] .ant-speed { display: block; stroke-dasharray: 10 14; animation: ant-speed .3s linear infinite; }
+
+/* Still frames: a reduced-motion system, a resting window, a hidden page. */
+.ant-skin[data-reduced] *, :root[data-resting] .ant-skin *, [data-paused] .ant-skin * { animation: none !important; transition: none !important; }

@@ -1,0 +1,36 @@
+{
+  "name": "@conclave/plugin-sdk",
+  "version": "0.1.1",
+  "description": "Build standalone Conclave task source plugins",
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/types/plugin-sdk/src/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "prepack": "npm run build",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "esbuild": "0.25.12",
+    "typescript": "catalog:"
+  }
+}

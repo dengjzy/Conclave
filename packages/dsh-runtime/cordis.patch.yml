@@ -1,0 +1,36 @@
+- id: session-title-llm
+  disabled: true
+- id: hmr
+  disabled: true
+- id: fs-sandbox
+  disabled: true
+- id: bash-sandbox
+  disabled: true
+- id: pwsh-sandbox
+  disabled: true
+- id: permission
+  config:
+    defaultPreset: workspace-write
+    presets:
+      read-only: { sandbox: read-only, approval: never }
+      workspace-write: { sandbox: workspace-write, approval: ask }
+      conclave-auto: { sandbox: workspace-write, approval: never }
+      danger-full-access: { sandbox: danger-full-access, approval: never }
+- insert:
+    - id: conclave-filesystem
+      name: '@conclave/dsh-runtime/filesystem'
+    - id: conclave-shell
+      name: '@conclave/dsh-runtime/shell'
+      disabled: !!js process.platform === 'win32'
+      config:
+        timeoutMs: 60000
+    - id: conclave-powershell
+      name: '@conclave/dsh-runtime/powershell'
+      disabled: !!js process.platform !== 'win32'
+    - id: tool-ask-user
+      name: '@deepseek-ai/dsh-tool-ask-user'
+    - id: acp-app-startup
+      name: '@deepseek-ai/dsh-acp-app'
+    - id: conclave-acp
+      name: '@conclave/dsh-runtime'
+      inject: [acpAppStartup]

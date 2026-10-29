@@ -1,0 +1,8 @@
+export { runSourcePlugin } from './source-runtime.js'
+export { SourceError } from './source-error.js'
+export type { SourcePlugin, SourceSettings, SourceCredential, SourceIssueDetail, LoginSession } from './source-plugin.js'
+export { PLUGIN_PROTOCOL_VERSION, PluginManifest } from '../../protocol/src/plugin.js'
+export { MAX_ATTACHMENT_BYTES, MAX_TASK_IMAGES } from '../../protocol/src/attachments.js'
+export { MAX_SOURCE_IMAGE_BYTES } from '../../protocol/src/plugin.js'
+export { ISSUE_STATUS_CATEGORIES, MAX_ISSUE_TITLE_LENGTH, MAX_SNAPSHOT_LENGTH, SourceIssue } from '../../protocol/src/source.js'
+export type { SettingField, LoginPrompt, LoginNotice, SourceFailure, SourceProblem } from '../../protocol/src/source.js'

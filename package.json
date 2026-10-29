@@ -1,0 +1,29 @@
+{
+  "name": "conclave",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.4.2",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "postinstall": "node scripts/fix-node-pty-spawn-helper.mjs",
+    "dev": "pnpm --parallel --filter @conclave/daemon --filter @conclave/core --filter @conclave/web run dev",
+    "dev:daemon": "pnpm --filter @conclave/daemon run dev",
+    "dev:core": "pnpm --filter @conclave/core run dev",
+    "dev:web": "pnpm --filter @conclave/web run dev",
+    "build": "pnpm --filter @conclave/web run build",
+    "typecheck": "pnpm --filter @conclave/plugin-sdk build && pnpm -r run typecheck",
+    "test": "pnpm --filter @conclave/plugin-sdk build && vitest run",
+    "verify:plugin-sdk": "node scripts/verify-plugin-sdk.mjs",
+    "test:dsh-runtime": "node --import tsx scripts/smoke-dsh-runtime.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "esbuild": "0.25.12",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

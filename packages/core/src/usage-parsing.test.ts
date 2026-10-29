@@ -1,0 +1,263 @@
+import { describe, expect, it } from 'vitest'
+import { parseClaudeResets, parseClaudeUsage, parseCliVersion, rateLimitReport } from './agents/claude/claude-usage'
+import { consumeRequest, parseCodexUsage, parseConsumeOutcome, parseResetCredits } from './agents/codex/codex-usage'
+import { parseCursorPlan, parseCursorUsage } from './agents/cursor/cursor-usage'
+
+describe('parseClaudeUsage', () => {
+  it('maps the 5-hour and 7-day windows', () => {
+    const windows = parseClaudeUsage({
+      five_hour: { utilization: 12.5, resets_at: '2026-09-23T18:00:00Z' },
+      seven_day: { utilization: 44, resets_at: 1_790_000_000 },
+      seven_day_oauth_apps: null
+    })
+    expect(windows).toEqual([
+      { kind: 'session', model: null, usedPercent: 12.5, windowMinutes: 300, resetsAt: Date.parse('2026-09-23T18:00:00Z') },
+      { kind: 'weekly', model: null, usedPercent: 44, windowMinutes: 10_080, resetsAt: 1_790_000_000_000 }
+    ])
+  })
+
+  it('reads model caps from `limits`, falling back to legacy top-level keys', () => {
+    const windows = parseClaudeUsage({
+      five_hour: { utilization: 0, resets_at: null },
+      limits: [{ kind: 'weekly_scoped', percent: 81, resets_at: null, scope: { model: { display_name: 'Fable' } } }],
+      seven_day_fable: { utilization: 5, resets_at: null },
+      seven_day_opus: { utilization: 3, resets_at: null }
+    })
+    expect(windows.map((w) => [w.model, w.usedPercent])).toEqual([
+      [null, 0],
+      ['Fable', 81],
+      ['Opus', 3]
+    ])
+  })
+
+  it('skips windows without a number and clamps out-of-range values', () => {
+    const windows = parseClaudeUsage({ five_hour: { utilization: null }, seven_day: { utilization: 130 } })
+    expect(windows.map((w) => [w.kind, w.usedPercent])).toEqual([['weekly', 100]])
+  })
+
+  it('tolerates malformed sections', () => {
+    expect(parseClaudeUsage({ five_hour: 'soon', limits: 'many', seven_day: { utilization: 1 } })).toHaveLength(1)
+    expect(parseClaudeUsage(null)).toEqual([])
+  })
+})
+
+describe('parseCodexUsage', () => {
+  it('classifies windows by duration, not by slot', () => {
+    const usage = parseCodexUsage({
+      plan_type: 'plus',
+      rate_limit: {
+        primary_window: { used_percent: 30, limit_window_seconds: 604_800, reset_at: 1_790_000_000 },
+        secondary_window: { used_percent: 8, limit_window_seconds: 18_000, reset_at: 1_789_000_000 }
+      }
+    })
+    expect(usage.plan).toBe('plus')
+    expect(usage.windows).toEqual([
+      { kind: 'weekly', model: null, usedPercent: 30, windowMinutes: 10_080, resetsAt: 1_790_000_000_000 },
+      { kind: 'session', model: null, usedPercent: 8, windowMinutes: 300, resetsAt: 1_789_000_000_000 }
+    ])
+  })
+
+  it('falls back to primary = session and secondary = weekly', () => {
+    const usage = parseCodexUsage({
+      rate_limit: { primary_window: { used_percent: 1 }, secondary_window: { used_percent: 2, limit_window_seconds: 7 } }
+    })
+    expect(usage.windows.map((w) => [w.kind, w.usedPercent, w.resetsAt])).toEqual([
+      ['session', 1, null],
+      ['weekly', 2, null]
+    ])
+  })
+
+  it('returns nothing for an unexpected payload', () => {
+    expect(parseCodexUsage({ rate_limit: 'none' })).toEqual({ windows: [], plan: null })
+  })
+})
+
+describe('parseResetCredits', () => {
+  it('counts the available credits and lists when they expire, soonest first', () => {
+    const credits = parseResetCredits({
+      available_count: 3,
+      total_earned_count: 5,
+      credits: [
+        { status: 'available', expires_at: '2026-10-23T05:07:00+08:00' },
+        { status: 'redeemed', expires_at: '2026-09-01T00:00:00Z' },
+        { status: 'AVAILABLE', expires_at: 1791272640 },
+        { status: 'available', expires_at: null }
+      ]
+    })
+    expect(credits?.available).toBe(3)
+    expect(credits?.credits.map((credit) => credit.expiresAt)).toEqual([1791272640_000, Date.parse('2026-10-23T05:07:00+08:00'), null])
+    expect(credits?.credits[0]).toEqual({ expiresAt: 1791272640_000, label: null, clears: ['session', 'weekly'] })
+  })
+
+  it("keeps each credit's id and title, to spend that one by name", () => {
+    const credits = parseResetCredits({
+      available_count: 1,
+      credits: [{ id: 'RateLimitResetCredit_2c5c', status: 'available', expires_at: '2026-10-22T21:07:13Z', title: 'Full reset (Weekly + 5 hr)' }]
+    })
+    expect(credits?.credits).toEqual([
+      { id: 'RateLimitResetCredit_2c5c', expiresAt: Date.parse('2026-10-22T21:07:13Z'), label: 'Full reset (Weekly + 5 hr)', clears: ['session', 'weekly'] }
+    ])
+  })
+
+  it('falls back to counting the list, and gives nothing for a reply it cannot read', () => {
+    expect(parseResetCredits({ credits: [{ status: 'available', expires_at: 1_791_272_640_000 }] })).toMatchObject({
+      available: 1,
+      credits: [{ expiresAt: 1_791_272_640_000 }]
+    })
+    expect(parseResetCredits({})).toBeNull()
+    expect(parseResetCredits('nope')).toBeNull()
+  })
+
+  it('tells a usage reply without credits apart from one with an empty set', () => {
+    expect(parseCodexUsage({ plan_type: 'plus' }).resetCredits).toBeUndefined()
+    expect(parseCodexUsage({ plan_type: 'plus', rate_limit_reset_credits: { available_count: 0, credits: [] } }).resetCredits).toEqual({
+      available: 0,
+      credits: [],
+      blockedBy: null
+    })
+  })
+})
+
+describe('parseClaudeResets', () => {
+  it('turns each grant into one credit per reset left, soonest to expire first', () => {
+    const resets = parseClaudeResets({
+      five_hour: { utilization: 40 },
+      cedar_ember: {
+        eligible: true,
+        ineligible_reason: null,
+        grants: [
+          {
+            id: 'g2',
+            label: 'Get extra wiggle room to explore Opus 5.5.',
+            resets_total: 2,
+            resets_left: 2,
+            ends_at: '2026-10-23T00:00:00Z',
+            clears: ['five_hour', 'seven_day', 'seven_day_overage_included']
+          },
+          { id: 'g1', label: null, resets_left: 1, ends_at: '2026-10-04T05:44:00Z', clears: ['five_hour'] },
+          { id: 'g0', label: 'spent', resets_left: 0, ends_at: '2026-09-30T00:00:00Z' }
+        ]
+      }
+    })
+    expect(resets?.available).toBe(3)
+    expect(resets?.credits).toEqual([
+      { expiresAt: Date.parse('2026-10-04T05:44:00Z'), label: null, clears: ['session'] },
+      { expiresAt: Date.parse('2026-10-23T00:00:00Z'), label: 'Get extra wiggle room to explore Opus 5.5.', clears: ['session', 'weekly'] },
+      { expiresAt: Date.parse('2026-10-23T00:00:00Z'), label: 'Get extra wiggle room to explore Opus 5.5.', clears: ['session', 'weekly'] }
+    ])
+  })
+
+  it('says so only when an outdated CLI is why, and shows nothing otherwise', () => {
+    expect(parseClaudeResets({ cedar_ember: { eligible: false, ineligible_reason: 'cli_version', grants: [] } })).toEqual({
+      available: 0,
+      credits: [],
+      blockedBy: 'cli_version'
+    })
+    expect(parseClaudeResets({ cedar_ember: { eligible: false, ineligible_reason: 'surface' } })).toBeNull()
+    expect(parseClaudeResets({ cedar_ember: { eligible: true, grants: [] } })).toBeNull()
+    expect(parseClaudeResets({ cedar_ember: null })).toBeNull()
+    expect(parseClaudeResets({ five_hour: { utilization: 1 } })).toBeNull()
+    expect(parseClaudeResets({ cedar_ember: 'weird' })).toBeNull()
+  })
+
+  it('reads the version the installed CLI reports', () => {
+    expect(parseCliVersion('2.1.263 (Claude Code)\n')).toBe('2.1.263')
+    expect(parseCliVersion('command not found')).toBeNull()
+  })
+})
+
+describe('rateLimitReport', () => {
+  // As Claude Code sent it in a session where /usage read 14% and 3%.
+  const event = {
+    type: 'rate_limit_event',
+    rate_limit_info: {
+      status: 'allowed',
+      resetsAt: 1790947200,
+      rateLimitType: 'five_hour',
+      overageStatus: 'rejected',
+      overageDisabledReason: 'org_level_disabled',
+      isUsingOverage: false,
+      unifiedWindows: { five_hour: { utilization: 0.13, resetsAt: 1790947200 }, seven_day: { utilization: 0.02, resetsAt: 1791511200 } }
+    },
+    uuid: '12e21192-16c1-4d22-bcf7-17f50dc40d7a',
+    session_id: 'a979bc4f-d9cb-45c6-b241-b6bff7540f04'
+  }
+
+  it('reads the windows it carries as percentages', () => {
+    expect(rateLimitReport(event, 7)).toEqual({
+      at: 7,
+      windows: [
+        { kind: 'session', model: null, usedPercent: 13, windowMinutes: 300, resetsAt: 1_790_947_200_000 },
+        { kind: 'weekly', model: null, usedPercent: 2, windowMinutes: 10_080, resetsAt: 1_791_511_200_000 }
+      ],
+      refresh: false
+    })
+  })
+
+  it('takes a refusal as the named window at its cap, and asks for the rest', () => {
+    const refused = { ...event, rate_limit_info: { ...event.rate_limit_info, status: 'rejected', rateLimitType: 'seven_day_opus' } }
+    const report = rateLimitReport(refused, 7)
+    expect(report?.windows.at(-1)).toEqual({ kind: 'weekly', model: 'Opus', usedPercent: 100, windowMinutes: 10_080, resetsAt: 1_790_947_200_000 })
+    expect(report?.refresh).toBe(true)
+  })
+
+  it('asks for a fresh reading when the event carries no numbers', () => {
+    expect(rateLimitReport({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed_warning' } }, 7)).toEqual({ at: 7, windows: [], refresh: true })
+    expect(rateLimitReport({ type: 'rate_limit_event' }, 7)).toBeNull()
+  })
+})
+
+describe('parseCursorUsage', () => {
+  // GetCurrentPeriodUsage as a Team plan answered it, trimmed: its money amounts say the included
+  // spend is used up, its percentages (what Cursor shows) say 9%.
+  const answer = {
+    billingCycleStart: '1790449720000',
+    billingCycleEnd: '1793041720000',
+    planUsage: { totalSpend: 2351, includedSpend: 2000, limit: 2000, autoPercentUsed: 5.466666666666667, apiPercentUsed: 30.075000000000003, totalPercentUsed: 9.404 },
+    spendLimitUsage: { pooledUsed: 0, limitType: 'team' },
+    displayMessage: "You've hit your usage limit"
+  }
+
+  it('reads the billing month by its percentages: the total, and the API share for models picked by name', () => {
+    expect(parseCursorUsage(answer)).toEqual([
+      { kind: 'monthly', model: null, usedPercent: 9.404, windowMinutes: 43_200, resetsAt: 1_793_041_720_000 },
+      { kind: 'monthly', model: 'API', usedPercent: 30.075000000000003, windowMinutes: 43_200, resetsAt: 1_793_041_720_000 }
+    ])
+  })
+
+  it('keeps to what is there: no plan usage, no cycle, a percentage past the cap', () => {
+    expect(parseCursorUsage({ enabled: true })).toEqual([])
+    expect(parseCursorUsage({ planUsage: { totalPercentUsed: 120 } })).toEqual([{ kind: 'monthly', model: null, usedPercent: 100, windowMinutes: 43_200, resetsAt: null }])
+    expect(parseCursorUsage({ billingCycleEnd: 'soon', planUsage: { totalPercentUsed: 'many', apiPercentUsed: 4 } })).toEqual([{ kind: 'monthly', model: 'API', usedPercent: 4, windowMinutes: 43_200, resetsAt: null }])
+  })
+
+  it('names the plan when GetPlanInfo does', () => {
+    expect(parseCursorPlan({ planInfo: { planName: 'Team', price: '$40/mo', includedUsagePeriod: 'INCLUDED_USAGE_PERIOD_MONTHLY' } })).toBe('Team')
+    expect(parseCursorPlan(null)).toBeNull()
+  })
+})
+
+describe('parseConsumeOutcome', () => {
+  it('names what spending a reset came to', () => {
+    expect(parseConsumeOutcome({ code: 'reset' })).toBe('reset')
+    expect(parseConsumeOutcome({ code: 'nothing_to_reset' })).toBe('nothing-to-reset')
+    expect(parseConsumeOutcome({ code: 'no_credit' })).toBe('no-credit')
+    expect(parseConsumeOutcome({ code: 'already_redeemed' })).toBe('already-used')
+  })
+
+  it('refuses a reply it cannot read rather than guess whether a reset was spent', () => {
+    expect(() => parseConsumeOutcome({ code: 'later' })).toThrow('无法识别')
+    expect(() => parseConsumeOutcome({})).toThrow('无法识别')
+  })
+})
+
+describe('consumeRequest', () => {
+  it('names the credit to spend, as the Codex CLI does', () => {
+    expect(consumeRequest('request-1', 'RateLimitResetCredit_2c5c')).toEqual({
+      redeem_request_id: 'request-1',
+      credit_id: 'RateLimitResetCredit_2c5c',
+      credit_type: 'usage_limit'
+    })
+    expect(consumeRequest('request-1')).toEqual({ redeem_request_id: 'request-1', credit_type: 'usage_limit' })
+  })
+})

@@ -1,0 +1,522 @@
+import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { z } from 'zod'
+import { ChatItem } from '@conclave/protocol'
+import { CursorAcp } from './cursor-acp'
+import type { ChatRecord, ChatStageOptions } from '../../chat-driver'
+import { parseChatRecord } from '../../chat-log'
+
+const OPTIONS: ChatStageOptions = { cwd: '/work/repo', extraDirs: [], resume: null, mcp: { command: 'node', args: ['mcp.mjs', '--conversation', 'conversation'] } }
+const modes = { currentModeId: 'agent', availableModes: [{ id: 'agent', name: 'Agent' }, { id: 'plan', name: 'Plan' }, { id: 'ask', name: 'Ask' }] }
+const models = { currentModelId: 'auto', availableModels: [{ modelId: 'auto', name: 'Auto' }, { modelId: 'model-1', name: 'Model One' }] }
+const modeConfig = { id: 'native-mode', category: 'mode', name: 'Mode', currentValue: 'agent', options: [{ value: 'agent', name: 'Agent' }, { value: 'plan', name: 'Plan' }, { value: 'ask', name: 'Ask' }] }
+const Request = z.looseObject({ id: z.union([z.string(), z.number()]), method: z.string(), params: z.unknown().optional() })
+const receive = (driver: CursorAcp, frame: unknown, at = 2) => driver.apply({ dir: 'in', at, frame })
+const send = (driver: CursorAcp, frame: unknown, at = 1) => driver.apply({ dir: 'out', at, frame })
+const modelsRead = (driver: CursorAcp) => { due(driver); receive(driver, { id: 'cursor-models', result: { models: [] } }) }
+const due = (driver: CursorAcp) => { const frames = driver.due(); frames.forEach((frame) => send(driver, frame)); return frames }
+const update = (driver: CursorAcp, content: unknown) => receive(driver, { method: 'session/update', params: { sessionId: 'session', update: content } })
+const items = <K extends ChatItem['kind']>(driver: CursorAcp, kind: K) => driver.items.list().filter((item): item is Extract<ChatItem, { kind: K }> => item.kind === kind)
+
+function opened(options = OPTIONS, modern = false): CursorAcp {
+  const driver = new CursorAcp('stage', options)
+  due(driver)
+  receive(driver, { id: 'cursor-init', result: { protocolVersion: 1, agentCapabilities: { loadSession: true, promptCapabilities: { image: true } } } })
+  due(driver)
+  receive(driver, { id: 'cursor-session', result: { sessionId: 'session', modes, models, ...(modern ? { configOptions: [modeConfig] } : {}) } })
+  modelsRead(driver)
+  for (const frame of due(driver)) {
+    const request = Request.parse(frame)
+    const wanted = options.planOnly ? 'plan' : options.preferred?.permissionMode === 'readOnly' ? 'ask' : 'agent'
+    receive(driver, { id: request.id, result: modern ? { configOptions: [{ ...modeConfig, currentValue: wanted }] } : {} })
+  }
+  return driver
+}
+
+describe('Cursor usage updates', () => {
+  it('uses ACP context information without treating it or cumulative cost as consumed tokens', () => {
+    const driver = opened()
+    update(driver, { sessionUpdate: 'usage_update', used: 53000, size: 200000, cost: { amount: 0.045, currency: 'USD' } })
+    expect(items(driver, 'state').at(-1)).toMatchObject({ context: { used: 53000, window: 200000 } })
+    expect(items(driver, 'turn')).toEqual([])
+    update(driver, { sessionUpdate: 'usage_update', used: null, size: 200000 })
+    expect(items(driver, 'state').at(-1)).toMatchObject({ context: { used: 53000, window: 200000 } })
+  })
+})
+
+function prompt(driver: CursorAcp): string {
+  const message = driver.send('hello')
+  send(driver, message.logged)
+  return String(Request.parse(message.wire).id)
+}
+
+function permission(driver: CursorAcp, id: string | number = 9): void {
+  receive(driver, { id, method: 'session/request_permission', params: { sessionId: 'session', toolCall: { toolCallId: 'call', title: 'Run test', kind: 'execute', rawInput: { command: 'pnpm test' } }, options: [{ optionId: 'once', name: 'Allow', kind: 'allow_once' }, { optionId: 'always', name: 'Allow', kind: 'allow_always' }, { optionId: 'no', name: 'Reject', kind: 'reject_once' }] } })
+}
+
+describe('Cursor ACP', () => {
+  it.each(['cursor-session.jsonl', 'cursor-resume-plan.jsonl'])('replays the real CLI recording %s without repeating provider history or losing tool identity', (file) => {
+    const records = readFileSync(new URL(`./fixtures/${file}`, import.meta.url), 'utf8').trim().split('\n').map(parseChatRecord)
+    expect(records.every(Boolean)).toBe(true)
+    const driver = new CursorAcp('stage', { ...OPTIONS, ...(file.includes('resume') ? { resume: '00000002-0000-4000-8000-000000000000' } : {}) })
+    records.forEach((record) => { if (record) driver.apply(record) })
+    const turns = items(driver, 'turn')
+    expect(turns.map((turn) => turn.state)).toEqual(file.includes('resume') ? ['completed', 'completed', 'completed'] : ['completed'])
+    expect(driver.due()).toEqual([])
+    expect(items(driver, 'approval').some((approval) => approval.resolution === 'allowed')).toBe(true)
+    if (file.includes('resume')) {
+      expect(items(driver, 'approval').find((approval) => approval.tool === 'cursor/create_plan')).toMatchObject({ resolution: 'allowed', mode: 'ask' })
+      expect(items(driver, 'user').some((item) => item.text.includes('CURSOR_TERMINAL_OK'))).toBe(false)
+    } else {
+      expect(items(driver, 'tool').find((tool) => tool.name === 'conclave.terminal_run')).toMatchObject({ status: 'done', input: '{"command":"printf CURSOR_TERMINAL_OK"}' })
+    }
+    for (const item of driver.items.list()) expect(ChatItem.safeParse(item).success).toBe(true)
+  })
+  it('reads parameterized model IDs and per-model efforts without creating a catalog session', () => {
+    const driver = new CursorAcp('catalog', OPTIONS, true)
+    due(driver); receive(driver, { id: 'cursor-init', result: { protocolVersion: 1 } })
+    expect(due(driver)).toMatchObject([{ method: 'cursor/list_available_models' }])
+    receive(driver, { id: 'cursor-models', result: { models: [{ value: 'base-model', name: 'Model', configOptions: [{ ...modeConfig, category: 'thought_level', options: [{ value: 'high', name: 'High' }] }] }] } })
+    expect(items(driver, 'state')[0]?.models).toMatchObject([{ id: 'base-model', efforts: ['high'] }])
+    expect(driver.due()).toEqual([])
+    expect(driver.providerSessionId()).toBeNull()
+  })
+
+  it('waits for configuration acknowledgement, reports rejection, and prevents concurrent switches or prompts', () => {
+    const driver = opened(OPTIONS, true)
+    const [frame] = driver.setOption('permissionMode', 'plan')
+    send(driver, frame)
+    expect(driver.optionResult(frame).pending).toBe(true)
+    expect(() => driver.setOption('permissionMode', 'ask')).toThrow()
+    expect(() => driver.send('hello')).toThrow()
+    receive(driver, { id: Request.parse(frame).id, error: { code: -32602, message: 'cannot switch' } })
+    expect(driver.optionResult(frame)).toEqual({ pending: false, error: 'cannot switch' })
+    expect(driver.activity()).toBe('idle')
+  })
+
+  it('marks a provider failure encoded as a text-only end_turn as failed', () => {
+    const driver = opened(); const id = prompt(driver)
+    update(driver, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '\n\nError: RetriableError: [resource_exhausted] Error' } })
+    receive(driver, { id, result: { stopReason: 'end_turn' } })
+    expect(items(driver, 'assistant')[0]?.text).toBe('')
+    expect(items(driver, 'turn')[0]).toMatchObject({ state: 'failed', error: 'Cursor 这一会儿忙不过来，或额度用完了' })
+    expect(items(driver, 'notice')[0]).toMatchObject({
+      level: 'warning',
+      text: expect.stringContaining('再发一次'),
+      action: { kind: 'retryTurn' }
+    })
+  })
+
+  it('keeps the reply written before a timeout and explains how to send it again', () => {
+    const driver = opened(); const id = prompt(driver)
+    update(driver, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '先看一下分支。\n\nError: RetriableError: [deadline_exceeded] bidi_append_deadline_exceeded: append seqno=14 (6 bytes) exceeded 60001ms deadline' } })
+    receive(driver, { id, result: { stopReason: 'end_turn' } })
+    expect(items(driver, 'assistant')[0]?.text).toBe('先看一下分支。')
+    expect(items(driver, 'turn')[0]).toMatchObject({ state: 'failed', error: 'Cursor 连接超时，回复没有写完' })
+    expect(items(driver, 'notice')[0]?.text).toContain('再发一次刚才的话')
+  })
+  it('initializes without delegating filesystem or terminal ownership and binds the conversation MCP', () => {
+    const driver = new CursorAcp('stage', OPTIONS)
+    expect(due(driver)).toMatchObject([{ method: 'initialize', params: { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false } } }])
+    receive(driver, { id: 'cursor-init', result: { protocolVersion: 1 } })
+    expect(due(driver)).toMatchObject([{ method: 'session/new', params: { cwd: '/work/repo', mcpServers: [{ name: 'conclave', command: 'node', args: OPTIONS.mcp?.args, env: [] }] } }])
+  })
+
+  it('opens the session with the user\'s MCP servers beside Conclave\'s', () => {
+    const driver = new CursorAcp('stage', { ...OPTIONS, userMcp: [{ name: 'github', type: 'stdio', command: 'node', args: ['mcp.mjs', '--run', 'github'] }, { name: 'docs', type: 'http', url: 'https://mcp.example.com/mcp' }] })
+    due(driver)
+    receive(driver, { id: 'cursor-init', result: { protocolVersion: 1 } })
+    expect(due(driver)).toMatchObject([{ method: 'session/new', params: { mcpServers: [
+      { name: 'conclave' },
+      { name: 'github', command: 'node', args: ['mcp.mjs', '--run', 'github'], env: [] },
+      { type: 'http', name: 'docs', url: 'https://mcp.example.com/mcp', headers: [] }
+    ] } }])
+  })
+
+  it('authenticates using the advertised Cursor method and surfaces an authentication failure', () => {
+    const driver = new CursorAcp('stage', OPTIONS)
+    due(driver)
+    receive(driver, { id: 'cursor-init', result: { protocolVersion: '1', authMethods: [{ id: 'cursor_login' }] } })
+    expect(due(driver)).toMatchObject([{ method: 'authenticate', params: { methodId: 'cursor_login' } }])
+    receive(driver, { id: 'cursor-auth', error: { code: -32000, message: 'Login required' } })
+    expect(driver.failure()).toContain('Login required')
+    expect(driver.ready()).toBe(false)
+  })
+
+  it('rejects incompatible protocol versions and unsupported authentication methods', () => {
+    for (const response of [{ protocolVersion: 2 }, { protocolVersion: 1, authMethods: [{ id: 'other' }] }]) {
+      const driver = new CursorAcp('stage', OPTIONS)
+      due(driver); receive(driver, { id: 'cursor-init', result: response })
+      expect(driver.failure()).not.toBeNull()
+      expect(driver.due()).toEqual([])
+    }
+  })
+
+  it('uses legacy mode/model methods, modern configuration takes precedence, and updates the live catalog', () => {
+    const legacy = opened()
+    expect(legacy.setOption('permissionMode', 'readOnly')).toMatchObject([{ method: 'session/set_mode', params: { modeId: 'ask' } }])
+    expect(legacy.setOption('model', 'model-1')).toMatchObject([{ method: 'session/set_model', params: { modelId: 'model-1' } }])
+    const driver = opened(OPTIONS, true)
+    const [frame] = driver.setOption('permissionMode', 'plan')
+    expect(frame).toMatchObject({ method: 'session/set_config_option', params: { configId: 'native-mode', value: 'plan' } })
+    send(driver, frame)
+    receive(driver, { id: Request.parse(frame).id, result: { configOptions: [{ ...modeConfig, currentValue: 'plan' }] } })
+    expect(items(driver, 'state')[0]).toMatchObject({ permissionMode: 'plan', permissionModes: ['ask', 'plan', 'readOnly'] })
+    expect(() => driver.setOption('permissionMode', 'bypass')).toThrow()
+    expect(() => driver.setOption('effort', 'high')).toThrow()
+  })
+
+  it('sets a reasoning level from the model catalog when the session has not listed one', () => {
+    const reasoning = { id: 'reasoning', name: 'Reasoning', category: 'thought_level', currentValue: 'medium', options: [{ value: 'none', name: 'None' }, { value: 'high', name: 'High' }] }
+    const fast = { id: 'fast', name: 'Fast', category: 'model_config', currentValue: 'true', options: [{ value: 'true', name: 'Fast' }] }
+    const listed = { models: [
+      { value: 'composer-2.5', name: 'Composer 2.5', configOptions: [fast] },
+      { value: 'gpt-5.6-sol', name: 'GPT-5.6 Sol', configOptions: [reasoning, fast] }
+    ] }
+    const sessionModels = { currentModelId: 'gpt-5.6-sol', availableModels: [{ modelId: 'composer-2.5', name: 'Composer 2.5' }, { modelId: 'gpt-5.6-sol', name: 'GPT-5.6 Sol' }] }
+    const modelConfig = { id: 'model', name: 'Model', category: 'model', currentValue: 'gpt-5.6-sol', options: [{ value: 'composer-2.5', name: 'Composer 2.5' }, { value: 'gpt-5.6-sol', name: 'GPT-5.6 Sol' }] }
+    const driver = new CursorAcp('stage', OPTIONS)
+    due(driver)
+    receive(driver, { id: 'cursor-init', result: { protocolVersion: 1 } })
+    due(driver)
+    receive(driver, { id: 'cursor-session', result: { sessionId: 'session', modes, models: sessionModels, configOptions: [modeConfig, modelConfig, fast] } })
+    due(driver)
+    receive(driver, { id: 'cursor-models', result: listed })
+    expect(items(driver, 'state')[0]?.models.find((model) => model.id === 'gpt-5.6-sol')?.efforts).toEqual(['none', 'high'])
+    const [effort] = driver.setOption('effort', 'high')
+    expect(effort).toMatchObject({ method: 'session/set_config_option', params: { configId: 'reasoning', value: 'high' } })
+    send(driver, effort)
+    receive(driver, { id: Request.parse(effort).id, result: {} })
+    expect(items(driver, 'state')[0]).toMatchObject({ model: 'gpt-5.6-sol', effort: 'high' })
+    update(driver, { sessionUpdate: 'config_option_update', configOptions: [{ ...fast, currentValue: 'false' }] })
+    expect(items(driver, 'state')[0]?.effort).toBe('high')
+    const [model] = driver.setOption('model', 'composer-2.5')
+    send(driver, model)
+    receive(driver, { id: Request.parse(model).id, result: { configOptions: [modeConfig, { ...modelConfig, currentValue: 'composer-2.5' }, fast] } })
+    expect(items(driver, 'state')[0]).toMatchObject({ model: 'composer-2.5', effort: null })
+    expect(() => driver.setOption('effort', 'high')).toThrow()
+  })
+
+  it('applies a saved reasoning level only after the model is confirmed', () => {
+    const reasoning = { id: 'reasoning', name: 'Reasoning', category: 'thought_level', currentValue: 'medium', options: [{ value: 'high', name: 'High' }] }
+    const listed = { models: [{ value: 'gpt-5.6-sol', name: 'GPT-5.6 Sol', configOptions: [reasoning] }, { value: 'composer-2.5', name: 'Composer 2.5', configOptions: [] }] }
+    const sessionModels = { currentModelId: 'composer-2.5', availableModels: [{ modelId: 'composer-2.5', name: 'Composer 2.5' }, { modelId: 'gpt-5.6-sol', name: 'GPT-5.6 Sol' }] }
+    const modelConfig = { id: 'model', name: 'Model', category: 'model', currentValue: 'composer-2.5', options: sessionModels.availableModels.map((model) => ({ value: model.modelId, name: model.name })) }
+    const driver = new CursorAcp('stage', { ...OPTIONS, preferred: { model: 'gpt-5.6-sol', effort: 'high' } })
+    due(driver)
+    receive(driver, { id: 'cursor-init', result: { protocolVersion: 1 } })
+    due(driver)
+    receive(driver, { id: 'cursor-session', result: { sessionId: 'session', configOptions: [modeConfig, modelConfig] } })
+    expect(due(driver)).toMatchObject([{ method: 'cursor/list_available_models' }])
+    expect(driver.ready()).toBe(false)
+    receive(driver, { id: 'cursor-models', result: listed })
+    const [model, ...rest] = due(driver)
+    expect(model).toMatchObject({ method: 'session/set_config_option', params: { configId: 'model', value: 'gpt-5.6-sol' } })
+    expect(rest).toEqual([])
+    receive(driver, { id: Request.parse(model).id, result: { configOptions: [{ ...modelConfig, currentValue: 'gpt-5.6-sol' }] } })
+    const [effort] = due(driver)
+    expect(effort).toMatchObject({ id: 'cursor-initial-effort', method: 'session/set_config_option', params: { configId: 'reasoning', value: 'high' } })
+  })
+
+  it('resumes without setting again what the loaded session already runs with', () => {
+    const modelConfig = { id: 'model', name: 'Model', category: 'model', currentValue: 'model-1', options: [{ value: 'auto', name: 'Auto' }, { value: 'model-1', name: 'Model One' }] }
+    const driver = new CursorAcp('stage', { ...OPTIONS, resume: 'old', preferred: { permissionMode: 'plan', model: 'model-1' } })
+    due(driver)
+    receive(driver, { id: 'cursor-init', result: { protocolVersion: 1, agentCapabilities: { loadSession: true } } })
+    due(driver)
+    receive(driver, { id: 'cursor-session', result: { configOptions: [{ ...modeConfig, currentValue: 'plan' }, modelConfig] } })
+    modelsRead(driver)
+    expect(due(driver)).toEqual([])
+    expect(driver.ready()).toBe(true)
+    expect(items(driver, 'state')[0]).toMatchObject({ permissionMode: 'plan', model: 'model-1' })
+  })
+
+  it('keeps streamed text, thinking and tools in order and persists complete messages only once', () => {
+    const driver = opened()
+    const id = prompt(driver)
+    update(driver, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'thinking' } })
+    update(driver, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'before' } })
+    update(driver, { sessionUpdate: 'tool_call', toolCallId: 'search', kind: 'execute', title: 'search', rawInput: { command: 'rg missing' } })
+    update(driver, { sessionUpdate: 'tool_call_update', toolCallId: 'search', status: 'completed', rawOutput: { exitCode: 1 }, content: [{ type: 'content', content: { type: 'text', text: 'no match' } }] })
+    update(driver, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'after' } })
+    receive(driver, { id, result: { stopReason: 'end_turn' } })
+    expect(items(driver, 'assistant').map((item) => item.text)).toEqual(['before', 'after'])
+    expect(items(driver, 'tool')[0]).toMatchObject({ status: 'done', execution: { status: 'completed', exitCode: 1 } })
+    expect(driver.activity()).toBe('idle')
+    expect(driver.takeMessages().map((message) => [message.role, message.text, message.complete])).toEqual([['user', 'hello', false], ['assistant', 'beforeafter', true]])
+    expect(driver.takeMessages()).toEqual([])
+    for (const item of driver.items.list()) expect(ChatItem.safeParse(item).success).toBe(true)
+  })
+
+  it('preserves unknown exit codes and execution failures', () => {
+    const driver = opened(); prompt(driver)
+    update(driver, { sessionUpdate: 'tool_call', toolCallId: 'run', kind: 'execute', title: 'run', status: 'failed' })
+    expect(items(driver, 'tool')[0]).toMatchObject({ status: 'failed', execution: { status: 'failed', exitCode: null } })
+  })
+
+  it('answers duplicate labels using the exact option ID and keeps number and string request IDs distinct', () => {
+    const driver = opened(); prompt(driver)
+    permission(driver, 9); permission(driver, '9')
+    const approvals = items(driver, 'approval')
+    expect(approvals).toHaveLength(2)
+    const requestId = approvals[0]!.requestId
+    expect(() => driver.respond(requestId, { decision: 'allow', choice: 'Allow' })).toThrow()
+    const [answer] = driver.respond(requestId, { decision: 'allowForSession', choice: 'always' })
+    expect(answer).toMatchObject({ id: 9, result: { outcome: { outcome: 'selected', optionId: 'always' } } })
+    send(driver, answer)
+    expect(items(driver, 'approval')[0]).toMatchObject({ chosen: 'always', resolution: 'allowedForSession', choices: [expect.anything(), expect.objectContaining({ grants: [expect.objectContaining({ scope: 'agent' })] }), expect.anything()] })
+    expect(driver.activity()).toBe('awaiting')
+  })
+
+  it('shows a subagent command only as its approval, since its result never reaches the parent session', () => {
+    const driver = opened(); const id = prompt(driver)
+    update(driver, { sessionUpdate: 'tool_call', toolCallId: 'main', kind: 'execute', title: '`cat README.md`', status: 'pending', rawInput: { command: 'cat README.md' } })
+    receive(driver, { id: 1, method: 'session/request_permission', params: { sessionId: 'session', toolCall: { toolCallId: 'main', title: '`cat README.md`', kind: 'execute', status: 'pending' }, options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }] } })
+    send(driver, driver.respond(items(driver, 'approval')[0]!.requestId, { decision: 'allow', choice: 'allow-once' })[0])
+    update(driver, { sessionUpdate: 'tool_call_update', toolCallId: 'main', status: 'completed', rawOutput: { exitCode: 0 } })
+    update(driver, { sessionUpdate: 'tool_call', toolCallId: 'task', kind: 'other', title: 'Task: Research', status: 'pending' })
+    receive(driver, { id: 2, method: 'session/request_permission', params: { sessionId: 'session', toolCall: { toolCallId: 'inner', title: '`rg -n session`', kind: 'execute', status: 'pending', content: [{ type: 'content', content: { type: 'text', text: 'Not in allowlist: rg' } }] }, options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }] } })
+    const inner = items(driver, 'approval')[1]!
+    expect(items(driver, 'approval')[0]).toMatchObject({ title: 'cat README.md', detail: null })
+    expect(inner).toMatchObject({ tool: 'commandExecution', title: 'rg -n session', detail: '子 Agent 的请求：Not in allowlist: rg', toolItemId: 'tool:inner', resolution: null })
+    send(driver, driver.respond(inner.requestId, { decision: 'allow', choice: 'allow-once' })[0])
+    update(driver, { sessionUpdate: 'tool_call_update', toolCallId: 'task', status: 'completed' })
+    receive(driver, { id, result: { stopReason: 'end_turn' } })
+    expect(items(driver, 'tool').map((tool) => [tool.id, tool.status])).toEqual([['tool:main', 'done'], ['tool:task', 'done']])
+    expect(items(driver, 'approval').map((approval) => approval.resolution)).toEqual(['allowed', 'allowed'])
+  })
+
+  it('shows a Cursor task as a subagent with its brief and time, and acknowledges its end', () => {
+    const driver = opened(); prompt(driver)
+    update(driver, { sessionUpdate: 'tool_call', toolCallId: 'task', title: 'Task: Settings UI', kind: 'other', status: 'pending', rawInput: { _toolName: 'task', prompt: 'Read the settings code', description: 'Settings UI', subagentType: { unspecified: {} } } })
+    update(driver, { sessionUpdate: 'tool_call_update', toolCallId: 'task', status: 'in_progress', rawInput: { prompt: null } })
+    expect(items(driver, 'tool')[0]).toMatchObject({ name: 'Task', title: 'Settings UI', status: 'running', input: expect.stringContaining('"prompt":"Read the settings code"') })
+    update(driver, { sessionUpdate: 'tool_call_update', toolCallId: 'task', status: 'completed', rawOutput: { durationMs: 584426, isBackground: false }, rawInput: { prompt: null } })
+    expect(items(driver, 'tool')[0]).toMatchObject({ name: 'Task', title: 'Settings UI', status: 'done', output: null, metrics: { tools: 0, tokens: 0, durationMs: 584426 }, input: expect.stringContaining('Read the settings code') })
+    receive(driver, { id: 56, method: 'cursor/task', params: { toolCallId: 'task', description: 'Settings UI', prompt: 'Read the settings code', agentId: 'agent', durationMs: 584426 } })
+    expect(due(driver)).toEqual([{ jsonrpc: '2.0', id: 56, result: {} }])
+    for (const item of driver.items.list()) expect(ChatItem.safeParse(item).success).toBe(true)
+  })
+
+  // Recorded from cursor-agent 2026.10.01 with the subagents capability: the parent's session id
+  // is rewritten to the test's, each subagent keeps its own.
+  const recorded = (file: string): unknown[] => readFileSync(new URL(`./fixtures/${file}`, import.meta.url), 'utf8').trim().split('\n').map((line) => JSON.parse(line))
+  const play = (driver: CursorAcp, file: string, choice: string) => {
+    for (const frame of recorded(file)) {
+      receive(driver, frame)
+      const request = Request.safeParse(frame).data
+      if (request?.method === 'session/request_permission') send(driver, driver.respond(items(driver, 'approval').at(-1)!.requestId, { decision: choice.startsWith('reject') ? 'deny' : 'allow', choice })[0])
+      else due(driver)
+    }
+  }
+
+  it('asks Cursor to forward subagents and reports each one on its Task card without its steps', () => {
+    expect(new CursorAcp('stage', OPTIONS).due()).toMatchObject([{ method: 'initialize', params: { clientCapabilities: { _meta: { subagents: true } } } }])
+    const driver = opened(); const id = prompt(driver)
+    play(driver, 'cursor-subagents.jsonl', 'allow-once')
+    receive(driver, { id, result: { stopReason: 'end_turn' } })
+    expect(items(driver, 'tool').map((tool) => [tool.name, tool.title, tool.status, tool.metrics?.tools])).toEqual([['Task', 'Read notes/a.txt', 'done', 2], ['Task', 'Fetch example.com title', 'done', 1]])
+    const [read, fetch] = items(driver, 'tool')
+    expect(read?.output).toContain('alpha first line')
+    expect(fetch?.output).toContain('Example Domain')
+    // The web fetch asks on the subagent's own session, and is the user's to answer, not cancelled.
+    expect(items(driver, 'approval')).toMatchObject([{ title: 'Allow web fetch?', detail: '子 Agent 的请求：URL: https://example.com', resolution: 'allowed' }])
+    expect(items(driver, 'assistant').map((item) => item.text).join('')).not.toContain('The fetch tool turns the page into markdown')
+    for (const item of driver.items.list()) expect(ChatItem.safeParse(item).success).toBe(true)
+  })
+
+  it('logs of a subagent only its words and calls, which rebuild the same card', () => {
+    const driver = opened(); const id = prompt(driver)
+    const log: unknown[] = []
+    for (const frame of recorded('cursor-subagents.jsonl')) {
+      receive(driver, frame)
+      const kept = driver.logged(frame)
+      if (kept !== null) log.push(kept)
+      const request = Request.safeParse(frame).data
+      if (request?.method === 'session/request_permission') send(driver, driver.respond(items(driver, 'approval').at(-1)!.requestId, { decision: 'allow', choice: 'allow-once' })[0])
+      else due(driver)
+    }
+    const dropped = recorded('cursor-subagents.jsonl').length - log.length
+    expect(dropped).toBeGreaterThan(0)
+    expect(log.some((frame) => JSON.stringify(frame).includes('agent_thought_chunk') && !JSON.stringify(frame).includes('"sessionId":"session"'))).toBe(false)
+    const rebuilt = opened(); const again = prompt(rebuilt)
+    for (const frame of log) {
+      receive(rebuilt, frame)
+      const request = Request.safeParse(frame).data
+      if (request?.method === 'session/request_permission') send(rebuilt, rebuilt.respond(items(rebuilt, 'approval').at(-1)!.requestId, { decision: 'allow', choice: 'allow-once' })[0])
+      else due(rebuilt)
+    }
+    receive(driver, { id, result: { stopReason: 'end_turn' } }); receive(rebuilt, { id: again, result: { stopReason: 'end_turn' } })
+    expect(items(rebuilt, 'tool').map((tool) => [tool.output, tool.metrics])).toEqual(items(driver, 'tool').map((tool) => [tool.output, tool.metrics]))
+  })
+
+  it("marks a subagent's command approvals, which come on the parent's session", () => {
+    const driver = opened(); const id = prompt(driver)
+    play(driver, 'cursor-subagent-approvals.jsonl', 'reject-once')
+    receive(driver, { id, result: { stopReason: 'end_turn' } })
+    expect(items(driver, 'approval').map((item) => [item.tool, item.title, item.detail, item.resolution])).toEqual([
+      ['commandExecution', 'date +%Y', '子 Agent 的请求：Not in allowlist: date', 'denied'],
+      ['commandExecution', 'uname -s', '子 Agent 的请求：Not in allowlist: uname', 'denied']
+    ])
+    expect(items(driver, 'tool').map((tool) => [tool.name, tool.status])).toEqual([['Task', 'done'], ['Task', 'done']])
+  })
+
+  it('keeps what a stopped subagent said so far', () => {
+    const driver = opened(); prompt(driver)
+    update(driver, { sessionUpdate: 'tool_call', toolCallId: 'task', title: 'Task: Research', kind: 'other', status: 'pending', rawInput: { _toolName: 'task', prompt: 'Look', description: 'Research' } })
+    update(driver, { sessionUpdate: 'subagent_spawned', subagentSessionId: 'child', name: 'generalPurpose', task: 'Look', _meta: { cursor: { toolCallId: 'task' } } })
+    receive(driver, { method: 'session/update', params: { sessionId: 'child', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Found the store in chat-log.ts' } } } })
+    receive(driver, { method: 'session/update', params: { sessionId: 'child', update: { sessionUpdate: 'tool_call', toolCallId: 'inner', title: 'Read chat-log.ts', kind: 'read' } } })
+    driver.interrupt().forEach((frame) => send(driver, frame))
+    update(driver, { sessionUpdate: 'subagent_state_update', subagentSessionId: 'child', state: 'cancelled' })
+    receive(driver, { id: 'cursor-prompt-1', result: { stopReason: 'cancelled' } })
+    expect(items(driver, 'tool')).toMatchObject([{ name: 'Task', status: 'interrupted', output: 'Found the store in chat-log.ts', metrics: { tools: 1 } }])
+  })
+
+  it('streams while a question waits and returns stable question/option IDs', () => {
+    const driver = opened(); prompt(driver)
+    receive(driver, { id: 'question', method: 'cursor/ask_question', params: { toolCallId: 'ask', title: 'Choose', questions: [{ id: 'q', prompt: 'Which?', options: [{ id: 'first', label: 'Same' }, { id: 'second', label: 'Same' }], allowMultiple: true }] } })
+    update(driver, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'still streaming' } })
+    const question = items(driver, 'question')[0]!
+    expect(question.questions[0]?.options.map((option) => option.id)).toEqual(['first', 'second'])
+    const [answer] = driver.respond(question.requestId, { decision: 'allow', answers: { q: ['second'] } })
+    expect(answer).toMatchObject({ result: { outcome: { outcome: 'answered', answers: [{ questionId: 'q', selectedOptionIds: ['second'] }] } } })
+    send(driver, answer)
+    expect(items(driver, 'assistant')[0]?.text).toBe('still streaming')
+    expect(driver.activity()).toBe('running')
+  })
+
+  it('waits for Agent mode acknowledgement before approving a plan', () => {
+    const driver = opened(OPTIONS, true); prompt(driver)
+    receive(driver, { id: 'plan', method: 'cursor/create_plan', params: { toolCallId: 'plan-call', plan: '# Plan' } })
+    const plan = items(driver, 'approval')[0]!
+    const frames = driver.respond(plan.requestId, { decision: 'allow', mode: 'ask' })
+    expect(frames).toHaveLength(1)
+    expect(Request.parse(frames[0]).method).toBe('session/set_config_option')
+    send(driver, frames[0])
+    expect(items(driver, 'approval')[0]?.resolution).toBeNull()
+    receive(driver, { id: Request.parse(frames[0]).id, result: { configOptions: [modeConfig] } })
+    expect(due(driver)).toMatchObject([{ id: 'plan', result: { outcome: { outcome: 'accepted' } } }])
+    expect(items(driver, 'approval')[0]).toMatchObject({ resolution: 'allowed', mode: 'ask' })
+    expect(driver.queuedToSend()).toBeNull()
+    receive(driver, { id: 'cursor-prompt-1', result: { stopReason: 'end_turn' } })
+    const execution = driver.queuedToSend()
+    expect(execution?.text).toContain('按计划开始执行')
+    if (!execution) throw new Error('no execution prompt')
+    const outgoing = driver.send(execution.text)
+    driver.apply({ dir: 'out', at: 3, ref: execution.ref, frame: outgoing.logged })
+    expect(driver.queuedToSend()).toBeNull()
+  })
+
+  it('locks a planning stage, saves without accepting, and returns one response per request', () => {
+    const driver = opened({ ...OPTIONS, planOnly: true }, true); prompt(driver)
+    expect(items(driver, 'state')[0]?.permissionModes).toEqual(['plan'])
+    expect(() => driver.setOption('permissionMode', 'ask')).toThrow()
+    receive(driver, { id: 'plan', method: 'cursor/create_plan', params: { toolCallId: 'plan', plan: '# Plan' } })
+    const request = items(driver, 'approval')[0]!.requestId
+    expect(() => driver.respond(request, { decision: 'allow' })).toThrow()
+    const frames = driver.respond(request, { decision: 'deny', saved: true })
+    expect(frames).toHaveLength(2)
+    expect(frames[0]).toMatchObject({ id: 'plan', result: { outcome: { outcome: 'cancelled' } } })
+    frames.forEach((frame) => send(driver, frame))
+    receive(driver, { id: 'cursor-prompt-1', result: { stopReason: 'cancelled' } })
+    expect(items(driver, 'turn')[0]?.state).toBe('interrupted')
+  })
+
+  it('does not carry out an accepted plan if the user interrupts before execution starts', () => {
+    const driver = opened(OPTIONS, true); prompt(driver)
+    receive(driver, { id: 'plan', method: 'cursor/create_plan', params: { toolCallId: 'plan', plan: '# Plan' } })
+    const [switchMode] = driver.respond(items(driver, 'approval')[0]!.requestId, { decision: 'allow', mode: 'ask' })
+    send(driver, switchMode)
+    receive(driver, { id: Request.parse(switchMode).id, result: { configOptions: [modeConfig] } })
+    due(driver)
+    driver.interrupt().forEach((frame) => send(driver, frame))
+    receive(driver, { id: 'cursor-prompt-1', result: { stopReason: 'cancelled' } })
+    expect(driver.queuedToSend()).toBeNull()
+  })
+
+  it('does not start a new session after load failure, and filters replayed history while keeping configuration', () => {
+    const driver = new CursorAcp('stage', { ...OPTIONS, resume: 'old' })
+    due(driver); receive(driver, { id: 'cursor-init', result: { protocolVersion: 1, agentCapabilities: { loadSession: true } } })
+    expect(due(driver)).toMatchObject([{ method: 'session/load', params: { sessionId: 'old' } }])
+    receive(driver, { method: 'session/update', params: { sessionId: 'old', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'old text' } } } })
+    receive(driver, { id: 'cursor-session', error: { code: -32602, message: 'Session old not found' } })
+    expect(items(driver, 'assistant')).toHaveLength(0)
+    expect(driver.failure()).toContain('not found')
+    expect(driver.due()).toEqual([])
+  })
+
+  it('loads without a returned session ID and declares capability limits before sending', () => {
+    const driver = new CursorAcp('stage', { ...OPTIONS, resume: 'old' })
+    due(driver); receive(driver, { id: 'cursor-init', result: { protocolVersion: 1, agentCapabilities: { loadSession: true } } }); due(driver)
+    receive(driver, { id: 'cursor-session', result: { modes, models } })
+    expect(driver.providerSessionId()).toBe('old')
+    expect(() => driver.send('image', [{ id: 'image', width: 1, height: 1, mime: 'image/png', path: '/image', read: () => new Uint8Array() }])).toThrow()
+    // Extra folders it does not say it takes go unnamed in the session, rather than failing the start.
+    const extra = new CursorAcp('stage', { ...OPTIONS, extraDirs: ['/other'] })
+    due(extra); receive(extra, { id: 'cursor-init', result: { protocolVersion: 1 } })
+    const session = extra.due().find((frame) => JSON.stringify(frame).includes('session/new'))
+    expect(JSON.stringify(session)).not.toContain('additionalDirectories')
+    expect(extra.failure()).toBeNull()
+  })
+
+  it('rebuilds a live stage without repeating requests, including all streamed deltas', () => {
+    const records: ChatRecord[] = [
+      { dir: 'out', at: 1, frame: { id: 'cursor-init', method: 'initialize' } },
+      { dir: 'in', at: 2, frame: { id: 'cursor-init', result: { protocolVersion: 1 } } },
+      { dir: 'out', at: 2, frame: { id: 'cursor-models', method: 'cursor/list_available_models' } },
+      { dir: 'in', at: 2, frame: { id: 'cursor-models', result: { models: [] } } },
+      { dir: 'out', at: 3, frame: { id: 'cursor-session', method: 'session/new' } },
+      { dir: 'in', at: 4, frame: { id: 'cursor-session', result: { sessionId: 'session', modes, models } } },
+      { dir: 'out', at: 5, ref: 'message', frame: { id: 'cursor-prompt-1', method: 'session/prompt', params: { sessionId: 'session', prompt: [{ type: 'text', text: 'hello' }] } } },
+      { dir: 'in', at: 6, frame: { method: 'session/update', params: { sessionId: 'session', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'partial' } } } } }
+    ]
+    const driver = new CursorAcp('stage', OPTIONS)
+    records.forEach((record) => driver.apply(record))
+    expect(driver.due()).toEqual([])
+    expect(driver.activity()).toBe('running')
+    const last = records.at(-1)
+    if (last?.dir !== 'in') throw new Error('expected an incoming frame')
+    expect(driver.logged(last.frame)).toEqual(last.frame)
+    expect(items(driver, 'assistant')[0]?.text).toBe('partial')
+    permission(driver)
+    const stop = driver.interrupt(); stop.forEach((frame) => send(driver, frame))
+    receive(driver, { id: 'cursor-prompt-1', result: { stopReason: 'cancelled' } })
+    expect(driver.due()).toEqual([])
+    expect(items(driver, 'approval')[0]?.resolution).toBe('cancelled')
+    expect(items(driver, 'turn')[0]?.state).toBe('interrupted')
+  })
+
+  it('keeps the final structured error and rejects unsupported reverse requests without blocking output', () => {
+    const driver = opened(); const id = prompt(driver)
+    receive(driver, { id: 'unknown', method: 'fs/write_text_file', params: { path: '/work/file' } })
+    expect(due(driver)).toMatchObject([{ id: 'unknown', error: { code: -32601 } }])
+    receive(driver, { id, error: { code: -32000, message: 'The actual provider error' } })
+    driver.apply({ dir: 'exit', at: 5, code: 1, stderr: 'generic exit' })
+    expect(items(driver, 'turn')[0]?.error).toBe('The actual provider error')
+  })
+})
+
+describe('Cursor sessions that cannot be loaded', () => {
+  const loading = () => {
+    const driver = new CursorAcp('stage', { ...OPTIONS, resume: 'gone' })
+    due(driver)
+    receive(driver, { id: 'cursor-init', result: { protocolVersion: 1, agentCapabilities: { loadSession: true } } })
+    due(driver)
+    return driver
+  }
+
+  it('says why, from the error\'s data, and that the session is gone', () => {
+    const driver = loading()
+    receive(driver, { id: 'cursor-session', error: { code: -32602, message: 'Invalid params', data: { message: 'Session "gone" not found' } } })
+    expect(driver.failure()).toBe('session/load: Session "gone" not found')
+    expect(driver.sessionLost()).toBe(true)
+  })
+
+  it('does not take another failure for a lost session', () => {
+    const driver = loading()
+    receive(driver, { id: 'cursor-session', error: { code: -32603, message: 'Internal error' } })
+    expect(driver.failure()).toBe('session/load: Internal error')
+    expect(driver.sessionLost()).toBe(false)
+  })
+})

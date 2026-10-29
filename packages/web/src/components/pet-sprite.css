@@ -1,0 +1,52 @@
+.pet-art { --pet-arm-edge: 84%; position: relative; display: block; width: 100%; height: 100%; transform-origin: 50% 90%; }
+.pet-art-body { display: block; width: 100%; height: 100%; }
+.pet-art-frame { display: block; width: 100%; height: 100%; background-size: 400% 400%; background-repeat: no-repeat; }
+.pet-art[data-pose='sit'], .pet-art[data-pose='nap'] { transform: translateY(22%); }
+.pet-art[data-pose='running']:not([data-working]):not([data-walking]) { transform-origin: 50% 99%; animation: pet-breathe 3.8s ease-in-out infinite; }
+.pet-art[data-pose='waving'] { animation: pet-greeting .45s ease-in-out 2; }
+.pet-art[data-pose='jumping'] { animation: pet-delight .8s ease-out; }
+[data-airborne] .pet-art { animation: none; transform: none; }
+.pet-art[data-walking] { transform: none; animation: none; }
+.pet-art[data-rigged] .pet-art-body { clip-path: inset(calc(var(--pet-neck) - .2%) 0 0); }
+.pet-art[data-pose='peek'] .pet-art-body { visibility: hidden; }
+.pet-art[data-walking] .pet-art-body { clip-path: polygon(0 var(--pet-neck), var(--pet-arm-edge) var(--pet-neck), var(--pet-arm-edge) 55%, 100% 55%, 100% 100%, 0 100%); }
+.pet-art[data-walking] .pet-art-frame { transform-origin: 0 0; background-size: 400% 300%; animation: pet-stride var(--pet-stride-duration) steps(1, end) infinite; }
+/* Share the standing head so starting or stopping cannot change its size. */
+.pet-head { position: absolute; inset: 0; display: block; transform-origin: var(--pet-neck-x) var(--pet-neck); transition: transform .24s ease-out; }
+.pet-head-frame { position: absolute; inset: 0; background-size: 400% 400%; background-repeat: no-repeat; clip-path: inset(0 0 calc(100% - var(--pet-neck))); }
+.pet-eyes { --pet-eye-open: 1; position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.pet-eyelid { transform: scaleY(max(.03, var(--pet-eye-open))); opacity: clamp(0, calc(var(--pet-eye-open) * 6), 1); }
+.pet-pupil { transition: transform .09s ease-out; }
+.pet-eye-closed { opacity: clamp(0, calc((.3 - var(--pet-eye-open)) * 4), 1); }
+@keyframes pet-stride {
+  0%, 100% { background-position: 0% 0%; transform: var(--pet-step-0); }
+  8.333333% { background-position: 33.333333% 0%; transform: var(--pet-step-1); }
+  16.666667% { background-position: 66.666667% 0%; transform: var(--pet-step-2); }
+  25% { background-position: 100% 0%; transform: var(--pet-step-3); }
+  33.333333% { background-position: 0% 50%; transform: var(--pet-step-4); }
+  41.666667% { background-position: 33.333333% 50%; transform: var(--pet-step-5); }
+  50% { background-position: 66.666667% 50%; transform: var(--pet-step-6); }
+  58.333333% { background-position: 100% 50%; transform: var(--pet-step-7); }
+  66.666667% { background-position: 0% 100%; transform: var(--pet-step-8); }
+  75% { background-position: 33.333333% 100%; transform: var(--pet-step-9); }
+  83.333333% { background-position: 66.666667% 100%; transform: var(--pet-step-10); }
+  91.666667% { background-position: 100% 100%; transform: var(--pet-step-11); }
+}
+.pet-workstation { position: absolute; inset: 0; width: 100%; height: 100%; }
+.pet-workstation-base, .pet-typing-arms { position: absolute; inset: 0; width: 100%; height: 100%; }
+.pet-typing-arm { transform-box: view-box; animation: pet-type-near var(--pet-typing-cycle) ease-in-out infinite; }
+.pet-typing-far { animation-name: pet-type-far; }
+@keyframes pet-breathe { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(1.008); } }
+@keyframes pet-type-near {
+  0%, 18%, 38%, 62%, 100% { transform: rotate(0); }
+  8%, 28%, 48% { transform: rotate(var(--pet-typing-angle)); }
+}
+@keyframes pet-type-far {
+  0%, 8%, 28%, 48%, 72%, 100% { transform: rotate(0); }
+  18%, 38%, 58% { transform: rotate(var(--pet-typing-angle)); }
+}
+@keyframes pet-greeting { 50% { transform: rotate(-5deg); } }
+@keyframes pet-delight { 20% { transform: scale(1.06, .92); } 50% { transform: translateY(-18%) scale(.96, 1.04); } 80% { transform: scale(1.04, .96); } }
+.pet-art[data-reduced], .pet-art[data-reduced] *, [data-paused] .pet-art, [data-paused] .pet-art *, :root[data-resting] .pet-art, :root[data-resting] .pet-art * { animation-play-state: paused !important; transition: none !important; }
+.pet-art[data-reduced] .pet-art-frame { animation: none !important; }
+@media (prefers-reduced-motion: reduce) { .pet-art, .pet-art * { animation: none !important; transition: none !important; } }

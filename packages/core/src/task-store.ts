@@ -1,0 +1,718 @@
+import { randomUUID } from 'node:crypto'
+import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
+import { z } from 'zod'
+import { SourceSnapshot, Task, TaskAttempt, TaskImage, TaskLaunchOptions, TaskPlan, TaskSource, TaskStart, type TaskStatus } from '@conclave/protocol'
+
+const TASK_AUTO_RUN_MIGRATION = 'ALTER TABLE tasks ADD COLUMN auto_run INTEGER NOT NULL DEFAULT 0;'
+
+// Append-only: each entry upgrades PRAGMA user_version by one.
+export const MIGRATIONS = [
+  `CREATE TABLE tasks (
+     id TEXT PRIMARY KEY,
+     title TEXT NOT NULL,
+     details TEXT NOT NULL DEFAULT '',
+     status TEXT NOT NULL,
+     repo_path TEXT,
+     agent TEXT,
+     worktree_path TEXT,
+     branch TEXT,
+     session_id TEXT,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL
+   );
+   CREATE INDEX tasks_status ON tasks(status);
+   CREATE INDEX tasks_session ON tasks(session_id);`,
+  // Retired: it folded statuses no install still holds. Kept empty so later entries keep their versions.
+  '',
+  // A task spans several repos, and may wait on other tasks.
+  `CREATE TABLE task_repos (
+     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+     position INTEGER NOT NULL,
+     path TEXT NOT NULL,
+     worktree_path TEXT,
+     branch TEXT,
+     PRIMARY KEY (task_id, position)
+   );
+   INSERT INTO task_repos (task_id, position, path, worktree_path, branch)
+     SELECT id, 0, repo_path, worktree_path, branch FROM tasks WHERE repo_path IS NOT NULL;
+   ALTER TABLE tasks DROP COLUMN repo_path;
+   ALTER TABLE tasks DROP COLUMN worktree_path;
+   ALTER TABLE tasks DROP COLUMN branch;
+   CREATE TABLE task_dependencies (
+     task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+     depends_on TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+     PRIMARY KEY (task_id, depends_on)
+   );
+   CREATE INDEX task_dependencies_depends_on ON task_dependencies(depends_on);`,
+  // Projects offered again when picking one (see ProjectRegistry), seeded from what tasks already use.
+  `CREATE TABLE known_repos (path TEXT PRIMARY KEY, used_at INTEGER NOT NULL);
+   INSERT INTO known_repos (path, used_at)
+     SELECT r.path, MAX(t.updated_at) FROM task_repos r JOIN tasks t ON t.id = r.task_id GROUP BY r.path;`,
+  // Refining sessions, the plan an agent hands back, and what accepting it replaced.
+  `ALTER TABLE tasks ADD COLUMN refine_session_id TEXT;
+   ALTER TABLE tasks ADD COLUMN proposal TEXT;
+   ALTER TABLE tasks ADD COLUMN previous_details TEXT;
+   CREATE INDEX tasks_refine_session ON tasks(refine_session_id);`,
+  // Redoing a done task: the new task points back at the one it replaces.
+  `ALTER TABLE tasks ADD COLUMN derived_from TEXT;
+   ALTER TABLE tasks ADD COLUMN abandon_reason TEXT;`,
+  // Tasks imported from an issue tracker, and the issues the user chose not to import.
+  `ALTER TABLE tasks ADD COLUMN source TEXT;
+   CREATE TABLE dismissed_issues (
+     kind TEXT NOT NULL,
+     key TEXT NOT NULL,
+     dismissed_at INTEGER NOT NULL,
+     PRIMARY KEY (kind, key)
+   );`,
+  // Sources became pluggable: a source names its provider and instance (Jira was the only one),
+  // and the issue text moved out of the details into its own snapshot.
+  `ALTER TABLE tasks ADD COLUMN source_snapshot TEXT;
+   UPDATE tasks SET source = json_object(
+       'provider', 'jira', 'instance', 'default', 'name', 'Jira',
+       'key', json_extract(source, '$.key'), 'url', json_extract(source, '$.url'))
+     WHERE source IS NOT NULL AND json_valid(source) AND json_extract(source, '$.kind') = 'jira';
+   CREATE TABLE dismissed_issues_v2 (
+     provider TEXT NOT NULL,
+     instance TEXT NOT NULL,
+     key TEXT NOT NULL,
+     dismissed_at INTEGER NOT NULL,
+     PRIMARY KEY (provider, instance, key)
+   );
+   INSERT INTO dismissed_issues_v2 (provider, instance, key, dismissed_at)
+     SELECT kind, 'default', key, dismissed_at FROM dismissed_issues;
+   DROP TABLE dismissed_issues;
+   ALTER TABLE dismissed_issues_v2 RENAME TO dismissed_issues;`,
+  // Images the user attached to a task, as a JSON list of attachment ids and names.
+  `ALTER TABLE tasks ADD COLUMN images TEXT;`,
+  `CREATE TABLE conversations (
+     id TEXT PRIMARY KEY, title TEXT NOT NULL, title_locked INTEGER NOT NULL,
+     agent TEXT NOT NULL, workspace_path TEXT NOT NULL, managed_workspace INTEGER NOT NULL,
+     session_id TEXT, output_offset INTEGER NOT NULL DEFAULT 0,
+     created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+   );
+   CREATE INDEX conversations_updated ON conversations(updated_at DESC);
+   CREATE INDEX conversations_session ON conversations(session_id);
+   CREATE TABLE conversation_stages (
+     id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+     agent TEXT NOT NULL, provider_session_id TEXT, session_id TEXT,
+     received_sequence INTEGER NOT NULL DEFAULT 0,
+     started_at INTEGER NOT NULL, ended_at INTEGER, exit_code INTEGER
+   );
+   CREATE INDEX conversation_stages_history ON conversation_stages(conversation_id, started_at DESC);
+   CREATE TABLE conversation_messages (
+     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+     conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+     stage_id TEXT NOT NULL REFERENCES conversation_stages(id) ON DELETE CASCADE,
+     role TEXT NOT NULL, agent TEXT NOT NULL, text TEXT NOT NULL,
+     event_key TEXT NOT NULL, complete INTEGER NOT NULL, created_at INTEGER NOT NULL,
+     UNIQUE(stage_id, event_key)
+   );
+   CREATE INDEX conversation_messages_history ON conversation_messages(conversation_id, sequence);`,
+  `ALTER TABLE conversations ADD COLUMN project_paths TEXT NOT NULL DEFAULT '[]';
+   UPDATE conversations SET project_paths = json_array(workspace_path) WHERE managed_workspace = 0;`,
+  // How the last run ended, and whether its agent is waiting for the user.
+  `ALTER TABLE tasks ADD COLUMN last_exit TEXT;
+   ALTER TABLE tasks ADD COLUMN awaiting_input INTEGER NOT NULL DEFAULT 0;`,
+  // Each project's HEAD when a conversation started, keyed by path: its later commits are its own.
+  `ALTER TABLE conversations ADD COLUMN project_starts TEXT NOT NULL DEFAULT '{}';`,
+  // Shells in the app's terminal panel, which the daemon keeps running across core restarts.
+  `CREATE TABLE terminals (
+     id TEXT PRIMARY KEY, session_id TEXT NOT NULL, cwd TEXT NOT NULL, title TEXT NOT NULL, created_at INTEGER NOT NULL
+   );`,
+  // A stage runs its agent as a TUI or in chat mode; a chat stage's output is read up to chat_offset.
+  `ALTER TABLE conversation_stages ADD COLUMN mode TEXT NOT NULL DEFAULT 'tui';
+   ALTER TABLE conversation_stages ADD COLUMN chat_offset INTEGER NOT NULL DEFAULT 0;`,
+  // What a conversation last chose for its chat stages: permission mode, model, effort, bypass.
+  `ALTER TABLE conversations ADD COLUMN chat_options TEXT NOT NULL DEFAULT '{}';`,
+  // A task run in the chat view: the plan it kept, the conversation it runs in (which knows its
+  // task, so the link has one home), and which of that conversation's stages may only plan.
+  `ALTER TABLE tasks ADD COLUMN plan TEXT;
+   ALTER TABLE conversations ADD COLUMN task_id TEXT;
+   CREATE INDEX conversations_task ON conversations(task_id);
+   ALTER TABLE conversation_stages ADD COLUMN plan_only INTEGER NOT NULL DEFAULT 0;`,
+  // Where each repo's branch is to start, as the task picked it, and where it did (JSON).
+  `ALTER TABLE task_repos ADD COLUMN start_ref TEXT;
+   ALTER TABLE task_repos ADD COLUMN start TEXT;`,
+  // Branches the user switched a conversation's projects to since its agent last heard (JSON).
+  `ALTER TABLE conversations ADD COLUMN switched_branches TEXT NOT NULL DEFAULT '{}';`,
+  // Commands the user keeps for the terminal panel.
+  `CREATE TABLE terminal_commands (
+     id TEXT PRIMARY KEY, label TEXT NOT NULL, command TEXT NOT NULL, run INTEGER NOT NULL,
+     project_path TEXT, created_at INTEGER NOT NULL
+   );`,
+  // A chat turn the usage limit stopped, and core's plan to go on once it lifts (UsageLimitService).
+  `CREATE TABLE conversation_usage_limits (
+     id TEXT PRIMARY KEY,
+     conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+     stage_id TEXT NOT NULL, item_id TEXT NOT NULL, agent TEXT NOT NULL,
+     resets_at INTEGER, continue_at INTEGER, auto_continue INTEGER NOT NULL,
+     status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, error TEXT, continued_at INTEGER,
+     created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+     UNIQUE (stage_id, item_id)
+   );
+   CREATE INDEX conversation_usage_limits_due ON conversation_usage_limits(status, continue_at);`,
+  // Each time an agent worked on a task, and what the user made of it (see AgentRunStore). No
+  // foreign key: a deleted task's runs still count toward how its agent did.
+  `CREATE TABLE agent_runs (
+     id TEXT PRIMARY KEY, task_id TEXT NOT NULL, kind TEXT NOT NULL, view TEXT NOT NULL,
+     agent TEXT NOT NULL, model TEXT, effort TEXT,
+     started_at INTEGER NOT NULL, ended_at INTEGER, ended_by TEXT, exit_code INTEGER,
+     input_tokens INTEGER, output_tokens INTEGER, total_tokens INTEGER, work_ms INTEGER,
+     outcome TEXT, outcome_at INTEGER
+   );
+   CREATE INDEX agent_runs_task ON agent_runs(task_id, started_at DESC);`,
+  // Each chat turn as it ended, for how each agent does in conversations (ChatTurnStore), and the
+  // stages already counted. No foreign key, as with agent_runs: a deleted conversation still counts.
+  `CREATE TABLE chat_turns (
+     stage_id TEXT NOT NULL, item_id TEXT NOT NULL, conversation_id TEXT NOT NULL, task_id TEXT,
+     agent TEXT NOT NULL, model TEXT, state TEXT NOT NULL, duration_ms INTEGER,
+     input_tokens INTEGER, output_tokens INTEGER, total_tokens INTEGER,
+     usage_limit INTEGER NOT NULL DEFAULT 0, ended_at INTEGER NOT NULL,
+     PRIMARY KEY (stage_id, item_id)
+   );
+   CREATE INDEX chat_turns_agent ON chat_turns(agent, model);
+   CREATE TABLE chat_turn_stages (stage_id TEXT PRIMARY KEY, counted_at INTEGER NOT NULL);`,
+  // 0.11 dropped the terminal view, and what it left goes: tasks run in a terminal and their runs
+  // (their worktrees stay on disk, for the worktree page to clean), each conversation's terminal
+  // stages and the messages they recorded, and a conversation with no other stage left.
+  `DELETE FROM tasks WHERE session_id IS NOT NULL
+     AND id NOT IN (SELECT task_id FROM conversations WHERE task_id IS NOT NULL);
+   DELETE FROM agent_runs WHERE view = 'terminal';
+   DELETE FROM conversations WHERE id IN (SELECT conversation_id FROM conversation_stages WHERE mode = 'tui')
+     AND id NOT IN (SELECT conversation_id FROM conversation_stages WHERE mode = 'chat');
+   UPDATE conversations SET session_id = NULL
+     WHERE session_id IN (SELECT session_id FROM conversation_stages WHERE mode = 'tui');
+   DELETE FROM conversation_stages WHERE mode = 'tui';
+   DROP INDEX tasks_session;
+   DROP INDEX tasks_refine_session;
+   ALTER TABLE tasks DROP COLUMN session_id;
+   ALTER TABLE tasks DROP COLUMN refine_session_id;
+   ALTER TABLE tasks DROP COLUMN proposal;
+   ALTER TABLE tasks DROP COLUMN previous_details;
+   ALTER TABLE tasks DROP COLUMN last_exit;
+   ALTER TABLE conversations DROP COLUMN output_offset;
+   ALTER TABLE conversation_stages DROP COLUMN mode;
+   ALTER TABLE agent_runs DROP COLUMN view;
+   ALTER TABLE agent_runs DROP COLUMN exit_code;`,
+  // When the user pinned a conversation to the top of the list.
+  `ALTER TABLE conversations ADD COLUMN pinned_at INTEGER;`,
+  // Runs the user scheduled for later (ScheduleService). No foreign keys: a run outlives its target,
+  // to say what became of it. check_at: when to look at the agent's quota again.
+  `CREATE TABLE scheduled_runs (
+     id TEXT PRIMARY KEY, target TEXT NOT NULL, title TEXT NOT NULL, agent TEXT NOT NULL,
+     not_before INTEGER, check_at INTEGER, resets_at INTEGER, position REAL NOT NULL,
+     status TEXT NOT NULL, conversation_id TEXT, attempts INTEGER NOT NULL DEFAULT 0, error TEXT,
+     created_at INTEGER NOT NULL, settled_at INTEGER, updated_at INTEGER NOT NULL
+   );
+   CREATE INDEX scheduled_runs_status ON scheduled_runs(status, position);`,
+  // Resuming after a usage limit became a scheduled run of its own kind: what still waited (or was
+  // being tried) moves over, with the time the limit lifts; what the user had turned off goes.
+  `INSERT INTO scheduled_runs (id, target, title, agent, not_before, check_at, resets_at, position, status, conversation_id, attempts, error, created_at, settled_at, updated_at)
+     SELECT l.id,
+       json_object('kind', 'resume', 'conversationId', l.conversation_id, 'stageId', l.stage_id, 'itemId', l.item_id),
+       COALESCE((SELECT c.title FROM conversations c WHERE c.id = l.conversation_id), ''), l.agent,
+       l.resets_at + 5000, l.continue_at, l.resets_at,
+       (SELECT COALESCE(MAX(position), 0) FROM scheduled_runs) + ROW_NUMBER() OVER (ORDER BY l.created_at, l.rowid),
+       CASE l.status WHEN 'retrying' THEN 'starting' ELSE 'waiting' END,
+       NULL, l.attempts, l.error, l.created_at, NULL, l.updated_at
+     FROM conversation_usage_limits l
+     WHERE l.status IN ('waiting', 'retrying') AND l.auto_continue = 1;
+   DROP INDEX conversation_usage_limits_due;
+   DROP TABLE conversation_usage_limits;`,
+  // The user's own chat commands (ChatCommandStore). A name is taken once per project, and once
+  // across all of them: '' stands for every project, since NULLs never clash in a unique index.
+  `CREATE TABLE chat_commands (
+     id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL, prompt TEXT NOT NULL,
+     project_path TEXT, created_at INTEGER NOT NULL
+   );
+   CREATE UNIQUE INDEX chat_commands_name ON chat_commands(lower(name), coalesce(project_path, ''));`,
+  // A terminal an agent opened for a command: it stays after the command ends, with how it
+  // ended, until the user closes it.
+  `ALTER TABLE terminals ADD COLUMN conversation_id TEXT;
+   ALTER TABLE terminals ADD COLUMN command TEXT;
+   ALTER TABLE terminals ADD COLUMN exited INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE terminals ADD COLUMN exit_code INTEGER;`,
+  // Routines (RoutineService) start a run on a schedule; each run is a scheduled_run with the
+  // routine's id, the occurrence it stands for (unique per routine, so a start interrupted
+  // between inserting the run and moving the routine on cannot make a second), how its turn
+  // ended and when the user looked. A conversation remembers the routine that opened it. No
+  // foreign keys, as a run outlives its target. A core from before this migration cannot read
+  // a run with a routine target: do not downgrade past it.
+  `CREATE TABLE routines (
+     id TEXT PRIMARY KEY, title TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
+     schedule TEXT NOT NULL, target TEXT NOT NULL,
+     next_run_at INTEGER, last_fired_at INTEGER,
+     created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+   );
+   CREATE INDEX routines_due ON routines(enabled, next_run_at);
+   ALTER TABLE scheduled_runs ADD COLUMN routine_id TEXT;
+   ALTER TABLE scheduled_runs ADD COLUMN due_at INTEGER;
+   ALTER TABLE scheduled_runs ADD COLUMN finished_at INTEGER;
+   ALTER TABLE scheduled_runs ADD COLUMN outcome TEXT;
+   ALTER TABLE scheduled_runs ADD COLUMN seen_at INTEGER;
+   CREATE UNIQUE INDEX scheduled_runs_occurrence ON scheduled_runs(routine_id, due_at) WHERE routine_id IS NOT NULL;
+   CREATE INDEX scheduled_runs_routine ON scheduled_runs(routine_id, created_at DESC) WHERE routine_id IS NOT NULL;
+   ALTER TABLE conversations ADD COLUMN routine_id TEXT;`,
+  // The conversation a fork was made from; kept after the source is deleted, as a name only.
+  `ALTER TABLE conversations ADD COLUMN forked_from_id TEXT;`,
+  // The mode, model and effort a task starts in when a start names none (Task.launch, JSON).
+  `ALTER TABLE tasks ADD COLUMN launch TEXT;`,
+  // Group chats (DiscussionService). Each member talks in a conversation of its own, which carries
+  // the discussion's id; a post's delivered lists the members it has been sent to.
+  `CREATE TABLE discussions (
+     id TEXT PRIMARY KEY, title TEXT NOT NULL, topic TEXT NOT NULL, project_paths TEXT NOT NULL DEFAULT '[]',
+     chair_id TEXT NOT NULL, max_rounds INTEGER NOT NULL, anonymous INTEGER NOT NULL DEFAULT 0,
+     state TEXT NOT NULL, step TEXT, round INTEGER NOT NULL DEFAULT 0, last_round INTEGER NOT NULL DEFAULT 0,
+     pinned_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+   );
+   CREATE TABLE discussion_members (
+     id TEXT PRIMARY KEY, discussion_id TEXT NOT NULL, position INTEGER NOT NULL, conversation_id TEXT NOT NULL,
+     agent TEXT NOT NULL, model TEXT, effort TEXT, name TEXT NOT NULL, role TEXT NOT NULL DEFAULT ''
+   );
+   CREATE INDEX discussion_members_discussion ON discussion_members(discussion_id, position);
+   CREATE INDEX discussion_members_conversation ON discussion_members(conversation_id);
+   CREATE TABLE discussion_posts (
+     id TEXT PRIMARY KEY, discussion_id TEXT NOT NULL, sequence INTEGER NOT NULL, round INTEGER NOT NULL,
+     member_id TEXT, kind TEXT NOT NULL, text TEXT NOT NULL DEFAULT '', mentions TEXT NOT NULL DEFAULT '[]',
+     delivered TEXT NOT NULL DEFAULT '[]', state TEXT NOT NULL, error TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+     UNIQUE (discussion_id, sequence)
+   );
+   ALTER TABLE conversations ADD COLUMN discussion_id TEXT;`,
+  // A member taken out of a group chat stays, for the name on what it said.
+  `ALTER TABLE discussion_members ADD COLUMN removed_at INTEGER;`,
+  // The user moves a group chat on to a new topic: the post that does, and the round before it opened.
+  `ALTER TABLE discussions ADD COLUMN topic_start INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE discussion_posts ADD COLUMN topic INTEGER NOT NULL DEFAULT 0;`,
+  // A task redone in place keeps its earlier goes (Task.attempts, JSON).
+  `ALTER TABLE tasks ADD COLUMN attempts TEXT;`,
+  // Conversations and group chats the user put away.
+  `ALTER TABLE conversations ADD COLUMN archived_at INTEGER;
+   ALTER TABLE discussions ADD COLUMN archived_at INTEGER;`,
+  // English words for the branch of a task whose title git cannot name one after (Task.slug).
+  `ALTER TABLE tasks ADD COLUMN slug TEXT;`,
+  `ALTER TABLE tasks ADD COLUMN squad_id TEXT;
+   ALTER TABLE conversations ADD COLUMN squad_run_id TEXT;
+   ALTER TABLE conversations ADD COLUMN workspace_read_only INTEGER NOT NULL DEFAULT 0;
+   CREATE TABLE squads (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+   CREATE TABLE squad_runs (id TEXT PRIMARY KEY, task_id TEXT NOT NULL, data TEXT NOT NULL);
+   CREATE INDEX squad_runs_task ON squad_runs(task_id);`,
+  // A conversation's to-dos (TodoStore): its groups as one JSON list.
+  `CREATE TABLE conversation_todos (conversation_id TEXT PRIMARY KEY, groups TEXT NOT NULL);`,
+  // NULL keeps the legacy defaults; an explicit empty string removes extra discussion requirements.
+  `ALTER TABLE discussions ADD COLUMN requirements TEXT;`,
+  // The inbox issue a conversation was opened to look into (a TaskSource as JSON).
+  `ALTER TABLE conversations ADD COLUMN source TEXT;`,
+  `ALTER TABLE conversations ADD COLUMN helper_of TEXT;
+   CREATE UNIQUE INDEX conversations_helper ON conversations(helper_of) WHERE helper_of IS NOT NULL;`,
+  `CREATE TABLE small_model_jobs (id TEXT PRIMARY KEY, conversation_id TEXT, ended_at INTEGER, data TEXT NOT NULL);
+   CREATE INDEX small_model_jobs_ended ON small_model_jobs(ended_at);`,
+  `CREATE TABLE small_model_price_versions (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+   ALTER TABLE small_model_jobs ADD COLUMN price_version TEXT;
+   ALTER TABLE small_model_jobs ADD COLUMN stats_data TEXT;
+   CREATE INDEX small_model_jobs_unversioned ON small_model_jobs(id) WHERE price_version IS NULL;`,
+  // A watermark keeps replayed turns from requesting another title after core restarts.
+  `ALTER TABLE conversations ADD COLUMN title_sequence INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE conversations ADD COLUMN title_rounds INTEGER NOT NULL DEFAULT 0;
+   UPDATE conversations SET title_sequence = COALESCE((SELECT MAX(sequence) FROM conversation_messages
+     WHERE conversation_id = conversations.id AND role = 'assistant' AND complete = 1), 0);
+   UPDATE conversations SET title_rounds = 1 WHERE title_sequence > 0;`,
+  // A project's setup or check run in a worktree (Terminal.purpose), rather than an agent's command.
+  `ALTER TABLE terminals ADD COLUMN purpose TEXT;`,
+  // When the user last took a conversation out of the archive, which auto-archiving counts as activity.
+  `ALTER TABLE conversations ADD COLUMN restored_at INTEGER;`,
+  // The model provider a conversation was started on, and what each stage ran on (a ProviderRoute
+  // as JSON); null on the agent's own account.
+  `ALTER TABLE conversations ADD COLUMN model_provider TEXT;
+   ALTER TABLE conversation_stages ADD COLUMN provider_route TEXT;`,
+  TASK_AUTO_RUN_MIGRATION,
+  // Sessions an agent ran outside Conclave, imported as conversations: how far each was taken in
+  // (its last record's time) and how its file stood then.
+  `CREATE TABLE session_imports (
+     agent TEXT NOT NULL, provider_session_id TEXT NOT NULL,
+     conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+     imported_through INTEGER NOT NULL, source_modified_at INTEGER NOT NULL,
+     PRIMARY KEY (agent, provider_session_id)
+   );`,
+  // The agent account a stage ran on (AgentAccount.id); null on a provider, or for an agent without accounts.
+  `ALTER TABLE conversation_stages ADD COLUMN account TEXT;`,
+  `CREATE TABLE agent_cli_operations (agent TEXT PRIMARY KEY, data TEXT NOT NULL);`,
+  `CREATE TABLE usage_records (file TEXT NOT NULL, id TEXT NOT NULL, at INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (file,id));
+   CREATE INDEX usage_records_at ON usage_records(at);
+   CREATE TABLE usage_scan_files (file TEXT PRIMARY KEY, data TEXT NOT NULL);
+   CREATE TABLE usage_stage_identities (stage TEXT PRIMARY KEY, identity TEXT);
+   CREATE TABLE usage_rebuilt_stages (stage TEXT PRIMARY KEY);
+   CREATE TABLE usage_quota_samples (scope TEXT NOT NULL, at INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(scope,at));
+   CREATE TABLE usage_automation_policies (scope TEXT PRIMARY KEY, data TEXT NOT NULL);
+   CREATE TABLE usage_automation_log (id TEXT PRIMARY KEY, at INTEGER NOT NULL, data TEXT NOT NULL);`,
+  // An additional project a task only reads, and the folders its conversation may only read (JSON).
+  `ALTER TABLE task_repos ADD COLUMN is_reference INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE conversations ADD COLUMN reference_paths TEXT NOT NULL DEFAULT '[]';`,
+  `CREATE TABLE agent_profiles (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+   CREATE TABLE agent_calls (id TEXT PRIMARY KEY, parent_id TEXT NOT NULL, data TEXT NOT NULL);
+   CREATE INDEX agent_calls_parent ON agent_calls(parent_id);
+   ALTER TABLE conversations ADD COLUMN agent_profile TEXT;
+   ALTER TABLE conversations ADD COLUMN parent_conversation_id TEXT;
+   ALTER TABLE conversations ADD COLUMN agent_call_id TEXT;`,
+  `CREATE TABLE git_favorites (
+     repository TEXT NOT NULL, ref TEXT NOT NULL, favorite INTEGER NOT NULL,
+     PRIMARY KEY (repository, ref)
+   );`,
+  // Pages the user keeps for the built-in browser, one row per address.
+  `CREATE TABLE bookmarks (
+     id TEXT PRIMARY KEY, title TEXT NOT NULL, url TEXT NOT NULL UNIQUE, folder TEXT, created_at INTEGER NOT NULL
+   );`,
+  // A started run stops holding its agent once the user carries its conversation on; a waiting
+  // run names the run it waits behind.
+  `ALTER TABLE scheduled_runs ADD COLUMN released_at INTEGER;
+   ALTER TABLE scheduled_runs ADD COLUMN held_by TEXT;`
+]
+
+
+const SELECT = `SELECT id, title, slug, details, status, agent, squad_id AS squadId,
+  derived_from AS derivedFrom, abandon_reason AS abandonReason, source, source_snapshot AS sourceSnapshot, images,
+  awaiting_input AS awaitingInput, auto_run AS autoRun, plan, launch, attempts,
+  (SELECT id FROM conversations WHERE task_id = tasks.id ORDER BY created_at DESC LIMIT 1) AS conversationId,
+  created_at AS createdAt, updated_at AS updatedAt FROM tasks`
+
+// JSON columns and SQLite's 0/1 booleans are converted; everything else maps straight onto Task.
+const TaskRow = Task.omit({
+  repos: true,
+  dependsOn: true,
+  source: true,
+  sourceSnapshot: true,
+  images: true,
+  awaitingInput: true,
+  autoRun: true,
+  plan: true,
+  launch: true,
+  attempts: true
+}).extend({
+  source: z.string().nullable(),
+  sourceSnapshot: z.string().nullable(),
+  images: z.string().nullable(),
+  awaitingInput: z.number(),
+  autoRun: z.number(),
+  plan: z.string().nullable(),
+  launch: z.string().nullable(),
+  attempts: z.string().nullable()
+})
+const TaskImages = z.array(TaskImage)
+const TaskAttempts = z.array(TaskAttempt)
+
+// A column that fails to parse reads as empty, but says so: losing where a task came from silently
+// would be worse than a noisy log.
+function parseColumn<T>(schema: z.ZodType<T>, raw: string | null, where: string): T | null {
+  if (raw === null) {
+    return null
+  }
+  const parsed = schema.safeParse(jsonOrUndefined(raw))
+  if (!parsed.success) {
+    console.error(`[conclave-core] unreadable ${where}; treating it as empty`)
+    return null
+  }
+  return parsed.data
+}
+
+function jsonOrUndefined(text: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    // Reported by the schema check that follows, which fails on undefined.
+    return undefined
+  }
+}
+const RepoRow = z.object({
+  taskId: z.string(),
+  path: z.string(),
+  worktreePath: z.string().nullable(),
+  branch: z.string().nullable(),
+  startRef: z.string().nullable(),
+  start: z.string().nullable(),
+  reference: z.number()
+})
+const DependencyRow = z.object({ taskId: z.string(), dependsOn: z.string() })
+
+export type TaskPatch = Partial<
+  Pick<
+    Task,
+    | 'title'
+    | 'slug'
+    | 'details'
+    | 'status'
+    | 'squadId'
+    | 'agent'
+    | 'derivedFrom'
+    | 'abandonReason'
+    | 'source'
+    | 'sourceSnapshot'
+    | 'images'
+    | 'awaitingInput'
+    | 'plan'
+    | 'launch'
+    | 'attempts'
+    | 'repos'
+    | 'dependsOn'
+    | 'autoRun'
+  >
+>
+
+// Columns on `tasks` itself; repos and dependencies live in their own tables.
+const SCALAR_KEYS = [
+  'title',
+  'slug',
+  'details',
+  'status',
+  'agent',
+  'squadId',
+  'derivedFrom',
+  'abandonReason'
+] as const
+
+const SCALAR_COLUMNS: Record<(typeof SCALAR_KEYS)[number], string> = {
+  title: 'title',
+  slug: 'slug',
+  details: 'details',
+  status: 'status',
+  agent: 'agent',
+  squadId: 'squad_id',
+  derivedFrom: 'derived_from',
+  abandonReason: 'abandon_reason'
+}
+
+function groupBy<T extends { taskId: string }>(rows: T[]): Map<string, T[]> {
+  const groups = new Map<string, T[]>()
+  rows.forEach((row) => groups.set(row.taskId, [...(groups.get(row.taskId) ?? []), row]))
+  return groups
+}
+
+export class TaskStore {
+  private readonly db: DatabaseSync
+
+  constructor(
+    file: string,
+    private readonly now: () => number = Date.now
+  ) {
+    this.db = new DatabaseSync(file)
+    this.db.exec('PRAGMA journal_mode = WAL')
+    this.db.exec('PRAGMA foreign_keys = ON')
+    this.migrate()
+  }
+
+  private migrate(): void {
+    let version = Number(this.db.prepare('PRAGMA user_version').get()?.user_version ?? 0)
+    // Parallel development builds used version 50 for either auto-run or session imports.
+    if (version === 50 && this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'session_imports'").get()) {
+      this.transaction(() => {
+        if (!this.db.prepare("SELECT 1 FROM pragma_table_info('tasks') WHERE name = 'auto_run'").get()) {
+          this.db.exec(TASK_AUTO_RUN_MIGRATION)
+        }
+        this.db.exec('PRAGMA user_version = 51')
+      })
+      version = 51
+    }
+    MIGRATIONS.slice(version).forEach((sql, offset) => {
+      this.transaction(() => {
+        this.db.exec(sql)
+        this.db.exec(`PRAGMA user_version = ${version + offset + 1}`)
+      })
+    })
+  }
+
+  private transaction(write: () => void): void {
+    this.db.exec('BEGIN')
+    try {
+      write()
+      this.db.exec('COMMIT')
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  private many(sql: string, ...params: SQLInputValue[]): Task[] {
+    const rows = this.db
+      .prepare(sql)
+      .all(...params)
+      .map((row) => TaskRow.parse(row))
+    if (rows.length === 0) {
+      return []
+    }
+    const ids = JSON.stringify(rows.map((row) => row.id))
+    const repos = groupBy(
+      this.db
+        .prepare(
+          `SELECT task_id AS taskId, path, worktree_path AS worktreePath, branch, start_ref AS startRef, start, is_reference AS reference FROM task_repos
+           WHERE task_id IN (SELECT value FROM json_each(?)) ORDER BY position`
+        )
+        .all(ids)
+        .map((row) => RepoRow.parse(row))
+    )
+    const dependencies = groupBy(
+      this.db
+        .prepare(
+          `SELECT task_id AS taskId, depends_on AS dependsOn FROM task_dependencies
+           WHERE task_id IN (SELECT value FROM json_each(?)) ORDER BY rowid`
+        )
+        .all(ids)
+        .map((row) => DependencyRow.parse(row))
+    )
+    return rows.map((row) => ({
+      ...row,
+      source: parseColumn(TaskSource, row.source, `source of task ${row.id}`),
+      sourceSnapshot: parseColumn(SourceSnapshot, row.sourceSnapshot, `source snapshot of task ${row.id}`),
+      images: parseColumn(TaskImages, row.images, `images of task ${row.id}`) ?? [],
+      awaitingInput: row.awaitingInput !== 0,
+      autoRun: row.autoRun !== 0,
+      plan: parseColumn(TaskPlan, row.plan, `plan of task ${row.id}`),
+      launch: parseColumn(TaskLaunchOptions, row.launch, `launch of task ${row.id}`) ?? {},
+      attempts: parseColumn(TaskAttempts, row.attempts, `attempts of task ${row.id}`) ?? [],
+      repos: (repos.get(row.id) ?? []).map(({ path, worktreePath, branch, startRef, start, reference }) => ({
+        path, worktreePath, branch, startRef, start: parseColumn(TaskStart, start, `start of ${path} in task ${row.id}`), ...(reference ? { reference: true } : {})
+      })),
+      dependsOn: (dependencies.get(row.id) ?? []).map((edge) => edge.dependsOn)
+    }))
+  }
+
+  list(status?: TaskStatus): Task[] {
+    return status
+      ? this.many(`${SELECT} WHERE status = ? ORDER BY updated_at DESC`, status)
+      : this.many(`${SELECT} ORDER BY updated_at DESC`)
+  }
+
+  get(id: string): Task | null {
+    return this.many(`${SELECT} WHERE id = ?`, id)[0] ?? null
+  }
+
+  // Returns at most two rows: enough to tell "unique" from "ambiguous".
+  findByPrefix(prefix: string): Task[] {
+    if (!/^[0-9a-f-]{4,36}$/i.test(prefix)) {
+      return []
+    }
+    return this.many(`${SELECT} WHERE id LIKE ? LIMIT 2`, `${prefix.toLowerCase()}%`)
+  }
+
+  dependsOn(id: string): string[] {
+    return this.db
+      .prepare('SELECT depends_on AS dependsOn FROM task_dependencies WHERE task_id = ?')
+      .all(id)
+      .map((row) => DependencyRow.pick({ dependsOn: true }).parse(row).dependsOn)
+  }
+
+  dependents(id: string): Task[] {
+    return this.many(`${SELECT} WHERE id IN (SELECT task_id FROM task_dependencies WHERE depends_on = ?)`, id)
+  }
+
+  // Keys of issues the user dismissed from an inbox, so a refresh does not bring them back.
+  dismissedIssues(provider: string, instance: string): Set<string> {
+    return new Set(
+      this.db
+        .prepare('SELECT key FROM dismissed_issues WHERE provider = ? AND instance = ?')
+        .all(provider, instance)
+        .map((row) => z.object({ key: z.string() }).parse(row).key)
+    )
+  }
+
+  dismissIssue(provider: string, instance: string, key: string): void {
+    this.db
+      .prepare(
+        'INSERT INTO dismissed_issues (provider, instance, key, dismissed_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING'
+      )
+      .run(provider, instance, key, this.now())
+  }
+
+  restoreIssue(provider: string, instance: string, key: string): void {
+    this.db.prepare('DELETE FROM dismissed_issues WHERE provider = ? AND instance = ? AND key = ?').run(provider, instance, key)
+  }
+
+  create(title: string): Task {
+    const id = randomUUID()
+    const at = this.now()
+    this.db
+      .prepare(
+        `INSERT INTO tasks (id, title, details, status, created_at, updated_at)
+         VALUES (?, ?, '', 'pending', ?, ?)`
+      )
+      .run(id, title, at, at)
+    return this.require(id)
+  }
+
+  update(id: string, patch: TaskPatch): Task {
+    this.transaction(() => {
+      const sets: string[] = []
+      const values: SQLInputValue[] = []
+      for (const key of SCALAR_KEYS) {
+        const value = patch[key]
+        if (value !== undefined) {
+          sets.push(`${SCALAR_COLUMNS[key]} = ?`)
+          values.push(value)
+        }
+      }
+      if (patch.source !== undefined) {
+        sets.push('source = ?')
+        values.push(patch.source === null ? null : JSON.stringify(patch.source))
+      }
+      if (patch.images !== undefined) {
+        sets.push('images = ?')
+        values.push(JSON.stringify(patch.images))
+      }
+      if (patch.sourceSnapshot !== undefined) {
+        sets.push('source_snapshot = ?')
+        values.push(patch.sourceSnapshot === null ? null : JSON.stringify(patch.sourceSnapshot))
+      }
+      if (patch.awaitingInput !== undefined) {
+        sets.push('awaiting_input = ?')
+        values.push(Number(patch.awaitingInput))
+      }
+      if (patch.autoRun !== undefined) {
+        sets.push('auto_run = ?')
+        values.push(Number(patch.autoRun))
+      }
+      if (patch.plan !== undefined) {
+        sets.push('plan = ?')
+        values.push(patch.plan === null ? null : JSON.stringify(patch.plan))
+      }
+      if (patch.launch !== undefined) {
+        sets.push('launch = ?')
+        values.push(JSON.stringify(patch.launch))
+      }
+      if (patch.attempts !== undefined) {
+        sets.push('attempts = ?')
+        values.push(JSON.stringify(patch.attempts))
+      }
+      sets.push('updated_at = ?')
+      values.push(this.now())
+      this.db.prepare(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ?`).run(...values, id)
+
+      if (patch.repos) {
+        this.db.prepare('DELETE FROM task_repos WHERE task_id = ?').run(id)
+        const insert = this.db.prepare(
+          'INSERT INTO task_repos (task_id, position, path, worktree_path, branch, start_ref, start, is_reference) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        )
+        patch.repos.forEach((repo, position) =>
+          insert.run(id, position, repo.path, repo.worktreePath, repo.branch, repo.startRef, repo.start && JSON.stringify(repo.start), repo.reference ? 1 : 0))
+      }
+      if (patch.dependsOn) {
+        this.db.prepare('DELETE FROM task_dependencies WHERE task_id = ?').run(id)
+        const insert = this.db.prepare('INSERT INTO task_dependencies (task_id, depends_on) VALUES (?, ?)')
+        patch.dependsOn.forEach((dependency) => insert.run(id, dependency))
+      }
+    })
+    return this.require(id)
+  }
+
+  delete(id: string): boolean {
+    return this.db.prepare('DELETE FROM tasks WHERE id = ?').run(id).changes > 0
+  }
+
+  close(): void {
+    this.db.close()
+  }
+
+  private require(id: string): Task {
+    const task = this.get(id)
+    if (!task) {
+      throw new Error(`task ${id} vanished during write`)
+    }
+    return task
+  }
+}

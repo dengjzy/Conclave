@@ -1,0 +1,37 @@
+/* The pet's stage: over everything it is given, taking no pointer but for the pet and its bubble. */
+.pet-stage { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 50; transition: opacity .25s ease; }
+.app > .pet-stage { position: fixed; }
+.pet-stage[data-hidden] { visibility: hidden; opacity: 0; }
+.pet-stage[data-hidden] .pet-walker, .pet-stage[data-hidden] .pet-bubble { pointer-events: none; }
+.pet-walker:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--radius); }
+.pet-clip { position: absolute; inset: 0; }
+.pet-walker { position: absolute; left: 0; top: 0; pointer-events: auto; cursor: grab; transform-origin: 50% 100%; will-change: transform; touch-action: none; user-select: none; -webkit-user-select: none; }
+.pet-walker[data-dragging] { cursor: grabbing; }
+.pet-facing, .pet-turn { width: 100%; height: 100%; pointer-events: none; transform-origin: 50% 100%; }
+.pet-turn { position: absolute; inset: 0; }
+
+/* What it has to say, over its head, pointing down at it. */
+.pet-bubble {
+  position: absolute; display: flex; align-items: flex-start; gap: 4px; max-width: 260px; min-width: 0;
+  transform: translate(-50%, -100%);
+  background: var(--surface); color: var(--text); border: 1px solid var(--border-2); border-radius: var(--radius-lg);
+  box-shadow: 0 6px 20px color-mix(in oklab, var(--text) 12%, transparent);
+  padding: 8px 8px 8px 12px; font-size: var(--chat-font-small, 12px); line-height: 1.5;
+  pointer-events: auto; animation: pet-bubble-in .22s ease-out both;
+}
+.pet-bubble::after, .pet-bubble::before {
+  content: ''; position: absolute; left: 50%; top: 100%; transform: translateX(-50%);
+  border: 7px solid transparent; border-bottom: 0; border-top-color: var(--border-2);
+}
+.pet-bubble::after { border-top-color: var(--surface); margin-top: -1.5px; }
+.pet-bubble-text { background: none; border: 0; padding: 0; margin: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; min-width: 0; }
+.pet-bubble-text:hover { color: var(--accent); }
+.pet-bubble[data-below] { transform: translateX(-50%); animation: none; }
+.pet-bubble[data-below]::before, .pet-bubble[data-below]::after { display: none; }
+.pet-bubble-text:focus-visible, .pet-bubble-dismiss:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--radius-xs); }
+.pet-bubble-dismiss { background: none; border: 0; padding: 0 2px; margin: -2px -2px 0 0; color: var(--text-3); font: inherit; font-size: 14px; line-height: 1; cursor: pointer; border-radius: var(--radius-xs); }
+.pet-bubble-dismiss:hover { color: var(--text); background: var(--fill); }
+@keyframes pet-bubble-in { from { opacity: 0; transform: translate(-50%, calc(-100% + 6px)); } to { opacity: 1; transform: translate(-50%, -100%); } }
+@media (prefers-reduced-motion: reduce) {
+  .pet-stage, .pet-bubble { transition: none; animation: none; }
+}
