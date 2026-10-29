@@ -23,6 +23,7 @@ import { openChatWhileStarting, perform, selectTask, setInspectorOpen, setSchedu
 import { resolveModel, useAgentCatalog } from '../agent-models'
 import { reasonText, STATUS_HINT, STATUS_LABEL } from '../labels'
 import { waitingOn } from '../task-waiting'
+import { askConfirm } from '../confirm-dialog'
 import { AgentPicker } from './AgentPicker'
 import { confirmQuota, modelText } from './AgentQuota'
 import { providerFor } from '../model-provider-choice'
@@ -198,7 +199,14 @@ export function cardAction(task: Task, dependencies: readonly Task[], turn: Chat
 
 // Deleting stops a live agent, so it asks first. Worktrees stay on disk either way.
 async function deleteTask(task: Task): Promise<void> {
-  if (window.confirm(t('TaskActions.deleteTaskExistingWorktreesAreKept', { value1: task.title, value2: task.status === 'running' ? t('TaskActions.theRunningAgentWillBeStopped') : '' }))) {
+  const confirmed = await askConfirm({
+    title: t('ConfirmDialog.delete'),
+    message: t('TaskActions.deleteTaskExistingWorktreesAreKept', { value1: task.title, value2: task.status === 'running' ? t('TaskActions.theRunningAgentWillBeStopped') : '' }),
+    confirmLabel: t('ConfirmDialog.delete'),
+    cancelLabel: t('ConfirmDialog.cancel'),
+    danger: true,
+  })
+  if (confirmed) {
     await perform((rpc) => rpc.call('tasks.delete', { id: task.id }))
   }
 }
@@ -206,7 +214,14 @@ async function deleteTask(task: Task): Promise<void> {
 // Cancelling stops the agent and keeps the rest, so it asks first, saying what stays.
 async function cancelTask(task: Task): Promise<void> {
   const stops = task.status === 'running' ? t('TaskActions.agentWillStop') : ''
-  if (window.confirm(t('TaskActions.cancelTaskChatHistoryAndWorktreesAreKept', { value1: task.title, stops: stops }))) {
+  const confirmed = await askConfirm({
+    title: t('ConfirmDialog.warning'),
+    message: t('TaskActions.cancelTaskChatHistoryAndWorktreesAreKept', { value1: task.title, stops: stops }),
+    confirmLabel: t('ConfirmDialog.confirm'),
+    cancelLabel: t('ConfirmDialog.cancel'),
+    danger: true,
+  })
+  if (confirmed) {
     await perform((rpc) => rpc.call('tasks.cancel', { id: task.id }))
   }
 }

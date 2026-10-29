@@ -9,6 +9,7 @@ import { SourceInboxView } from './components/SourceInboxView'
 import { InboxEntry } from './components/InboxEntry'
 import { SourceLoginDialog } from './components/SourceLoginDialog'
 import { ProjectTrustDialog } from './components/ProjectTrustDialog'
+import { ConfirmDialog } from './components/ConfirmDialog'
 import { TaskDetail } from './components/TaskDetail'
 import { TaskBoard } from './components/TaskBoard'
 import { SquadsEntry } from './components/Squads'
@@ -261,6 +262,7 @@ export function App() {
       {taskLaunchId && <TaskLaunchDialog key={taskLaunchId} taskId={taskLaunchId} />}
       {loginOpen && <SourceLoginDialog />}
       <ProjectTrustDialog />
+      <ConfirmDialog />
       {error && !newTaskOpen && !taskLaunchId && <ErrorToast message={error} />}
     </div>
   )

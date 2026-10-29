@@ -9,9 +9,17 @@ import { ContextMenu, MenuCheckboxItem, MenuItem, menuPoint, type MenuPoint } fr
 import { AgentIcon, ArchiveIcon, ChevronDownIcon, GroupChatIcon, PencilIcon, PinIcon, PlusIcon, SlidersIcon, TrashIcon } from './icons'
 import { SidebarCollapseButton } from './SidebarCollapseButton'
 import { TitleEditor } from './TitleEditor'
+import { askConfirm } from '../confirm-dialog'
 
 export async function removeDiscussion(discussion: Discussion): Promise<void> {
-  if (!window.confirm(t('SidebarDiscussions.deleteGroupChatMemberConversationsAndPostsAre', { value1: discussion.title }))) return
+  const confirmed = await askConfirm({
+    title: t('ConfirmDialog.delete'),
+    message: t('SidebarDiscussions.deleteGroupChatMemberConversationsAndPostsAre', { value1: discussion.title }),
+    confirmLabel: t('ConfirmDialog.delete'),
+    cancelLabel: t('ConfirmDialog.cancel'),
+    danger: true,
+  })
+  if (!confirmed) return
   await deleteDiscussion(discussion.id)
 }
 

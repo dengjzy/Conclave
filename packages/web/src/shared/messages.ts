@@ -2757,6 +2757,22 @@ export const MESSAGES = {
     "zh": "生成提交信息",
     "en": "Generate message"
   },
+  "ConfirmDialog.confirm": {
+    "zh": "确认",
+    "en": "Confirm"
+  },
+  "ConfirmDialog.cancel": {
+    "zh": "取消",
+    "en": "Cancel"
+  },
+  "ConfirmDialog.delete": {
+    "zh": "删除",
+    "en": "Delete"
+  },
+  "ConfirmDialog.warning": {
+    "zh": "提示",
+    "en": "Notice"
+  },
   "ConversationActions.onlyWasFoundOnThisComputerInstallAnother": {
     "zh": "这台电脑上只找到了 {value1}。装好另一个外部智能体后，在 设置 → 外部智能体 里重新检测，就可以移交了。",
     "en": "Only {value1} was found on this computer. Install another external agent and scan again in Settings → External agents to enable handoffs."

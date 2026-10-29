@@ -15,6 +15,7 @@ import { HelperModePicker, HelperModelPicker, helperMode, helperModes, useHelper
 import { sendsMessage } from './ChatComposer'
 import { EnterIcon } from './icons'
 import { composerDraft, saveComposerDraft, EMPTY_DRAFT } from '../composer-drafts'
+import { askConfirm } from '../confirm-dialog'
 
 function HelperDraft({ parent }: { parent: Conversation }) {
   const [text, setText] = useState(() => composerDraft(`helper:${parent.id}`).text)
@@ -68,7 +69,16 @@ export function HelperPanel({ parent }: { parent: Conversation }) {
   const reset = async () => {
     if (!helper || busy) return
     const hasContent = Boolean(quotes.length || composerDraft(helper.id).text.trim() || helper.sessionId || helper.lastExit || helper.starting || page?.items.some((item) => item.kind === 'user'))
-    if (hasContent && !window.confirm(t('HelperPanel.clearHelperHistoryAndStartANewConversation'))) return
+    if (hasContent) {
+      const confirmed = await askConfirm({
+        title: t('ConfirmDialog.warning'),
+        message: t('HelperPanel.clearHelperHistoryAndStartANewConversation'),
+        confirmLabel: t('ConfirmDialog.delete'),
+        cancelLabel: t('ConfirmDialog.cancel'),
+        danger: true,
+      })
+      if (!confirmed) return
+    }
     setBusy(true)
     const deleted = await perform((rpc) => rpc.call('conversations.delete', { id: helper.id }))
     if (deleted) {

@@ -8,6 +8,7 @@ import { AgentIcon, ChevronRightIcon, RefreshIcon } from './icons'
 import { projectName } from './ProjectPicker'
 import { useExternalSessions } from '../external-sessions'
 import { Segmented, Toggle } from './SettingsControls'
+import { askConfirm } from '../confirm-dialog'
 
 const keyOf = (session: ExternalSession) => `${session.agent}:${session.sessionId}`
 
@@ -98,7 +99,14 @@ export function SessionImportSettings() {
 
   const deleteOne = async (session: ExternalSession) => {
     if (busy) return
-    if (!window.confirm(t('SessionImportSettings.deleteConfirm', { title: session.title || session.sessionId }))) return
+    const confirmed = await askConfirm({
+      title: t('ConfirmDialog.delete'),
+      message: t('SessionImportSettings.deleteConfirm', { title: session.title || session.sessionId }),
+      confirmLabel: t('ConfirmDialog.delete'),
+      cancelLabel: t('ConfirmDialog.cancel'),
+      danger: true,
+    })
+    if (!confirmed) return
     setBusy(true)
     try {
       await perform((rpc) => rpc.call('sessionImports.delete', { agent: session.agent, sessionId: session.sessionId }))
@@ -115,7 +123,14 @@ export function SessionImportSettings() {
 
   const deleteFolder = async (cwd: string, members: ExternalSession[]) => {
     if (busy || members.length === 0) return
-    if (!window.confirm(t('SessionImportSettings.deleteFolderConfirm', { count: members.length, folder: projectName(cwd) }))) return
+    const confirmed = await askConfirm({
+      title: t('ConfirmDialog.delete'),
+      message: t('SessionImportSettings.deleteFolderConfirm', { count: members.length, folder: projectName(cwd) }),
+      confirmLabel: t('ConfirmDialog.delete'),
+      cancelLabel: t('ConfirmDialog.cancel'),
+      danger: true,
+    })
+    if (!confirmed) return
     setBusy(true)
     try {
       for (const session of members) {
@@ -131,7 +146,14 @@ export function SessionImportSettings() {
 
   const submitDelete = async () => {
     if (!picked.length || busy) return
-    if (!window.confirm(t('SessionImportSettings.deleteBatchConfirm', { count: picked.length }))) return
+    const confirmed = await askConfirm({
+      title: t('ConfirmDialog.delete'),
+      message: t('SessionImportSettings.deleteBatchConfirm', { count: picked.length }),
+      confirmLabel: t('ConfirmDialog.delete'),
+      cancelLabel: t('ConfirmDialog.cancel'),
+      danger: true,
+    })
+    if (!confirmed) return
     setBusy(true)
     try {
       for (const session of picked) {

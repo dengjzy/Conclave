@@ -6,6 +6,7 @@ import { receiveTodos, useConversationTodos } from '../conversation-todos'
 import { perform } from '../core-store'
 import { PencilIcon, PlusIcon, QuoteIcon, TrashIcon } from './icons'
 import { TitleEditor } from './TitleEditor'
+import { askConfirm } from '../confirm-dialog'
 
 const OWNER_LABEL: Record<TodoOwner, string> = localized(() => ({ user: t('TodoPanel.needsYou'), agent: t('TodoPanel.agentCanDo') }))
 
@@ -52,8 +53,15 @@ function Group({ conversationId, group }: { conversationId: string; group: TodoG
   const [adding, setAdding] = useState(false)
   const done = group.items.filter((item) => item.done).length
   const all = done === group.items.length
-  const remove = () => {
-    if (window.confirm(t('TodoPanel.deleteToDoGroup', { value1: group.title }))) void change('todos.remove', { id: conversationId, groupId: group.id })
+  const remove = async () => {
+    const confirmed = await askConfirm({
+      title: t('ConfirmDialog.delete'),
+      message: t('TodoPanel.deleteToDoGroup', { value1: group.title }),
+      confirmLabel: t('ConfirmDialog.delete'),
+      cancelLabel: t('ConfirmDialog.cancel'),
+      danger: true,
+    })
+    if (confirmed) void change('todos.remove', { id: conversationId, groupId: group.id })
   }
   return (
     <section className="todo-group" aria-label={group.title} data-done={all || undefined}>
