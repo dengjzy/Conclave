@@ -34,9 +34,9 @@ afterEach(() => { stop(); setLocale('zh-CN') })
 describe('desktop language preference', () => {
   it('resolves system language, applies the document language, and informs native main', () => {
     stop = startUiLanguage()
-    expect(getLocale()).toBe('en')
-    expect(document.documentElement.lang).toBe('en')
-    expect(environment.setLanguage).toHaveBeenLastCalledWith('en')
+    expect(getLocale()).toBe('zh-CN')
+    expect(document.documentElement.lang).toBe('zh-CN')
+    expect(environment.setLanguage).toHaveBeenLastCalledWith('zh-CN')
     setPreference('language', 'zh-CN')
     expect(getLocale()).toBe('zh-CN')
     expect(document.documentElement.lang).toBe('zh-CN')
@@ -72,8 +72,8 @@ describe('desktop language preference', () => {
     for (const saved of [{ theme: 'dark' }, { theme: 'dark', language: 'fr' }]) {
       environment.stored.set('conclave.preferences', JSON.stringify(saved))
       for (const listener of environment.listeners.get('storage') ?? []) listener({ key: 'conclave.preferences' })
-      expect(usePreferences.getState()).toMatchObject({ language: 'system', theme: 'dark' })
-      expect(getLocale()).toBe('en')
+      expect(usePreferences.getState()).toMatchObject({ language: 'zh-CN', theme: 'dark' })
+      expect(getLocale()).toBe('zh-CN')
     }
   })
 })

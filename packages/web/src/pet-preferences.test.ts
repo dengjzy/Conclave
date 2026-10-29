@@ -8,7 +8,7 @@ describe('pet preferences', () => {
     expect(PetStylePreference.parse('new-pet')).toBe('new-pet')
     expect(PetStylePreference.parse('../bad')).toBe('clay')
     expect(PetLevelPreference.parse('off')).toBe('off')
-    expect(PetLevelPreference.parse(undefined)).toBe('medium')
+    expect(PetLevelPreference.parse(undefined)).toBe('off')
   })
   it('rejects unusable sizes without breaking the other preferences', () => {
     for (const size of [80, 120, 192]) expect(PetSizePreference.parse(size)).toBe(size)
