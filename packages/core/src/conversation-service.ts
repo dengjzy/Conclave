@@ -165,6 +165,8 @@ export class ConversationService {
   setGitGuard(guard: (dirs: readonly string[]) => Promise<void>): void { this.gitGuard = guard }
   private worktreeSetup: Pick<WorktreeSetup, 'requireTrusted' | 'setUp'> | null = null
   setWorktreeSetup(setup: Pick<WorktreeSetup, 'requireTrusted' | 'setUp'>): void { this.worktreeSetup = setup }
+  private sessionImports: { purgeImported(conversationId: string): Promise<void> } | null = null
+  setSessionImports(imports: { purgeImported(conversationId: string): Promise<void> }): void { this.sessionImports = imports }
 
   async recordGitChange(id: string, project: string, branch: string, resetStart: boolean): Promise<void> {
     const conversation = this.get(id)
@@ -1817,6 +1819,11 @@ export class ConversationService {
       await rmdir(launchRoot(this.sessionsRoot, id)).catch(() => {})
       // The folder goes too, unless it still holds the workspace Conclave made, which stays.
       await rmdir(directory).catch(() => {})
+      if (this.sessionImports) {
+        await this.sessionImports.purgeImported(id).catch((err: unknown) => {
+          console.warn('[conclave-core] purging underlying imported session failed', err)
+        })
+      }
       this.store.delete(id)
       this.emit({ type: 'deleted', id })
     } finally { this.retiring.delete(id) }

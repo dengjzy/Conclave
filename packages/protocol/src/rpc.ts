@@ -248,6 +248,7 @@ export const rpcMethods = {
   // what it added since.
   'sessionImports.list': { params: z.object({}), result: z.object({ sessions: z.array(ExternalSession) }) },
   'sessionImports.import': { params: z.object({ sessions: z.array(ExternalSessionRef).min(1).max(100) }), result: z.object({ conversations: z.array(Conversation) }) },
+  'sessionImports.delete': { params: z.object({ agent: AgentKind, sessionId: z.string() }), result: Ok },
   'modelProviders.list': { params: z.object({}), result: z.array(ModelProvider) },
   // Adds a provider (id null) or replaces one, from the next start of each agent on it.
   'modelProviders.save': { params: ModelProviderInput, result: ModelProvider },

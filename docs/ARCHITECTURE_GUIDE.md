@@ -104,15 +104,51 @@ Conclave 将聊天拆分为四级层次：`Conversation` $\rightarrow$ `Stages`�
    * 后台进程异常断开或 Daemon 重启。
    * **动作**：依据 SQLite 中记录的 `received_sequence`，校准重放中断事件，重置未响应的 `approval` 审批状态。
 
-### 4.2 外部会话导入与全 Agent 管控 (External Session Import & Adoption)
+### 4.2 外部会话导入与双向物理删除管控 (Two-way Session Deletion & Full Lifecycle Control)
 
 Conclave 支持将开发者在终端或其他工具中聊到一半的会话导入并纳管：
-* **当前支持**：Claude Code（`~/.claude/`）、Codex（`~/.codex/sessions/`）、ZCode。
-* **扩展至全 Agent 规范**：每个 Agent Adapter 实现 `TranscriptSource` 接口（声明 `list()` 扫描目录与 `read(file)` 解析器）。如 Pi（`~/.pi/history/`）、Antigravity（`<appDataDir>/brain/`）、OpenCode（`.opencode/sessions/`）。
-* **纳管后的能力提升**：
-  1. **增量双向同步**：通过 SQLite 中记录的 `session_imports` 表（`importedThrough`、`sourceModifiedAt`）自动感知终端外部的新增聊天，UI 标为 `updated`，一键拉取增量。
-  2. **断点接管继续**：导入后不仅能看历史，更能直接在 Conclave 输入框继续回复，底层携带原 `session_id` 恢复该 Agent 的真实运行进程。
-  3. **跨引擎移交**：导入的历史会话可直接切换为 Antigravity 或 Codex 继续干活，享受研发小队、代码评审和独立 Worktree 保护。
+* **支持范围**：Claude Code（`~/.claude/`）、Codex（`~/.codex/sessions/`）、ZCode、Pi（`~/.pi/agent/sessions/`）、Antigravity（`<appDataDir>/brain/`）等。
+* **双向物理删除管控 (Physical Purge Synchronization)**：
+  * **不仅删平台数据，更联动删底层源文件**：当用户在 Conclave 界面删除某个导入的 Session 时，Core 不仅清理本地 SQLite 表，还会调用对应 Agent 适配器的 `origin.transcripts.delete(file)`，**真正删除该 Agent 本机底层的物理 session 存储文件**（如 `.jsonl`、`.json`、`brain/<id>`）。
+  * **效果**：在 Conclave 删除后，用户再回到终端打开该 Agent CLI（如 `claude resume`、`codex resume`），该会话同步消失，杜绝幽灵会话。
+* **增量感知与断点接管**：
+  * **增量双向同步**：通过 SQLite 中记录的 `session_imports` 表（`importedThrough`、`sourceModifiedAt`）自动感知终端外部的新增聊天，UI 标为 `updated`，一键拉取增量。
+  * **断点接管继续**：导入后能直接在 Conclave 输入框继续回复，底层携带原 `session_id` 恢复该 Agent 的真实运行进程。
+
+### 4.3 单任务多 Agent 会话拓扑管控模型 (Multi-Agent Multi-Session Governance)
+
+当一个复杂研发任务（Task）调用多个 Agent（如 Claude 架构 $\rightarrow$ Codex 编码 $\rightarrow$ Pi 评审 $\rightarrow$ Antigravity 测试）时，每个 Agent 都产生独立的会话段。Conclave 通过以下五大机制进行统一管控：
+
+```
+                    ┌──────────────────────────────────────────────────┐
+                    │               Task #102: CSR 模块重构             │
+                    │               (独立 Git Worktree 运行)            │
+                    └─────────────────────────┬────────────────────────┘
+                                              │ 统一调度总线
+        ┌─────────────────────────────────────┼─────────────────────────────────────┐
+        ▼                                     ▼                                     ▼
+ ┌──────────────┐                      ┌──────────────┐                      ┌──────────────┐
+ │ Stage 1:     │                      │ Stage 2:     │                      │ Stage 3:     │
+ │ Claude Code  │ ──交付: 架构契约────> │ Codex        │ ──交付: 代码Diff────> │ Antigravity  │
+ │ (架构/设计)   │                      │ (编码实现)   │                      │ (Review/测试)│
+ └──────┬───────┘                      └──────┬───────┘                      └──────┬───────┘
+        │                                     │                                     │
+        ▼ 独立子会话 (Sub-session)             ▼ 独立子会话 (Sub-session)             ▼ 独立子会话 (Sub-session)
+   - 原始过程日志留底                    - 独立权限: auto-edit                 - 自动化单测/回归判定
+   - 提取契约摘要 (Artifact)             - 独立 Token/用量监控                  - 产出验收判定报告 (Pass/Fail)
+```
+
+1. **会话拓扑分层（Parent-Child Stage Hierarchy）**：
+   * **主任务时间线**：作为整体任务骨架，仅记录里程碑、关键人类决策与各阶段终结结论。
+   * **分阶段子会话**：每个 Agent 绑定独立的 `stage_id` 与 `provider_session_id`，严格通过 `task_id` 和外键关联，永不游离。
+2. **跨 Agent 上下文“契约交付”（Context as Artifact Contract）**：
+   * **严禁过程日志无脑漫灌**：当 Stage 1 移交 Stage 2 时，Core 自动提炼**交付契约**（目标描述、架构决策、受影响文件、Git Diff），过滤掉几百轮冗长思考和重试，让接手 Agent 保持纯净高效的上下文。
+3. **基于阶段的权限分立（Stage-based Permissions）**：
+   * 架构阶段设为 `plan-only / read-only`，编码阶段赋予当前 Worktree 的 `auto-edit`，评审/测试阶段赋予命令执行权限但禁止修改业务代码。
+4. **资源池回收与级联销毁（Cascading Lifecycle Cleanup）**：
+   * 前序 Agent 结算后自动退出释放内存与端口；任务完成或彻底删除时，Core 调用 `stopForTask(taskId)` 级联清理所有关联的进程、日志并回收 Worktree。
+5. **全流程代码溯源（Git Blame to Agent Session）**：
+   * 每一个 Commit 与每一项审批均挂钩到对应的 Agent Stage，责任清晰，随时可回溯审计。
 
 ---
 

@@ -115,7 +115,7 @@ describe('Pi over RPC', () => {
     // Recorded by Conclave on Pi 1.3.0, through this driver: plan mode, the plan approved, then a screenshot.
     const keepImage = (data: string) => ({ id: `${createHash('sha256').update(data).digest('hex')}.png`, width: 1, height: 1 })
     const { live, replayed } = play('pi-plan-tools', { ...OPTIONS, preferred: { permissionMode: 'plan', model: 'bailian/qwen3.7-flash-2026-07-15' }, keepImage })
-    expect(items(live, 'user').map((item) => item.text.slice(0, 10))).toEqual(['src/app.ts', '按这个计划开始执行。', '调用 mcp__an'])
+    expect(items(live, 'user').map((item) => item.text.slice(0, 10))).toEqual(['src/app.ts', '按这个计划开始执行。', '调用 mcp__co'])
     expect(items(live, 'approval')).toEqual([expect.objectContaining({ tool: 'plan', resolution: 'allowed', mode: 'ask' })])
     const tools = items(live, 'tool')
     // Nothing is left running: each call's end is read, whatever its result carries.

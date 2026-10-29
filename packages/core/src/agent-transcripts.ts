@@ -30,6 +30,7 @@ export type Transcript = { entries: TranscriptEntry[]; messages: TranscriptMessa
 export interface TranscriptSource {
   scan(): Promise<TranscriptSummary[]>
   read(file: string): Promise<Transcript>
+  delete?(file: string): Promise<void>
 }
 
 const HEAD_BYTES = 256 * 1024

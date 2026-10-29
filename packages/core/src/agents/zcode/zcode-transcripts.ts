@@ -185,6 +185,18 @@ export function zcodeTranscripts(file: () => string = () => zcodeSessionDb()): T
     read: async (ref) => {
       const at = ref.lastIndexOf('#')
       return zcodeTranscript(ref.slice(0, at), ref.slice(at + 1))
+    },
+    delete: async (ref) => {
+      const at = ref.lastIndexOf('#')
+      const dbPath = ref.slice(0, at)
+      const sessionId = ref.slice(at + 1)
+      try {
+        const { DatabaseSync } = await import('node:sqlite')
+        const db = new DatabaseSync(dbPath)
+        db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId)
+        db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId)
+        db.close()
+      } catch {}
     }
   }
 }
