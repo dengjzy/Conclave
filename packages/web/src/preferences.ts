@@ -42,8 +42,8 @@ const Preferences = z.object({
   // The family the chat's Chinese is set in, whatever the font above; empty, the one that goes
   // with it (PingFang, or Songti beside a serif).
   chatCjkFontFamily: z.string().max(200).catch(''),
-  // How wide a chat's messages and composer may grow: 800px, 1200px, or the whole chat pane.
-  chatWidth: z.enum(['narrow', 'medium', 'full']).catch('narrow'),
+  // How wide a chat's messages and composer may grow: 960px, 1400px, or the whole chat pane (100%).
+  chatWidth: z.enum(['narrow', 'medium', 'full']).catch('full'),
   // Off, a finished turn's work stays in view rather than behind how long it worked.
   foldTurns: z.boolean().catch(true),
   showUsage: z.boolean().catch(true),
@@ -138,13 +138,16 @@ function load(): Preferences {
     if (!s.theme || s.theme === 'system') {
       s.theme = 'light'
     }
+    if (!s.chatWidth || s.chatWidth === 'narrow') {
+      s.chatWidth = 'full'
+    }
   }
   const parsed = Preferences.safeParse(saved)
-  return parsed.success ? parsed.data : Preferences.parse({ language: 'zh-CN', theme: 'light' })
+  return parsed.success ? parsed.data : Preferences.parse({ language: 'zh-CN', theme: 'light', chatWidth: 'full' })
 }
 
 // What each preference is before the user changes it, for a setting's 恢复默认.
-export const DEFAULT_PREFERENCES: Preferences = Preferences.parse({ language: 'zh-CN', theme: 'light' })
+export const DEFAULT_PREFERENCES: Preferences = Preferences.parse({ language: 'zh-CN', theme: 'light', chatWidth: 'full' })
 
 export const usePreferences = create<Preferences>()(() => load())
 

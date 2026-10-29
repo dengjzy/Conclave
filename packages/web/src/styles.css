@@ -5978,7 +5978,7 @@ div.inspector-empty > p { margin: 0 0 8px; }
    lies on the page as the content, and the composer's own box sets it apart from the messages. */
 .chat-view {
   position: relative;
-  --chat-width: var(--page-reading);
+  --chat-width: 100%;
   --chat-font-size: 14px;
   /* Two steps only, base and small: in-between sizes read as drift. */
   --chat-font-compact: var(--chat-font-size);
@@ -6022,7 +6022,8 @@ div.inspector-empty > p { margin: 0 0 8px; }
 .chat-view[data-font-size='19'] { --chat-font-size: 19px; }
 .chat-view[data-font-size='20'] { --chat-font-size: 20px; }
 
-.chat-view[data-width='medium'] { --chat-width: 1200px; }
+.chat-view[data-width='narrow'] { --chat-width: 960px; }
+.chat-view[data-width='medium'] { --chat-width: 1400px; }
 .chat-view[data-width='full'] { --chat-width: 100%; }
 
 .chat-find { flex-shrink: 0; padding: 8px 12px; border-bottom: 1px solid var(--border); }
@@ -6046,7 +6047,7 @@ div.inspector-empty > p { margin: 0 0 8px; }
   min-height: 0;
   overflow-y: auto;
   /* Little at the top: the header's own height and the page's gap already part it from the title. */
-  padding: 4px max(16px, calc((100% - var(--chat-width)) / 2)) 16px;
+  padding: 4px max(24px, calc((100% - var(--chat-width)) / 2)) 16px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -7313,7 +7314,7 @@ div.inspector-empty > p { margin: 0 0 8px; }
   flex-direction: column;
   gap: 8px;
   /* With the page's own 12px under it, the composer sits 16px off the bottom, as off the sides. */
-  padding: 8px max(16px, calc((100% - var(--chat-width)) / 2)) 4px;
+  padding: 8px max(24px, calc((100% - var(--chat-width)) / 2)) 4px;
 }
 
 .chat-dock-header {
@@ -9689,7 +9690,7 @@ summary.agent-group-head:focus-visible { outline: 2px solid var(--focus); outlin
   flex-wrap: wrap;
   gap: 6px;
   margin: 0;
-  padding: 8px max(16px, calc((100% - var(--chat-width)) / 2)) 4px;
+  padding: 8px max(24px, calc((100% - var(--chat-width)) / 2)) 4px;
   list-style: none;
 }
 .discussion-member { display: flex; align-items: center; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); }
@@ -10086,7 +10087,7 @@ button.squad-member-main { cursor: pointer; }
 }
 .project-trust-note { margin: 0; font-size: 13px; color: var(--text-muted); }
 /* Lined up with the composer under it (.chat-dock). */
-.project-run-notice { margin: 8px max(16px, calc((100% - var(--chat-width)) / 2)) 0; }
+.project-run-notice { margin: 8px max(24px, calc((100% - var(--chat-width)) / 2)) 0; }
 
 /* While the window rests (background-rest.ts), the loops that say work is under way hold their
    pose. Each is a cycle that reads the same stopped or running, so freezing one mid-turn and
