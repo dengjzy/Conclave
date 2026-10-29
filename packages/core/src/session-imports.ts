@@ -74,6 +74,29 @@ export class SessionImports {
     return run
   }
 
+  // Deletes an external session physically from the agent's underlying local storage,
+  // making it disappear from both Conclave and the native agent CLI.
+  async deleteSessionSource(agent: AgentKind, sessionId: string): Promise<void> {
+    const found = await this.scan()
+    const summary = found.find((each) => each.agent === agent && each.sessionId === sessionId)
+    const origin = this.origins.find((each) => each.agent === agent)
+    if (summary && origin?.transcripts.delete) {
+      await origin.transcripts.delete(summary.file)
+    }
+    this.store.removeSessionImport(agent, sessionId)
+  }
+
+  // When a conversation is deleted in Conclave, if it originated from an imported
+  // external agent session, clean up the underlying native session file too.
+  async purgeImported(conversationId: string): Promise<void> {
+    const imports = this.store.sessionImports().filter((record) => record.conversationId === conversationId)
+    for (const record of imports) {
+      await this.deleteSessionSource(record.agent, record.sessionId).catch((err) => {
+        console.warn(`[conclave-core] deleting external session for ${record.agent}:${record.sessionId} failed:`, err)
+      })
+    }
+  }
+
   private async importNow(refs: readonly ExternalSessionRef[]): Promise<Conversation[]> {
     const found = await this.scan()
     const done: Conversation[] = []

@@ -4,6 +4,7 @@ import type { AgentAdapter } from '../agent-adapter'
 import { AcpDriver } from '../acp/acp-driver'
 import { antigravityDialect } from './antigravity-dialect'
 import { readAntigravityUsage } from './antigravity-usage'
+import { antigravityTranscripts } from './antigravity-transcripts'
 import { antigravityInstallation, antigravityServer, antigravitySignedIn, detectAntigravity, requireAntigravity } from './antigravity-runtime'
 
 // The registry's Linux launch: started as root without it, the server drops to nobody.
@@ -33,6 +34,7 @@ export const antigravity: AgentAdapter = {
   catalog: antigravityCatalog,
   detect: detectAntigravity,
   usage: readAntigravityUsage,
+  transcripts: antigravityTranscripts(),
   installation: antigravityInstallation,
   installWithoutApplication: true,
   launch: {

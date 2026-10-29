@@ -5015,6 +5015,11 @@ div.inspector-empty > p { margin: 0 0 8px; }
 .session-import-badge { flex-shrink: 0; padding: 0 6px; border-radius: var(--radius-xs); background: var(--fill-2); color: var(--text-muted); font-size: 11px; line-height: 18px; white-space: nowrap; }
 .session-import-badge.updated { background: var(--accent-bg); color: var(--accent); }
 .session-import-actions { position: sticky; bottom: 0; z-index: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; padding: 12px 0; border-top: 1px solid var(--border); background: var(--surface); }
+.session-import-tab-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.session-import-folder-delete { margin-left: auto; padding: 2px 8px; font-size: 11px; height: 24px; color: var(--danger); border-color: transparent; }
+.session-import-folder-delete:hover { border-color: var(--danger); background: var(--danger-bg); }
+.session-import-row-delete { margin-left: 4px; padding: 2px 6px; font-size: 11px; height: 22px; color: var(--danger); border-color: transparent; }
+.session-import-row-delete:hover { border-color: var(--danger); background: var(--danger-bg); }
 
 .provider-presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
 .provider-preset { display: flex; flex-direction: column; min-width: 0; gap: 4px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); color: var(--text); text-align: left; cursor: pointer; }

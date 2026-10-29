@@ -285,6 +285,10 @@ export function createRpcHandlers(
     'mcpServers.import': ({ items, agents }) => mcpServerStore().import(items, agents),
     'sessionImports.list': async () => ({ sessions: await imports().list() }),
     'sessionImports.import': async ({ sessions }) => ({ conversations: await imports().import(sessions) }),
+    'sessionImports.delete': async ({ agent, sessionId }) => {
+      await imports().deleteSessionSource(agent, sessionId)
+      return OK
+    },
     'modelProviders.list': () => modelProviderStore().list(),
     'modelProviders.save': (input) => modelProviderStore().save(input),
     'modelProviders.remove': async ({ id }) => { await modelProviderStore().remove(id); return OK },

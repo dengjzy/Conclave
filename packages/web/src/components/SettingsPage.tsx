@@ -911,7 +911,7 @@ export function SettingsPage() {
             <section aria-labelledby={`settings-${active.id}`}>
               <header className="settings-section-header">
                 <h2 id={`settings-${active.id}`}>{active.title}</h2>
-                <p>{active.description}</p>
+                {active.description ? <p>{active.description}</p> : null}
               </header>
               {active.grouped ? <active.Body /> : (
                 <div className="settings-card">

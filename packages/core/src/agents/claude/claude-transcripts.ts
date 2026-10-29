@@ -1,3 +1,4 @@
+import { rm } from 'node:fs/promises'
 import path from 'node:path'
 import { CONTEXT_COMPACTED } from '@conclave/protocol'
 import { z } from 'zod'
@@ -238,6 +239,11 @@ export function claudeTranscripts(root: () => string = () => claudeProjectsRoot(
         return true
       })
       return claudeTranscript(texts)
+    },
+    delete: async (file) => {
+      await rm(file, { force: true })
+      const dir = file.replace(/\.jsonl$/, '')
+      await rm(dir, { recursive: true, force: true }).catch(() => {})
     }
   }
 }

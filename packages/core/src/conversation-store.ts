@@ -394,4 +394,8 @@ export class ConversationStore {
       imported_through = excluded.imported_through, source_modified_at = excluded.source_modified_at`)
       .run(value.agent, value.sessionId, value.conversationId, value.importedThrough, value.sourceModifiedAt)
   }
+
+  removeSessionImport(agent: AgentKind, sessionId: string): void {
+    this.db.prepare('DELETE FROM session_imports WHERE agent = ? AND provider_session_id = ?').run(agent, sessionId)
+  }
 }

@@ -1,3 +1,4 @@
+import { rm } from 'node:fs/promises'
 import path from 'node:path'
 import { CODEX_IMAGE_GENERATION, CODEX_IMAGE_VIEW, CONTEXT_COMPACTED } from '@conclave/protocol'
 import { z } from 'zod'
@@ -312,6 +313,14 @@ export function codexTranscripts(home: () => string = () => codexDefaultHome()):
         return true
       })
       return codexTranscript(texts)
+    },
+    delete: async (file) => {
+      await rm(file, { force: true })
+      if (file.endsWith('.zst')) {
+        await rm(file.slice(0, -'.zst'.length), { force: true }).catch(() => {})
+      } else {
+        await rm(`${file}.zst`, { force: true }).catch(() => {})
+      }
     }
   }
 }

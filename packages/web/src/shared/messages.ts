@@ -11919,12 +11919,52 @@ export const MESSAGES = {
     "en": "Track none"
   },
   "SettingsPage.sessionImport": {
-    "zh": "导入会话",
-    "en": "Import sessions"
+    "zh": "管理外部会话",
+    "en": "Manage external sessions"
   },
   "SettingsPage.sessionImportDescription": {
-    "zh": "导入在终端或 ZCode 里跑过的 Claude Code、Codex、ZCode 会话，在 Conclave 里接着聊",
-    "en": "Bring in Claude Code, Codex and ZCode sessions you ran in a terminal or in ZCode, and continue them in Conclave"
+    "zh": "统一管理在终端或其它工具中运行过的外部 Agent 会话，支持导入至 Conclave 协同或从磁盘彻底清理删除。",
+    "en": "Manage external Agent sessions run in terminals or tools. Import into Conclave or permanently delete from disk."
+  },
+  "SessionImportSettings.tabImport": {
+    "zh": "导入会话",
+    "en": "Import"
+  },
+  "SessionImportSettings.tabCleanup": {
+    "zh": "清理会话",
+    "en": "Clean up"
+  },
+  "SessionImportSettings.cleanupNote": {
+    "zh": "从磁盘中物理清理各 Agent 的外部历史会话文件。删除后原终端或工具中将不再保留对应记录，请谨慎操作。",
+    "en": "Permanently delete external session files from disk. Records will no longer appear in native agent CLIs."
+  },
+  "SessionImportSettings.delete": {
+    "zh": "删除",
+    "en": "Delete"
+  },
+  "SessionImportSettings.deleteFolder": {
+    "zh": "清空目录会话",
+    "en": "Delete folder sessions"
+  },
+  "SessionImportSettings.deleteConfirm": {
+    "zh": "确定从磁盘彻底删除会话「{title}」吗？操作不可恢复。",
+    "en": "Are you sure you want to permanently delete \"{title}\" from disk?"
+  },
+  "SessionImportSettings.deleteFolderConfirm": {
+    "zh": "确定彻底删除目录「{folder}」下的全部 {count} 个外部会话吗？将从磁盘物理删除，不可恢复。",
+    "en": "Are you sure you want to permanently delete all {count} sessions in folder \"{folder}\" from disk?"
+  },
+  "SessionImportSettings.deleteBatchConfirm": {
+    "zh": "确定彻底删除所选的 {count} 个外部会话吗？将从磁盘物理删除，不可恢复。",
+    "en": "Are you sure you want to permanently delete the {count} selected sessions from disk?"
+  },
+  "SessionImportSettings.deleteSelected": {
+    "zh": "彻底清理所选 ({count})",
+    "en": "Delete selected ({count})"
+  },
+  "SessionImportSettings.deleting": {
+    "zh": "正在清理…",
+    "en": "Deleting…"
   },
   "SessionImportSettings.note": {
     "zh": "导入后保留之前的对话；之后发消息时，Agent 在原目录里恢复同一个会话接着聊。在终端里又聊过的会话会标为「有更新」，再导入一次只补上新的部分。",

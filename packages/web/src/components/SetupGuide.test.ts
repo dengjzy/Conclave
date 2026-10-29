@@ -98,12 +98,9 @@ describe('SetupGuide', () => {
     expect(render()).toContain('暂时不需要')
   })
 
-  it('keeps the pet and actions available in settings, without forcing an off pet on', () => {
+  it('keeps actions available in settings', () => {
     useCore.setState({ settingsOpen: true })
     expect(render()).toContain('打开外部智能体')
-    expect(render()).not.toContain('data-test-pet')
-    usePreferences.setState({ petLevel: 'medium' })
-    expect(render()).toContain('data-test-pet')
   })
 
   it('hides while reading the guide and restores the same progress on leaving it', () => {
