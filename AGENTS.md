@@ -30,6 +30,7 @@ Task-first multi-agent manager. See docs/ARCHITECTURE.md for the architecture di
 - Keep comments brief and non-obvious (why, not how).
 - Avoid type assertions except `as const`.
 - Name files after the concept they hold, never `utils` or `helpers`.
+- Avoid unnecessary secondary labels and descriptions. Let the layout do the explaining.
 - Cross-platform: keep platform checks explicit (named pipes on Windows, `spawn-helper` on macOS).
 - Visual decisions (colour, type, spacing, radius, the chat's row rhythm) follow `DESIGN.md`; read tokens from `styles.css`'s `:root`, never hard-code a colour.
 
