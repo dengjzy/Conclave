@@ -2773,6 +2773,18 @@ export const MESSAGES = {
     "zh": "提示",
     "en": "Notice"
   },
+  "MobileNav.list": {
+    "zh": "列表",
+    "en": "List"
+  },
+  "MobileNav.backToList": {
+    "zh": "返回列表",
+    "en": "Back to list"
+  },
+  "MobileNav.menu": {
+    "zh": "菜单",
+    "en": "Menu"
+  },
   "ConversationActions.onlyWasFoundOnThisComputerInstallAnother": {
     "zh": "这台电脑上只找到了 {value1}。装好另一个外部智能体后，在 设置 → 外部智能体 里重新检测，就可以移交了。",
     "en": "Only {value1} was found on this computer. Install another external agent and scan again in Settings → External agents to enable handoffs."

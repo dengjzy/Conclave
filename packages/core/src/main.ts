@@ -510,9 +510,14 @@ try {
 }
 
 let targetPort = 43551
+let targetHost = process.env.CONCLAVE_HOST ?? '127.0.0.1'
 for (let i = 2; i < process.argv.length; i++) {
   if (process.argv[i] === '--port' && process.argv[i + 1]) {
     targetPort = Number(process.argv[i + 1])
+  }
+  if (process.argv[i] === '--host') {
+    const next = process.argv[i + 1]
+    targetHost = (next && !next.startsWith('-')) ? next : '0.0.0.0'
   }
 }
 if (process.env.CONCLAVE_PORT) {
@@ -525,6 +530,7 @@ const sessionImports = new SessionImports(conversationsStore, conversations, pat
 conversations.setSessionImports(sessionImports)
 
 server = await startRpcServer({
+  host: targetHost,
   port: targetPort,
   token,
   handlers: createRpcHandlers(service, conversations, projects, gitFavorites, daemon, usage, sources, {

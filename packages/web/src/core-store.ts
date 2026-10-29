@@ -925,6 +925,21 @@ export function openOverview(): void {
   useCore.setState(OVERVIEW)
 }
 
+export function closeMobileDetail(): void {
+  useCore.setState({
+    selectedConversationId: null,
+    selectedDiscussionId: null,
+    selectedId: null,
+    conversationDraft: false,
+    discussionDraft: false,
+    settingsOpen: false,
+    overviewOpen: false,
+    inboxOpen: false,
+    worktreesOpen: false,
+    routinesOpen: false
+  })
+}
+
 export function openGuide(): void {
   useCore.setState({ ...OVERVIEW, guideOpen: true })
 }
