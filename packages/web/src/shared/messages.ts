@@ -6795,8 +6795,8 @@ export const MESSAGES = {
     "en": "Page width"
   },
   "SettingsPage.maximumMessageAndComposerWidthNarrow800pxMedium": {
-    "zh": "消息和输入框的最大宽度：窄 800px，中等 1200px。",
-    "en": "Maximum message and composer width: narrow 800px, medium 1200px."
+    "zh": "消息和输入框的最大宽度：满宽 100%（默认），中等 1400px，窄 960px。",
+    "en": "Maximum message and composer width: full width 100% (default), medium 1400px, narrow 960px."
   },
   "SettingsPage.narrow": {
     "zh": "窄",
