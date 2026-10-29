@@ -470,7 +470,21 @@ export class AcpDriver implements ChatDriver {
     }
     if (frame.error) {
       if (['session/set_config_option', 'session/set_mode', 'session/set_model'].includes(request.method)) this.optionErrors.set(id, frame.error.message)
-      if (request.method === 'session/prompt') this.finish(this.stopping ? 'interrupted' : 'failed', frame.error.message, at)
+      if (request.method === 'session/prompt') {
+        const ref = this.turn?.ref ?? null
+        const isSessionLost = /session not found|unknown session|connection.*lost|unrecoverable/i.test(frame.error.message)
+        if (isSessionLost) {
+          this.lost = true
+          this.startError = `${request.method}: ${frame.error.message}`
+        }
+        this.finish(this.stopping ? 'interrupted' : 'failed', frame.error.message, at)
+        if (ref && !this.stopping) {
+          this.items.notice('warning', `${this.name} 会话异常中断：${frame.error.message}`, at, {
+            id: `${this.id('prompt-error')}:${ref}`,
+            action: { kind: 'retryTurn', userItemId: `u:${ref}` }
+          })
+        }
+      }
       else if (!this.setup || String(frame.id).startsWith(this.id('initial-')) || OPENING.has(request.method)) {
         const detail = errorDetail(frame.error.data)
         this.startError = `${request.method}: ${detail ?? frame.error.message}`

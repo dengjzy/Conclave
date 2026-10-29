@@ -226,4 +226,33 @@ describe('ACP without a dialect of its own', () => {
     receive(driver, { id: 'plain-prompt-1', result: { stopReason: 'end_turn', usage: { inputTokens: 10, outputTokens: 2 } } })
     expect(items(driver, 'turn').at(-1)).toMatchObject({ usage: { input: 10, output: 2 }, metering: { reportedCostUsd: null } })
   })
+
+  it('handles session/prompt error with Session not found, marks session lost, and offers retryTurn notice', () => {
+    const driver = new AcpDriver(plain, 'stage', OPTIONS)
+    due(driver)
+    receive(driver, { id: 'plain-init', result: { protocolVersion: 1 } })
+    due(driver)
+    receive(driver, { id: 'plain-session', result: { sessionId: 'session', modes } })
+    expect(driver.ready()).toBe(true)
+    expect(driver.sessionLost()).toBe(false)
+
+    const message = driver.send('run long command')
+    driver.apply({ dir: 'out', at: 3, frame: message.logged })
+    expect(driver.activity()).toBe('running')
+
+    receive(driver, {
+      id: 'plain-prompt-1',
+      error: { code: -32603, message: 'Internal error: Session not found: session' }
+    })
+
+    expect(driver.sessionLost()).toBe(true)
+    expect(driver.ready()).toBe(false)
+    expect(driver.failure()).toContain('Session not found')
+    expect(items(driver, 'turn').at(-1)).toMatchObject({ state: 'failed', error: 'Internal error: Session not found: session' })
+    const notices = items(driver, 'notice')
+    expect(notices.at(-1)).toMatchObject({
+      level: 'warning',
+      action: { kind: 'retryTurn' }
+    })
+  })
 })

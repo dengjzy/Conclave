@@ -236,6 +236,10 @@ export class ChatHost {
     return this.liveOf(conversationId)?.driver.activity() ?? null
   }
 
+  sessionLost(conversationId: string): boolean {
+    return this.liveOf(conversationId)?.driver.sessionLost?.() ?? false
+  }
+
   doing(conversationId: string): ConversationDoing | null {
     const live = this.liveOf(conversationId)
     return live?.driver.activity() === 'running' ? doingOf(live.driver) : null

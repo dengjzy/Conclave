@@ -811,7 +811,7 @@ export class ConversationService {
     this.writable(id)
     const current = this.free(id)
     if (this.launching.has(id)) throw new Rejection('conversation-running')
-    if (current.sessionId && this.chats.activity(id) !== null) return current
+    if (current.sessionId && this.chats.activity(id) !== null && !this.chats.sessionLost(id)) return current
     if (allowBypass !== undefined) this.store.setChatOptions(id, { allowBypass })
     if (current.sessionId) await this.stop(id)
     return this.start(id, current.agent, '', false, { readable })
@@ -820,7 +820,7 @@ export class ConversationService {
   async resumeDelegation(id: string): Promise<Conversation> {
     const current = this.writable(id)
     if (!current.taskId) return this.continue(id)
-    if (current.sessionId && this.chats.activity(id) !== null) return current
+    if (current.sessionId && this.chats.activity(id) !== null && !this.chats.sessionLost(id)) return current
     return this.start(id, current.agent, '', false, { planOnly: current.planOnly })
   }
 
@@ -1450,6 +1450,11 @@ export class ConversationService {
     try {
       await this.gitGuard?.(this.get(id).projectPaths)
       if (ref && this.sentRef(id, ref, 0)) return
+      const current = this.get(id)
+      if (current.sessionId && this.chats.sessionLost(id)) {
+        await this.stop(id)
+        await this.start(id, current.agent, '', false)
+      }
       const note = this.switchNote(id)
       const message = note ? `${note}\n\n${text}` : text
       await this.chats.send(id, message, await this.chatImages(imageIds), queue, steer, ref, chatReferencesFor(text, message, references))
