@@ -968,6 +968,15 @@ describe('ConversationService', () => {
     expect(daemon.spawns.at(-1)?.args).toEqual(expect.arrayContaining(['--permission-mode', 'plan', '--model', 'sonnet', '--effort', 'low']))
   })
 
+  it('takes options for next start on imported or deferred conversations without stage state, using catalog', async () => {
+    const imported = await service.create('codex', [], undefined, { deferStart: true })
+    service.importStage(imported.id, 'codex', 'ext-session-1', { entries: [], messages: [] })
+    await service.setOption(imported.id, 'model', 'gpt-6-sol')
+    await service.setOption(imported.id, 'effort', 'low')
+    await service.setOption(imported.id, 'permissionMode', 'ask')
+    expect(service.get(imported.id).chatOptions).toMatchObject({ model: 'gpt-6-sol', effort: 'low', permissionMode: 'ask' })
+  })
+
   it('lets an idle chat agent go after 30 minutes, and never one with work in hand', async () => {
     const idle = await service.create('claude', [])
     await service.send(idle.id, 'first')
