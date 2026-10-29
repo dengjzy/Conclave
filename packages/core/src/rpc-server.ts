@@ -78,6 +78,15 @@ const webDistDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 
 export function getLanIp(): string | null {
   const interfaces = os.networkInterfaces()
+  const virtualRegex = /^(docker|virbr|utun|veth|br-|vnet|tun|tap|zt)/i
+  for (const name of Object.keys(interfaces)) {
+    if (virtualRegex.test(name)) continue
+    for (const iface of interfaces[name] ?? []) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address
+      }
+    }
+  }
   for (const name of Object.keys(interfaces)) {
     for (const iface of interfaces[name] ?? []) {
       if (iface.family === 'IPv4' && !iface.internal) {
@@ -136,16 +145,21 @@ export function startRpcServer(options: {
     const parsedUrl = new URL(req.url ?? '/', 'http://127.0.0.1')
     const pathname = parsedUrl.pathname
     const isLoopback = req.socket.remoteAddress === '127.0.0.1' || req.socket.remoteAddress === '::1' || req.socket.remoteAddress === '::ffff:127.0.0.1'
+    const cookieHeader = req.headers.cookie
+    const hasValidCookie = Boolean(cookieHeader && cookieHeader.includes(`conclave_token=${token}`))
+    const hasValidTokenInUrl = tokenMatches(req.url, token)
 
     if (pathname === '/api/auth/session') {
       const origin = req.headers.origin
       const host = req.headers.host
-      let allowed = isLoopback
+      let allowed = isLoopback || hasValidCookie || hasValidTokenInUrl
       if (origin && host) {
         try {
           const originUrl = new URL(origin)
-          if ((originUrl.hostname === '127.0.0.1' || originUrl.hostname === 'localhost') && originUrl.host === host) {
-            allowed = true
+          if ((originUrl.hostname === '127.0.0.1' || originUrl.hostname === 'localhost' || originUrl.host === host) && originUrl.host === host) {
+            if (isLoopback || hasValidCookie || hasValidTokenInUrl) {
+              allowed = true
+            }
           }
         } catch {}
       }
@@ -163,7 +177,9 @@ export function startRpcServer(options: {
     }
 
     if (pathname === '/' || pathname === '/conclave' || pathname === '/conclave/') {
-      res.setHeader('Set-Cookie', `conclave_token=${token}; Path=/; SameSite=Lax`)
+      if (hasValidTokenInUrl || isLoopback) {
+        res.setHeader('Set-Cookie', `conclave_token=${token}; Path=/; SameSite=Lax`)
+      }
     }
 
     let filePath = path.join(webDistDir, (pathname === '/' || pathname === '/conclave' || pathname === '/conclave/') ? 'index.html' : pathname.replace(/^\/+/, ''))

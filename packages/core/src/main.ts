@@ -510,7 +510,7 @@ try {
 }
 
 let targetPort = 43551
-let targetHost = process.env.CONCLAVE_HOST ?? '127.0.0.1'
+let targetHost = process.env.CONCLAVE_HOST ?? '0.0.0.0'
 for (let i = 2; i < process.argv.length; i++) {
   if (process.argv[i] === '--port' && process.argv[i + 1]) {
     targetPort = Number(process.argv[i + 1])
@@ -561,9 +561,13 @@ setInterval(() => void conversations.releaseIdle(), 60_000).unref()
 // Wire logs are for looking at soon after: a week on, they go.
 wire.prune()
 setInterval(() => wire.prune(), 6 * 60 * 60_000).unref()
-console.log(`[conclave-core] listening on 127.0.0.1:${server.port} (home ${paths.home})`)
-console.log(`[conclave-core] Web UI: http://127.0.0.1:${server.port}/conclave (or http://127.0.0.1:${server.port}/)`)
-console.log(`[conclave-core] Dev UI: http://127.0.0.1:5173/?port=${server.port}&token=${token}`)
+const lan = (await import('./rpc-server')).getLanIp()
+console.log(`[conclave-core] listening on ${targetHost}:${server.port} (home ${paths.home})`)
+console.log(`[conclave-core] Local:   http://127.0.0.1:${server.port}/conclave?token=${token}`)
+if (lan && (targetHost === '0.0.0.0' || targetHost === lan)) {
+  console.log(`[conclave-core] Network: http://${lan}:${server.port}/conclave?token=${token}`)
+}
+console.log(`[conclave-core] Dev UI:  http://127.0.0.1:5173/?port=${server.port}&token=${token}`)
 
 let shuttingDown = false
 async function shutdown(): Promise<void> {

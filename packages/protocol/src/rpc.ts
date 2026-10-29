@@ -945,5 +945,10 @@ export const CoreEndpoint = z.object({
 export type CoreEndpoint = z.infer<typeof CoreEndpoint>
 
 export function coreUrl(endpoint: Pick<CoreEndpoint, 'port' | 'token'>): string {
+  if (typeof window !== 'undefined' && window.location) {
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const host = window.location.hostname || '127.0.0.1'
+    return `${proto}//${host}:${endpoint.port}/?token=${encodeURIComponent(endpoint.token)}`
+  }
   return `ws://127.0.0.1:${endpoint.port}/?token=${encodeURIComponent(endpoint.token)}`
 }
