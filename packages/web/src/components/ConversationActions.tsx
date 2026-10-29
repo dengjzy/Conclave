@@ -13,6 +13,7 @@ import { EMPTY_DRAFT, saveComposerDraft } from '../composer-drafts'
 import { keepInitialMessage, sendInitialMessage } from '../initial-messages'
 import { PRIMARY_KEY_LABEL } from '../shortcut-keys'
 import { currentInstalledAgents, otherInstalledAgent, useInstalledAgents } from '../installed-agents'
+import { askConfirm } from '../confirm-dialog'
 
 // Every way into a handoff ends in the conversation's composer, with the agent picked there (by
 // default the other one here), to be sent from it with whatever the user adds.
@@ -133,7 +134,14 @@ export function archiveConversation(id: string, archived: boolean) {
 }
 
 export async function deleteConversation(conversation: Conversation): Promise<boolean> {
-  if (!window.confirm(t('ConversationActions.deleteThisConversationAndItsChatHistoryProject'))) return false
+  const confirmed = await askConfirm({
+    title: t('ConversationActions.deleteConversation'),
+    message: t('ConversationActions.deleteThisConversationAndItsChatHistoryProject'),
+    confirmLabel: t('ConversationActions.deleteConversation'),
+    cancelLabel: t('ConfirmDialog.cancel'),
+    danger: true,
+  })
+  if (!confirmed) return false
   return (await perform((rpc) => rpc.call('conversations.delete', { id: conversation.id }))) !== null
 }
 

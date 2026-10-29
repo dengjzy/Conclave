@@ -8,6 +8,7 @@ import { formatBytes, groupWorktrees, worktreeRows, worktreeState, worktreeSumma
 import { cleanWorktrees, refreshWorktrees, useWorktrees } from '../worktree-store'
 import { CloseIcon, FolderIcon, TerminalIcon } from './icons'
 import { projectName } from './ProjectPicker'
+import { askConfirm } from '../confirm-dialog'
 
 const GROUP_TEXT: Record<WorktreeGroupId, { title: string; note: string }> = localized(() => ({
   cleanable: { title: t('WorktreeManager.cleanable'), note: t('WorktreeManager.taskCompletedOrCancelledWithNoUncommittedChanges') },
@@ -20,7 +21,15 @@ const CLEAN_NOTE = () => t('WorktreeManager.branchesAndCommitsAreKeptWorktreesAr
 
 // Asks first, then says what was kept and why; what went needs no word.
 export async function cleanWithConfirm(paths: readonly string[], subject: string): Promise<void> {
-  if (paths.length === 0 || !window.confirm(t('WorktreeManager.clean', { subject: subject, CLEAN_NOTE: CLEAN_NOTE() }))) return
+  if (paths.length === 0) return
+  const confirmed = await askConfirm({
+    title: t('ConfirmDialog.warning'),
+    message: t('WorktreeManager.clean', { subject: subject, CLEAN_NOTE: CLEAN_NOTE() }),
+    confirmLabel: t('ConfirmDialog.delete'),
+    cancelLabel: t('ConfirmDialog.cancel'),
+    danger: true,
+  })
+  if (!confirmed) return
   const results = await cleanWorktrees(paths)
   const kept = results?.filter((result) => !result.removed) ?? []
   if (kept.length > 0) {

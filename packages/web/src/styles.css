@@ -2427,6 +2427,18 @@ button.task-tag:hover {
   color: var(--text);
 }
 
+.button.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+  font-weight: 500;
+}
+
+.button.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 88%, #000);
+  border-color: transparent;
+}
+
 .button kbd {
   font-family: var(--mono);
   font-size: 11px;
@@ -10088,6 +10100,93 @@ button.squad-member-main { cursor: pointer; }
 .project-trust-note { margin: 0; font-size: 13px; color: var(--text-muted); }
 /* Lined up with the composer under it (.chat-dock). */
 .project-run-notice { margin: 8px max(24px, calc((100% - var(--chat-width)) / 2)) 0; }
+
+/* In-app confirmation dialog (ConfirmDialog). */
+.confirm-dialog {
+  width: min(440px, calc(100vw - 32px));
+  border-radius: var(--radius-lg, 14px);
+  border: 1px solid var(--border-2);
+  background: var(--surface);
+  box-shadow: 0 20px 50px rgb(0 0 0 / 30%);
+}
+
+.confirm-dialog::backdrop {
+  background: rgb(0 0 0 / 45%);
+  backdrop-filter: blur(2px);
+}
+
+.confirm-dialog-body {
+  padding: 24px;
+  gap: 20px;
+}
+
+.confirm-dialog-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  position: relative;
+}
+
+.confirm-dialog-icon {
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.confirm-dialog-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.confirm-dialog-icon.danger {
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+  color: var(--danger);
+}
+
+.confirm-dialog-icon.accent {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+}
+
+.confirm-dialog-text {
+  flex: 1;
+  min-width: 0;
+  padding-right: 20px;
+}
+
+.confirm-dialog-title {
+  margin: 0 0 6px 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.confirm-dialog-message {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text-muted);
+  word-break: break-word;
+}
+
+.confirm-dialog-close {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  color: var(--text-muted);
+}
+
+.confirm-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 0;
+}
 
 /* While the window rests (background-rest.ts), the loops that say work is under way hold their
    pose. Each is a cycle that reads the same stopped or running, so freezing one mid-turn and
