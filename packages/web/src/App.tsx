@@ -1,8 +1,9 @@
 import { AgentsView } from './components/AgentProfiles'
 import { t, useLocale } from './i18n'
 import { onBrowserShortcut } from './desktop-bridge'
-import { useEffect } from 'react'
-import { focusSplitPane, selectTask, setFileQuickOpen, setNewTaskOpen, setSettingsOpen, toggleBrowserPanel, toggleFilesPanel, toggleSplit, toggleTerminalPanel, useCore, useSplitPanes } from './core-store'
+import { useEffect, useState } from 'react'
+import { closeMobileDetail, focusSplitPane, selectTask, setFileQuickOpen, setNewTaskOpen, setSettingsOpen, toggleBrowserPanel, toggleFilesPanel, toggleSplit, toggleTerminalPanel, useCore, useSplitPanes } from './core-store'
+import { ArrowLeftIcon, SidebarIcon } from './components/icons'
 import { NewTaskDialog } from './components/NewTaskDialog'
 import { SettingsPage } from './components/SettingsPage'
 import { SourceInboxView } from './components/SourceInboxView'
@@ -199,14 +200,75 @@ export function App() {
     }
   }, [])
 
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false)
+
+  const hasActiveDetail = Boolean(
+    settingsOpen ||
+    overviewOpen ||
+    inboxOpen ||
+    worktreesOpen ||
+    routinesOpen ||
+    (section === 'squads') ||
+    (section === 'discussions' && (selectedDiscussionId || discussionDraft)) ||
+    (section === 'conversations' && (selectedConversationId || conversationDraft)) ||
+    selectedId
+  )
+
+  const activeMobileTitle = selectedConversationId
+    ? useCore.getState().conversations[selectedConversationId]?.title || t('sidebar.conversations')
+    : selectedDiscussionId
+      ? useCore.getState().discussions[selectedDiscussionId]?.title || t('DiscussionView.groupChat_910')
+      : selectedId
+        ? useCore.getState().tasks[selectedId]?.title || t('sidebar.tasks')
+        : settingsOpen
+          ? t('StatusBar.settings')
+          : ''
+
   return (
-    <div className="app" data-sidebar-hidden={(sidebarHidden && !settingsOpen) || undefined}>
+    <div
+      className="app"
+      data-sidebar-hidden={(sidebarHidden && !settingsOpen) || undefined}
+      data-has-detail={hasActiveDetail ? 'true' : undefined}
+    >
+      {hasActiveDetail && (
+        <header className="mobile-nav-bar">
+          <button
+            type="button"
+            className="mobile-nav-btn"
+            onClick={closeMobileDetail}
+            aria-label={t('MobileNav.backToList')}
+          >
+            <ArrowLeftIcon />
+            <span>{t('MobileNav.list')}</span>
+          </button>
+          <span className="mobile-nav-title">{activeMobileTitle}</span>
+          <button
+            type="button"
+            className="mobile-nav-btn"
+            onClick={() => setMobileDrawerOpen((v) => !v)}
+            aria-label={t('MobileNav.menu')}
+          >
+            <SidebarIcon />
+          </button>
+        </header>
+      )}
+      {mobileDrawerOpen && (
+        <div
+          className="mobile-drawer-backdrop"
+          onClick={() => setMobileDrawerOpen(false)}
+          aria-hidden="true"
+        />
+      )}
       <main className="workspace" data-utility-maximized={maximizedUtility}>
         {settingsOpen ? (
           <SettingsPage />
         ) : (
           <>
-            <Sidebar hidden={sidebarHidden}>
+            <Sidebar
+              hidden={sidebarHidden}
+              drawer={mobileDrawerOpen}
+              onDrawerClose={() => setMobileDrawerOpen(false)}
+            >
               <OverviewEntry />
               <InboxEntry />
               <RoutinesEntry />

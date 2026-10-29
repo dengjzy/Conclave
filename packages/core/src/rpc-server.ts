@@ -1,4 +1,5 @@
 import { timingSafeEqual } from 'node:crypto'
+import os from 'node:os'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
@@ -37,6 +38,7 @@ export type RpcHandlers = {
 }
 
 export type RpcServer = {
+  host: string
   port: number
   connections: ReadonlySet<Connection>
   broadcast<N extends RpcNotificationName>(name: N, params: RpcNotificationParams<N>): void
@@ -74,7 +76,20 @@ const MIME_TYPES: Record<string, string> = {
 
 const webDistDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../web/dist')
 
+export function getLanIp(): string | null {
+  const interfaces = os.networkInterfaces()
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name] ?? []) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address
+      }
+    }
+  }
+  return null
+}
+
 export function startRpcServer(options: {
+  host?: string
   port: number
   token: string
   handlers: RpcHandlers
@@ -137,7 +152,7 @@ export function startRpcServer(options: {
       if (allowed) {
         res.writeHead(200, {
           'Content-Type': 'application/json',
-          'Set-Cookie': `conclave_token=${token}; Path=/; SameSite=Strict`
+          'Set-Cookie': `conclave_token=${token}; Path=/; SameSite=Lax`
         })
         res.end(JSON.stringify({ ok: true, version: '0.0.1', token }))
       } else {
@@ -148,7 +163,7 @@ export function startRpcServer(options: {
     }
 
     if (pathname === '/' || pathname === '/conclave' || pathname === '/conclave/') {
-      res.setHeader('Set-Cookie', `conclave_token=${token}; Path=/; SameSite=Strict`)
+      res.setHeader('Set-Cookie', `conclave_token=${token}; Path=/; SameSite=Lax`)
     }
 
     let filePath = path.join(webDistDir, (pathname === '/' || pathname === '/conclave' || pathname === '/conclave/') ? 'index.html' : pathname.replace(/^\/+/, ''))
@@ -237,12 +252,20 @@ export function startRpcServer(options: {
   })
 
   return new Promise((resolve, reject) => {
+    const targetHost = options.host ?? '127.0.0.1'
     httpServer.once('error', reject)
-    httpServer.listen(options.port, '127.0.0.1', () => {
+    httpServer.listen(options.port, targetHost, () => {
       const address = httpServer.address()
       const port = address !== null && typeof address === 'object' ? address.port : options.port
       serverPort = port
+      const lanIp = getLanIp()
+      console.log(`Conclave Core listening on ${targetHost}:${port}`)
+      console.log(`  ➜  Local:   http://127.0.0.1:${port}/conclave?token=${token}`)
+      if (lanIp && (targetHost === '0.0.0.0' || targetHost === lanIp)) {
+        console.log(`  ➜  Network: http://${lanIp}:${port}/conclave?token=${token}`)
+      }
       resolve({
+        host: targetHost,
         port,
         connections,
         broadcast: (name, params) => connections.forEach((c) => c.notify(name, params)),
