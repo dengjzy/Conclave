@@ -1,4 +1,4 @@
-import type { AgentProfile } from '@conclave/protocol'
+import type { AgentProfile, AgentSmokeTestResult } from '@conclave/protocol'
 import { mergeCliStatuses } from './agent-cli-state'
 import { getLocale, t } from './i18n'
 import { accountsSupported, activeAccount, isHelper, usageAccount, type AgentAccounts } from '@conclave/protocol'
@@ -1242,6 +1242,11 @@ export function useEnvironmentSupported(): boolean {
 export async function refreshEnvironment(): Promise<void> {
   const environment = await perform((rpc) => rpc.call('system.environment', { refresh: true }))
   if (environment) useCore.setState({ environment })
+}
+
+export async function runSmokeTest(agent?: AgentKind): Promise<AgentSmokeTestResult | null> {
+  const result = await perform((rpc) => rpc.call('agent.smokeTest', { agent }))
+  return result ?? null
 }
 
 export function useAwakeSupported(): boolean {

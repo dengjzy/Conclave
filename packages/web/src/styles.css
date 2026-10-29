@@ -10613,3 +10613,58 @@ button.squad-member-main { cursor: pointer; }
     display: none !important;
   }
 }
+
+/* Agent Doctor & Smoke Test Styles */
+.agent-list-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-list-doctor {
+  font-size: 12px;
+  height: 28px;
+  padding: 0 10px;
+}
+
+.agent-smoke-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.agent-smoke-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  background: var(--fill, rgba(255, 255, 255, 0.05));
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+  cursor: default;
+}
+
+.agent-smoke-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.agent-smoke-pill[data-status="ok"] .agent-smoke-dot {
+  background: #10b981;
+}
+
+.agent-smoke-pill[data-status="warn"] .agent-smoke-dot {
+  background: #f59e0b;
+}
+
+.agent-smoke-pill[data-status="error"] .agent-smoke-dot {
+  background: #ef4444;
+}
+
+.agent-smoke-pill[data-status="skipped"] .agent-smoke-dot {
+  background: #6b7280;
+}

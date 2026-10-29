@@ -4,7 +4,7 @@ import materialIcons from 'material-icon-theme/dist/material-icons.json'
 const theme: Manifest = materialIcons
 // Keep the SVGs as local assets, rather than embedding the whole collection in JavaScript.
 const assets: Record<string, string> = Object.fromEntries(Object.entries(import.meta.glob<string>(
-  '../../../node_modules/material-icon-theme/icons/*.svg',
+  '../node_modules/material-icon-theme/icons/*.svg',
   { eager: true, query: '?url&no-inline', import: 'default' }
 )).map(([path, url]) => [path.split('/').at(-1) ?? '', url]))
 

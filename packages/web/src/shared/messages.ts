@@ -386,6 +386,8 @@ export const MESSAGES = {
   "InstalledAgentsSettings.needsSignIn": {"zh": "需登录", "en": "Sign-in required"},
   "InstalledAgentsSettings.needsCheck": {"zh": "需检查", "en": "Needs checking"},
   "InstalledAgentsSettings.signInUnknown": {"zh": "尚未确认登录状态", "en": "Sign-in status has not been confirmed"},
+  "InstalledAgentsSettings.smokeTest": {"zh": "连通性与健康体检", "en": "Connectivity & Health Doctor"},
+  "InstalledAgentsSettings.testingSmoke": {"zh": "体检中...", "en": "Diagnosing..."},
   "agentCli.active": {"zh": "该 Agent 仍有进程在运行（包括空闲会话、登录或临时调用），退出后再升级。", "en": "This agent still has a running process, including idle chats, sign-in, or temporary calls. Exit it before upgrading."},
   "agentCli.busy": {"zh": "另一个 CLI 升级正在进行，请稍后重试。", "en": "Another CLI upgrade is in progress. Try again later."},
   "agentCli.daemonOutdated": {"zh": "当前后台版本不支持升级；待运行中的工作结束后重启 Conclave 后台。", "en": "This backend does not support upgrades. Restart the Conclave backend after running work has finished."},

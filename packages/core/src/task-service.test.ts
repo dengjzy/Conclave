@@ -701,12 +701,12 @@ describe('TaskService', () => {
     await expect(service.cancel(working.id, undefined)).rejects.toMatchObject({ reason: 'task-done' })
   })
 
-  it('refuses a plain folder next to other repos', async () => {
+  it('supports a plain folder next to other repos as a reference directory', async () => {
     const folder = path.join(dir, 'notes')
     mkdirSync(folder)
     const task = readyTask('Mixed', [initRepo('api'), folder])
-    await expect(service.start(task.id)).rejects.toMatchObject({ reason: 'repo-not-git' })
-    expect(daemon.spawns).toEqual([])
+    const started = await service.start(task.id)
+    expect(started.repos.find((r) => r.path === folder)?.reference).toBe(true)
   })
 
   it('keeps repos fixed while the agent runs', async () => {

@@ -33,6 +33,7 @@ import type { WorktreeService } from './worktree-service'
 import type { ComputerAwakeService } from './computer-awake-service'
 import type { ChatSettingsStore } from './chat-settings'
 import type { EnvironmentService } from './environment-check'
+import { runAgentSmokeTest } from './agent-smoke-test'
 import type { ScheduleService } from './schedule-service'
 import type { RoutineService } from './routine-service'
 import type { SquadService } from './squad-service'
@@ -331,6 +332,7 @@ export function createRpcHandlers(
     'system.upgradeAgentCli': ({ agent }) => maintenance().upgrade(agent),
     'system.cancelAgentCliUpgrade': ({ agent }) => maintenance().cancel(agent),
     'system.environment': ({ refresh }) => environment.check(refresh ?? false),
+    'agent.smokeTest': ({ agent }) => runAgentSmokeTest(agent, environment),
     'system.installAgentCli': ({ agent }) => cliInstaller.install(agent),
     'system.pickFolder': async ({ defaultPath, title }) => {
       const pathModule = await import('node:path')
