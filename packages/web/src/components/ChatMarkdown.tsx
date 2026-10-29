@@ -11,6 +11,7 @@ import { fileCandidates, fileReference, isAbsolutePath, isImagePath, linkTarget,
 import { CopyButton } from './CopyButton'
 import { ChatCodeRun, ChatRunnable } from './ChatCodeRun'
 import { ChatDiagram } from './ChatDiagram'
+import { EvidenceCard } from './EvidenceCard'
 import { blockCommand } from '../code-commands'
 import { FILE_MANAGER, showChatFile, useFilePreviewSupported } from '../file-actions'
 import { useChatFiles } from './ChatContextMenu'
@@ -212,6 +213,7 @@ const components: Components = {
     const text = code ? textOf(code) : ''
     const command = blockCommand(language, text)
     if (language === 'mermaid') return <SettledDiagram source={text} code={<pre {...props} />} />
+    if (language === 'evidence') return <EvidenceCard text={text} />
     return (
       <div className="chat-code">
         <div className="chat-code-header">
