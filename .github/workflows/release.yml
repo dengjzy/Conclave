@@ -1,0 +1,152 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag, for example v0.19.1
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      commit: ${{ steps.version.outputs.commit }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: pnpm
+      - name: Check version and extract release notes
+        id: version
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+          import { execFileSync } from 'node:child_process';
+
+          const tag = process.env.RELEASE_TAG;
+          if (!/^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(tag)) {
+            throw new Error(`Expected a version tag such as v0.19.1, got ${tag}`);
+          }
+          const version = tag.slice(1);
+          for (const dir of ['.', 'packages/core', 'packages/daemon', 'packages/web', 'packages/protocol']) {
+            const pkg = JSON.parse(readFileSync(`${dir}/package.json`, 'utf8'));
+            if (pkg.version !== version) throw new Error(`${dir}: ${pkg.version} does not match ${tag}`);
+          }
+
+          const lines = readFileSync('CHANGELOG.md', 'utf8').split(/\r?\n/);
+          const start = lines.findIndex((line) => line === `## ${version}` || line.startsWith(`## ${version} — `));
+          if (start === -1) throw new Error(`CHANGELOG.md has no entry for ${version}`);
+          const next = lines.findIndex((line, index) => index > start && line.startsWith('## '));
+          const notes = lines.slice(start + 1, next === -1 ? undefined : next).join('\n').trim();
+          if (!notes) throw new Error(`CHANGELOG.md entry for ${version} is empty`);
+          writeFileSync('release-notes.md', `${notes}\n\n### 安装包\n\n| 平台 | 文件 |\n| --- | --- |\n| macOS · Apple Silicon | Conclave-${version}-arm64.dmg |\n| Windows · x64 | Conclave-Setup-${version}-x64.exe |\n\nmacOS 若提示无法打开，到「系统设置 → 隐私与安全性」点「仍要打开」；Windows 被 SmartScreen 拦住时，点「更多信息 → 仍要运行」。\n`);
+          const commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+          appendFileSync(process.env.GITHUB_OUTPUT, `commit=${commit}\nprerelease=${version.includes('-')}\n`);
+          NODE
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-notes
+          path: release-notes.md
+          if-no-files-found: error
+          retention-days: 7
+
+  build:
+    needs: verify
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-arm64
+            runner: macos-15
+            command: dist:mac
+            artifact: packages/desktop/dist/Conclave-*-arm64.dmg
+          - platform: windows-x64
+            runner: windows-2025
+            command: dist:win
+            artifact: packages/desktop/dist/Conclave-Setup-*-x64.exe
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.verify.outputs.commit }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build installer
+        run: pnpm ${{ matrix.command }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.platform }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  publish:
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PRERELEASE: ${{ needs.verify.outputs.prerelease }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: release-files
+          merge-multiple: true
+      - name: Publish release
+        shell: bash
+        run: |
+          if draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [ "$draft" != true ]; then
+              echo "Release $RELEASE_TAG is already published; refusing to replace its assets."
+              exit 1
+            fi
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft \
+              --title "Conclave $RELEASE_TAG" --notes-file release-files/release-notes.md
+          fi
+          # Lets an app that reads the releases feed (the API refused it) verify the installer.
+          (cd release-files && sha256sum *.dmg *.exe > SHA256SUMS)
+          gh release upload "$RELEASE_TAG" release-files/*.dmg release-files/*.exe release-files/SHA256SUMS --clobber
+          latest=true
+          if [ "$PRERELEASE" = true ]; then latest=false; fi
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease="$PRERELEASE" --latest="$latest" \
+            --title "Conclave $RELEASE_TAG" --notes-file release-files/release-notes.md

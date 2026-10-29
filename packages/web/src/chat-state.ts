@@ -1,0 +1,506 @@
+import { getLocale, t } from './i18n'
+import { useMemo } from 'react'
+import { create } from 'zustand'
+import { isCompaction } from './chat-notices'
+import { diffCounts, isSubagent } from './chat-tools'
+import { isBackgroundCommand, keepsInView } from './background-work'
+import { browserOperation } from './browser-activity'
+import { parseHandoffMessage, type AgentCall, type AgentKind, type ChatDiff, type ChatItem, type ChatQuestion, type ChatTodo, type ConversationStage, browserToolKind, isPlanApproval, isPreviewTool, toolImagePath, CODEX_IMAGE_GENERATION, terminalToolKind, todoToolKind } from '@conclave/protocol'
+
+// A conversation's chat items as this window holds them, in the order core first saw them;
+// `before` pages further back, null when nothing older is left.
+export type ChatPage = { items: ChatItem[]; before: string | null }
+
+// Only conversations a view is watching are here; core sends updates for those alone.
+export const useChat = create<Record<string, ChatPage>>()(() => ({}))
+
+// A plan from plan mode waits as an approval: Claude's ExitPlanMode call, or the plan a Codex
+// plan-mode turn ended with.
+export type PlanItem = Extract<ChatItem, { kind: 'approval' }>
+const NO_PLANS: PlanItem[] = []
+
+// The conversation's plans, oldest first, while a view watches it.
+export function usePlans(conversationId: string): PlanItem[] {
+  const items = useChat((s) => s[conversationId]?.items)
+  return useMemo(
+    () => items?.filter((item): item is PlanItem => item.kind === 'approval' && isPlanApproval(item)) ?? NO_PLANS,
+    [items, getLocale()]
+  )
+}
+
+// Item ids are unique within their stage only: each stage numbers its notices and requests afresh.
+export function itemKey(item: Pick<ChatItem, 'stageId' | 'id'>): string {
+  return `${item.stageId}/${item.id}`
+}
+
+// A known item is replaced where it stands, a new one goes last: core sends items in order.
+export function mergeItems(current: readonly ChatItem[], incoming: readonly ChatItem[]): ChatItem[] {
+  const next = [...current]
+  const index = new Map(next.map((item, position) => [itemKey(item), position]))
+  for (const item of incoming) {
+    const position = index.get(itemKey(item))
+    if (position === undefined) {
+      index.set(itemKey(item), next.length)
+      next.push(item)
+    } else {
+      next[position] = item
+    }
+  }
+  return next
+}
+
+// Without a stage (an older core), the id alone decides; streamed items carry provider-unique ids.
+export function appendText(items: readonly ChatItem[], stageId: string | undefined, itemId: string, text: string): ChatItem[] {
+  return items.map((item) =>
+    item.id === itemId && (stageId === undefined || item.stageId === stageId) && (item.kind === 'assistant' || item.kind === 'reasoning')
+      ? { ...item, text: item.text + text }
+      : item
+  )
+}
+
+// Deltas come dozens of times a second, and each re-renders the reply it grows, at a cost that
+// grows with the reply: applied one by one, a long reply falls further and further behind, and a
+// window coming back from the background froze while it caught up. So they are gathered and applied
+// together, once a frame, or about once a second while the window is hidden and draws no frames.
+// Anything else that changes a chat applies them first, so nothing lands out of order.
+type Delta = { conversationId: string; stageId: string | undefined; itemId: string; append: string }
+const FLUSH_FALLBACK_MS = 100
+let pendingDeltas: Delta[] = []
+let flushScheduled = false
+
+export function flushChatDeltas(): void {
+  flushScheduled = false
+  if (pendingDeltas.length === 0) return
+  const deltas = pendingDeltas
+  pendingDeltas = []
+  useChat.setState((state) => {
+    const changed: Record<string, ChatPage> = {}
+    for (const { conversationId, stageId, itemId, append } of joinDeltas(deltas)) {
+      const current = changed[conversationId] ?? state[conversationId]
+      if (current) changed[conversationId] = { ...current, items: appendText(current.items, stageId, itemId, append) }
+    }
+    return changed
+  })
+}
+
+// Runs of deltas to the same item become one append.
+function joinDeltas(deltas: readonly Delta[]): Delta[] {
+  const joined: Delta[] = []
+  for (const delta of deltas) {
+    const last = joined.at(-1)
+    if (last && last.conversationId === delta.conversationId && last.stageId === delta.stageId && last.itemId === delta.itemId) {
+      joined[joined.length - 1] = { ...last, append: last.append + delta.append }
+    } else joined.push(delta)
+  }
+  return joined
+}
+
+// A frame when the window draws them; else the timer, which a hidden window runs about once a second.
+function scheduleFlush(): void {
+  if (flushScheduled) return
+  flushScheduled = true
+  let frame: number | undefined
+  const run = () => {
+    if (frame !== undefined) cancelAnimationFrame(frame)
+    clearTimeout(timer)
+    if (flushScheduled) flushChatDeltas()
+  }
+  const timer = setTimeout(run, FLUSH_FALLBACK_MS)
+  if (typeof requestAnimationFrame === 'function') frame = requestAnimationFrame(run)
+}
+
+export function setChatPage(conversationId: string, page: ChatPage): void {
+  flushChatDeltas()
+  useChat.setState({ [conversationId]: page })
+}
+
+// An older page goes in front; anything it shares with what is shown keeps the newer copy.
+export function prependChatPage(conversationId: string, page: ChatPage): void {
+  flushChatDeltas()
+  useChat.setState((state) => {
+    const current = state[conversationId]
+    if (!current) return {}
+    const shown = new Set(current.items.map(itemKey))
+    return { [conversationId]: { items: [...page.items.filter((item) => !shown.has(itemKey(item))), ...current.items], before: page.before } }
+  })
+}
+
+export function receiveChatItems(conversationId: string, items: readonly ChatItem[]): void {
+  flushChatDeltas()
+  useChat.setState((state) => {
+    const current = state[conversationId]
+    return current ? { [conversationId]: { ...current, items: mergeItems(current.items, items) } } : {}
+  })
+}
+
+export function receiveChatDelta(conversationId: string, stageId: string | undefined, itemId: string, append: string): void {
+  pendingDeltas.push({ conversationId, stageId, itemId, append })
+  scheduleFlush()
+}
+
+export function dropChat(conversationId: string): void {
+  flushChatDeltas()
+  useChat.setState((state) => {
+    const { [conversationId]: _dropped, ...rest } = state
+    return rest
+  }, true)
+}
+
+// What the user said in a message: of the one that starts a handoff, only their note, as Conclave's
+// instruction to read the handoff file is its own.
+export function saidText(text: string): string {
+  return parseHandoffMessage(text)?.note ?? text
+}
+
+// Who answers in a turn: the agent, and the model (by its label where the agent gives one) and
+// effort it ran, and the model provider or the agent account it ran on, if any.
+export type TurnAgent = { agent: AgentKind; model: string | null; effort: string | null; provider?: string | null; account?: string | null }
+
+// Each stage's, from the stage and the state it last reported: a conversation handed from one agent
+// to another keeps the earlier turns under the agent and model that wrote them.
+export function stageAgents(stages: readonly ConversationStage[], items: readonly ChatItem[]): ReadonlyMap<string, TurnAgent> {
+  const states = new Map<string, Extract<ChatItem, { kind: 'state' }>>()
+  for (const item of items) if (item.kind === 'state') states.set(item.stageId, item)
+  return new Map(stages.map((stage) => {
+    const state = states.get(stage.id)
+    const model = state?.model ? (state.models.find((each) => each.id === state.model)?.label ?? state.model) : null
+    return [stage.id, { agent: stage.agent, model, effort: model ? (state?.effort ?? null) : null, ...(stage.route ? { provider: stage.route.name } : {}), ...(stage.account ? { account: stage.account } : {}) }]
+  }))
+}
+
+export type TimelineEntry =
+  | { kind: 'stage'; stage: ConversationStage }
+  | { kind: 'item'; item: ChatItem }
+
+// The conversation stage by stage, each as its items. `redoneAt`: when a task's chat was redone, each
+// a new go that starts with a divider of its own.
+export function timeline(stages: readonly ConversationStage[], items: readonly ChatItem[], redoneAt: readonly number[] = []): TimelineEntry[] {
+  const entries: TimelineEntry[] = []
+  const known = new Set(stages.map((stage) => stage.id))
+  // A stage's state item feeds the composer; it is not something that happened.
+  const flow = items.filter((item) => item.kind !== 'state')
+  let previous: ConversationStage | null = null
+  for (const stage of stages) {
+    // An idle agent goes and the next message starts it again: no divider for that, only where the
+    // agent or a task's planning-only turn changes, or a redo starts the task over.
+    const from = previous?.startedAt ?? 0
+    const redone = redoneAt.some((at) => from <= at && at <= stage.startedAt)
+    const restarted = previous !== null && !redone && previous.agent === stage.agent && Boolean(previous.planOnly) === Boolean(stage.planOnly)
+    if (!restarted) entries.push({ kind: 'stage', stage })
+    previous = stage
+    flow.filter((item) => item.stageId === stage.id).forEach((item) => entries.push({ kind: 'item', item }))
+  }
+  // A stage that began after the list was read.
+  flow.filter((item) => !known.has(item.stageId)).forEach((item) => entries.push({ kind: 'item', item }))
+  return entries
+}
+
+// What one update of the agent's todo list changed from the one before it: the steps it finished
+// and started, or steps it added; the whole list when it is the first.
+export function todoChange(previous: readonly ChatTodo[] | null, next: readonly ChatTodo[]): string | null {
+  if (!previous) return next.length ? t('chatState.listedToDos', { value1: next.length }) : null
+  const before = new Map(previous.map((todo) => [todo.content, todo.status]))
+  const finished = next.filter((todo) => todo.status === 'completed' && before.get(todo.content) !== 'completed')
+  const started = next.filter((todo) => todo.status === 'in_progress' && before.get(todo.content) !== 'in_progress')
+  const added = next.filter((todo) => !before.has(todo.content))
+  const quoted = (todos: readonly ChatTodo[]) => todos.map((todo) => `「${todo.content}」`).join('')
+  const said = [
+    finished.length ? t('chatState.completed', { value1: quoted(finished) }) : null,
+    started.length ? t('chatState.started', { value1: quoted(started) }) : null,
+    added.length && added.length !== started.length ? t('chatState.addedItems', { value1: added.length }) : null
+  ].filter(Boolean)
+  return said.length ? said.join('，') : null
+}
+
+// Each todo list update's list before it, by item key: null for the first.
+export function previousTodos(items: readonly ChatItem[]): Map<string, ChatTodo[] | null> {
+  const previous = new Map<string, ChatTodo[] | null>()
+  let last: ChatTodo[] | null = null
+  for (const item of items) {
+    if (item.kind !== 'todos') continue
+    previous.set(itemKey(item), last)
+    last = item.todos
+  }
+  return previous
+}
+
+// How long each finished thought took: from when it began to when the next thing in its stage did.
+export function thoughtDurations(items: readonly ChatItem[]): Map<string, number> {
+  const durations = new Map<string, number>()
+  items.forEach((item, index) => {
+    if (item.kind !== 'reasoning' || item.streaming) return
+    const next = items.slice(index + 1).find((each) => each.stageId === item.stageId && each.kind !== 'state')
+    if (next && next.at >= item.at) durations.set(itemKey(item), next.at - item.at)
+  })
+  return durations
+}
+
+export function entryKey(entry: TimelineEntry): string {
+  return entry.kind === 'stage' ? `stage:${entry.stage.id}` : `item:${itemKey(entry.item)}`
+}
+
+// Only a completed turn's last reply is its copyable answer. Its completion time comes from the
+// turn marker; earlier assistant messages are progress updates, folded or not.
+export function finalReplies(entries: readonly TimelineEntry[]): Map<string, number> {
+  const replies = new Map<string, number>()
+  entries.forEach((entry, index) => {
+    if (entry.kind !== 'item' || entry.item.kind !== 'turn' || entry.item.state !== 'completed') return
+    const previous = entries[index - 1]
+    if (previous?.kind === 'item' && previous.item.kind === 'assistant' && !previous.item.streaming && previous.item.text) {
+      replies.set(entryKey(previous), entry.item.at)
+    }
+  })
+  return replies
+}
+
+type ToolItem = Extract<ChatItem, { kind: 'tool' }>
+type TurnItem = Extract<ChatItem, { kind: 'turn' }>
+
+// A file a finished turn changed, with every line it added and removed there.
+export type TurnFile = { path: string; added: number; removed: number; change: ChatDiff['change'] }
+type TurnReply = { key: string; text: string }
+
+// What the conversation shows once its work is grouped: calls made one after another as one run,
+// edits to one file one after another as one card, and a finished turn's work folded behind one
+// line, leaving its answer in view with the files it changed under it.
+export type ChatBlock =
+  | { kind: 'delegation'; key: string; call: AgentCall }
+  | { kind: 'entry'; key: string; entry: TimelineEntry }
+  | { kind: 'tools'; key: string; tools: ToolItem[] }
+  | { kind: 'browser'; key: string; tools: ToolItem[] }
+  | { kind: 'agents'; key: string; tools: ToolItem[] }
+  | { kind: 'edits'; key: string; path: string; tools: ToolItem[] }
+  // steps: the calls the turn made on the way, and workMs how long the work ran before the answer
+  // began, for the line that stands for them. The turn's own outcome reads under the answer.
+  | { kind: 'fold'; key: string; turn: TurnItem; blocks: ChatBlock[]; steps: number; workMs: number | null }
+  | { kind: 'changes'; key: string; fold: string; files: TurnFile[]; turn: TurnItem; reply: TurnReply | null; collapsible: boolean }
+
+// A call that changed files keeps its own card, with its diff, and subagents sent off together have
+// theirs; the rest run together.
+// A preview the agent asked for is its own card, never one of a run; so is a call that brought
+// back a picture (a screenshot), looked at one on disk or is drawing one, which wants room to be seen.
+function runTool(entry: TimelineEntry): ToolItem | null {
+  return entry.kind === 'item' && entry.item.kind === 'tool' && entry.item.diffs.length === 0 && !isSubagent(entry.item.name) && !isPreviewTool(entry.item.name) && !entry.item.images?.length && !toolImagePath(entry.item) && entry.item.name !== CODEX_IMAGE_GENERATION && browserToolKind(entry.item.name) !== 'navigate' && terminalToolKind(entry.item.name) !== 'run'
+    ? entry.item
+    : null
+}
+
+function subagentTool(entry: TimelineEntry): ToolItem | null {
+  return entry.kind === 'item' && entry.item.kind === 'tool' && isSubagent(entry.item.name) ? entry.item : null
+}
+
+// The one file a call edited, if it edited just one.
+function editedFile(tool: ToolItem): string | null {
+  const [only, ...rest] = tool.diffs
+  return only && rest.length === 0 ? only.path : null
+}
+
+// Which turn's fold holds each call, by its key: a call shown from elsewhere opens its fold first.
+export function foldsOfTools(blocks: readonly ChatBlock[]): Map<string, string> {
+  return new Map(blocks.flatMap((block) => block.kind === 'fold' ? block.blocks.flatMap(toolsOf).map((tool) => [itemKey(tool), block.key] as const) : []))
+}
+
+function toolsOf(block: ChatBlock): ToolItem[] {
+  if (block.kind === 'tools' || block.kind === 'browser' || block.kind === 'edits' || block.kind === 'agents') return block.tools
+  if (block.kind === 'fold') return block.blocks.flatMap(toolsOf)
+  const item = itemOf(block)
+  return item?.kind === 'tool' ? [item] : []
+}
+
+// When a block began: its item, or the first of its calls.
+function startOf(block: ChatBlock): number | null {
+  const tools = toolsOf(block)
+  if (tools.length > 0) return Math.min(...tools.map((tool) => tool.at))
+  return block.kind === 'entry' && block.entry.kind === 'item' ? block.entry.item.at : null
+}
+
+function turnFiles(blocks: readonly ChatBlock[]): TurnFile[] {
+  const files = new Map<string, TurnFile>()
+  for (const tool of blocks.flatMap(toolsOf)) {
+    for (const diff of tool.diffs) {
+      const { added, removed } = diffCounts([diff])
+      const known = files.get(diff.path)
+      files.set(diff.path, known
+        ? { ...known, added: known.added + added, removed: known.removed + removed, change: diff.change === 'delete' ? 'delete' : known.change }
+        : { path: diff.path, added, removed, change: diff.change })
+    }
+  }
+  return [...files.values()]
+}
+
+function itemOf(block: ChatBlock): ChatItem | null {
+  return block.kind === 'entry' && block.entry.kind === 'item' ? block.entry.item : null
+}
+
+// What the turn made for the user to see, which stays with its answer as Claude keeps an artifact in
+// its reply rather than among its steps: a preview the agent showed, a picture it drew, and the
+// browser's page, a way into the browser panel (its history is already folded).
+function deliverable(block: ChatBlock): boolean {
+  if (block.kind === 'browser' || block.kind === 'delegation') return true
+  const item = itemOf(block)
+  if (item?.kind !== 'tool') return false
+  return isPreviewTool(item.name) || (item.name === CODEX_IMAGE_GENERATION && item.status === 'done' && toolImagePath(item) !== null)
+}
+
+// What a finished turn tucks away: the work on the way to its answer. What it made for the user,
+// what the user was asked, a plan, anything that went wrong, and a command still out in the
+// background (or stopped there by its time limit) stay in view.
+function foldable(block: ChatBlock): boolean {
+  if (deliverable(block)) return false
+  if (block.kind === 'tools' && block.tools.every(keepsInView)) return false
+  const item = itemOf(block)
+  if (!item) return block.kind !== 'entry'
+  switch (item.kind) {
+    case 'tool':
+    case 'reasoning':
+    case 'assistant':
+    case 'todos':
+      return true
+    case 'approval':
+      return !isPlanApproval(item)
+    case 'notice':
+      // Where the context was compacted stays a mark in the conversation.
+      return item.level === 'info' && !isCompaction(item.text)
+    default:
+      return false
+  }
+}
+
+function turnReply(body: readonly ChatBlock[], turn: TurnItem): TurnReply | null {
+  const last = body.at(-1)
+  const item = last ? itemOf(last) : null
+  return turn.state === 'completed' && last && item?.kind === 'assistant' && item.text
+    ? { key: last.key, text: item.text }
+    : null
+}
+
+// Noting the user's to-dos, which agents are asked to do once they have listed them: work after
+// the answer that does not end it.
+function notesTodos(block: ChatBlock | undefined): boolean {
+  const tools = block ? toolsOf(block) : []
+  return block?.kind !== 'fold' && tools.length > 0 && tools.every((tool) => todoToolKind(tool.name) !== null)
+}
+
+function foldTurn(body: ChatBlock[], turn: TurnItem, end: ChatBlock): ChatBlock[] {
+  // The answer is the replies it ends with, after the last of its work; to-dos noted between them
+  // stay with the answer rather than fold it away. It starts at a reply.
+  const isReply = (block: ChatBlock | undefined) => block !== undefined && itemOf(block)?.kind === 'assistant'
+  let answer = body.length
+  while (answer > 0 && (isReply(body[answer - 1]) || notesTodos(body[answer - 1]))) answer--
+  while (answer < body.length && !isReply(body[answer])) answer++
+  const work = body.slice(0, answer)
+  const folded = work.filter(foldable)
+  if (folded.length === 0) return [...body, end]
+  const key = `fold:${end.key}`
+  const files = turnFiles(folded)
+  const reply = turnReply(body, turn)
+  const steps = folded.flatMap(toolsOf).length
+  // The work ran from its first call to the answer, or to the end of a turn without one.
+  const began = Math.min(...folded.map(startOf).filter((at): at is number => at !== null))
+  const until = body.slice(answer).map(startOf).find((at): at is number => at !== null) ?? turn.at
+  const workMs = Number.isFinite(began) && until > began ? until - began : null
+  // With files, the summary of them carries the outcome; otherwise the turn's own line does.
+  return [
+    { kind: 'fold', key, turn, blocks: folded, steps, workMs },
+    ...work.filter((block) => !foldable(block)),
+    ...body.slice(answer),
+    ...(files.length > 0 ? [{ kind: 'changes' as const, key: `changes:${end.key}`, fold: key, files, turn, reply, collapsible: true }] : [end])
+  ]
+}
+
+// A turn left open still ends with the files it changed, then how it ended.
+function unfoldedTurn(body: ChatBlock[], end: ChatBlock): ChatBlock[] {
+  const files = turnFiles(body.filter(foldable))
+  if (files.length === 0) return [...body, end]
+  const turn = itemOf(end)
+  if (!turn || turn.kind !== 'turn') return [...body, end]
+  const reply = turnReply(body, turn)
+  return [...body, { kind: 'changes', key: `changes:${end.key}`, fold: `fold:${end.key}`, files, turn, reply, collapsible: false }]
+}
+
+export function chatBlocks(entries: readonly TimelineEntry[], { foldTurns = true }: { foldTurns?: boolean } = {}): ChatBlock[] {
+  const runs: ChatBlock[] = []
+  let browser: Extract<ChatBlock, { kind: 'browser' }> | null = null
+  let stageId: string | null = null
+  for (const entry of entries) {
+    if (entry.kind === 'stage' || entry.item.stageId !== stageId || entry.item.kind === 'user' || entry.item.kind === 'turn') browser = null
+    stageId = entry.kind === 'stage' ? entry.stage.id : entry.item.stageId
+    // Claude often thinks without saying anything it keeps.
+    if (entry.kind === 'item' && entry.item.kind === 'reasoning' && !entry.item.streaming && !entry.item.text.trim()) continue
+    const call = entry.kind === 'item' && entry.item.kind === 'tool' ? entry.item : null
+    // Pictures and diffs keep their own cards; navigation and interaction share one turn's history.
+    if (call && browserOperation(call.name, call.display) !== null && !call.images?.length && call.diffs.length === 0) {
+      if (browser) {
+        browser.tools.push(call)
+        // Keep the summary at its latest activity, so earlier narration cannot become the answer.
+        runs.splice(runs.indexOf(browser), 1)
+        runs.push(browser)
+      } else {
+        browser = { kind: 'browser', key: `browser:${entryKey(entry)}`, tools: [call] }
+        runs.push(browser)
+      }
+      continue
+    }
+    const tool = runTool(entry)
+    const subagent = subagentTool(entry)
+    const last = runs.at(-1)
+    const edit = entry.kind === 'item' && entry.item.kind === 'tool' ? entry.item : null
+    const file = edit ? editedFile(edit) : null
+    const previous = last ? itemOf(last) : null
+    // A command left in the background is a line of its own, to be found while it runs.
+    if (tool && last?.kind === 'tools' && !isBackgroundCommand(tool) && !last.tools.some(isBackgroundCommand)) last.tools.push(tool)
+    else if (tool) runs.push({ kind: 'tools', key: `tools:${entryKey(entry)}`, tools: [tool] })
+    else if (subagent && last?.kind === 'agents') last.tools.push(subagent)
+    else if (subagent) runs.push({ kind: 'agents', key: `agents:${entryKey(entry)}`, tools: [subagent] })
+    else if (edit && file && last?.kind === 'edits' && last.path === file) last.tools.push(edit)
+    else if (edit && file && last && previous?.kind === 'tool' && editedFile(previous) === file) {
+      runs[runs.length - 1] = { kind: 'edits', key: `edits:${last.key}`, path: file, tools: [previous, edit] }
+    } else runs.push({ kind: 'entry', key: entryKey(entry), entry })
+  }
+  // Each turn runs from the user's message, or a new stage, to the item that says how it ended.
+  const blocks: ChatBlock[] = []
+  let body: ChatBlock[] = []
+  for (const block of runs) {
+    const item = itemOf(block)
+    const boundary = block.kind === 'entry' && (block.entry.kind !== 'item' || item?.kind === 'user')
+    if (boundary) {
+      blocks.push(...body, block)
+      body = []
+    } else if (item?.kind === 'turn') {
+      blocks.push(...(foldTurns ? foldTurn(body, item, block) : unfoldedTurn(body, block)))
+      body = []
+    } else {
+      body.push(block)
+    }
+  }
+  return [...blocks, ...body]
+}
+
+// Paths inside the conversation's projects read relative to them; with several projects, each
+// keeps its folder's name in front.
+export function pathShortener(roots: readonly string[]): (text: string) => string {
+  const sorted = [...new Set(roots.filter(Boolean))].sort((a, b) => b.length - a.length)
+  const name = (root: string) => root.split(/[\\/]/).filter(Boolean).at(-1) ?? root
+  // A Windows root is followed by either separator, as agents there write both.
+  const below = (root: string) => /^[a-zA-Z]:[\\/]|^\\\\/.test(root) ? [`${root}\\`, `${root}/`] : [`${root}/`]
+  return (text) => sorted.reduce((current, root) => below(root).reduce((each, prefix) => each.split(prefix).join(sorted.length > 1 ? `${name(root)}/` : ''), current), text)
+}
+
+// An answer as the question card shows it: an option picked, or words of the user's own.
+export type QuestionAnswer = { text: string; typed: boolean }
+
+// Claude hands a multi-select answer back as one "A, B" string: read the options it starts with as
+// options, and what follows as typed.
+export function questionAnswers(question: ChatQuestion, answers: readonly string[]): QuestionAnswer[] {
+  const labels = new Set(question.options.map((option) => option.label))
+  return answers.flatMap((answer) => {
+    const option = question.options.find((option) => option.id === answer)
+    if (option) return [{ text: option.label, typed: false }]
+    if (labels.has(answer)) return [{ text: answer, typed: false }]
+    const parts = answer.split(', ')
+    const typedFrom = parts.findIndex((part) => !labels.has(part))
+    const picked = (typedFrom === -1 ? parts : parts.slice(0, typedFrom)).map((text) => ({ text, typed: false }))
+    const typed = typedFrom === -1 ? [] : [{ text: parts.slice(typedFrom).join(', '), typed: true }]
+    return [...picked, ...typed]
+  })
+}

@@ -1,0 +1,476 @@
+import { z } from 'zod'
+import { ChatReference } from './chat-reference'
+import { AttachmentId } from './attachments'
+import { AgentKind } from './agent'
+import { ModelProviderId } from './model-provider-id'
+import { KnowledgeBase } from './knowledge'
+import { RESERVED_MCP_SERVER_NAME } from './mcp'
+import { ModelMetering, SmallModelCost } from './model-cost'
+
+// idle: the agent waits for a message · running: a turn is under way · awaiting: the turn waits
+// on the user to approve or answer something
+export const ChatTurnActivity = z.enum(['idle', 'running', 'awaiting'])
+export type ChatTurnActivity = z.infer<typeof ChatTurnActivity>
+
+// The permission mode a scheduled run starts in, with nobody there to answer: edits go through
+// (other calls may still ask), or nothing is asked and nothing sandboxed.
+export const UNATTENDED_MODES = ['acceptEdits', 'bypass'] as const
+export const UnattendedMode = z.enum(UNATTENDED_MODES)
+export type UnattendedMode = z.infer<typeof UnattendedMode>
+
+export const TitleNaming = z.enum(['off', 'first', 'latest'])
+export type TitleNaming = z.infer<typeof TitleNaming>
+
+// How chats run on this machine, whichever window asks; core keeps them.
+// promptSuggestions: after each turn the agent predicts the user's next message (Claude Code only).
+// unattendedMode: see UnattendedMode; older cores leave it out.
+export const ChatSettings = z.object({
+  promptSuggestions: z.boolean(),
+  // Automatic titles after the first successful round, or after each round. Older cores omit it.
+  titleNaming: TitleNaming.optional(),
+  // Desktop's lightweight model choices, mirrored for background title requests without a window.
+  titleModels: z.partialRecord(AgentKind, z.string().trim().min(1).max(200)).optional(),
+  unattendedMode: UnattendedMode.optional(),
+  // Applies to live agent processes, including one awaiting the user's approval. Older cores
+  // omit both limits; each new agent gets the default until configured.
+  maxConcurrentAgents: z.number().int().min(1).max(50).optional(),
+  agentConcurrency: z.partialRecord(AgentKind, z.number().int().min(1).max(50)).optional(),
+  // Whether core records the raw traffic with chat agents (see WireEntry); older cores omit it.
+  wireLog: z.boolean().optional(),
+  // Whether an agent that can may drive the user's own browser, signed in as they are (Claude Code
+  // through Claude in Chrome), from its next start. Older cores omit it.
+  userBrowser: z.boolean().optional(),
+  // Whether agents get the tools that read the user's conversations, tasks and group chats in
+  // Conclave (see HISTORY_TOOLS), from their next start. Older cores omit it.
+  readHistory: z.boolean().optional(),
+  // Whether agents note down what is left for the user as the conversation's to-dos (TODO_TOOLS),
+  // from their next start, and clients show them. Older cores omit it.
+  userTodos: z.boolean().optional(),
+  // The user's local knowledge base, given to agents from their next start; null is none. Nullable so a
+  // client can clear it through a partial update. Older cores omit it.
+  knowledgeBase: KnowledgeBase.nullable().optional(),
+  // Free conversations idle this many days are archived; null is off, the default. Nullable so a
+  // client can turn it off through a partial update. Older cores omit it.
+  autoArchiveDays: z.number().int().min(1).max(365).nullable().optional(),
+  // Whether core asks limitreset.net, hourly, about the resets agents' services announce for
+  // everyone (AgentUsage.globalResets). Older cores omit it.
+  resetAnnouncements: z.boolean().optional()
+})
+export type ChatSettings = z.infer<typeof ChatSettings>
+
+// The idle spans a client offers for auto-archiving, and the one it starts on.
+export const AUTO_ARCHIVE_DAYS = [7, 14, 30, 60, 90] as const
+export const DEFAULT_AUTO_ARCHIVE_DAYS = 30
+
+// interrupted: the user stopped the turn while the call ran.
+export const ChatToolStatus = z.enum(['running', 'done', 'failed', 'denied', 'interrupted'])
+export type ChatToolStatus = z.infer<typeof ChatToolStatus>
+
+export const ChatTurnState = z.enum(['completed', 'interrupted', 'failed'])
+export type ChatTurnState = z.infer<typeof ChatTurnState>
+
+export const ChatDecision = z.enum(['allow', 'allowForSession', 'deny'])
+export type ChatDecision = z.infer<typeof ChatDecision>
+
+// Where what an answer lets through holds: the agent's run, until it stops · the project's own
+// settings, which Git ignores · the project's shared settings · the user's, in every project ·
+// the agent's own rules, kept by the agent across its runs.
+export const ApprovalScope = z.enum(['run', 'local', 'project', 'user', 'agent'])
+export type ApprovalScope = z.infer<typeof ApprovalScope>
+
+// What an answer lets through, or keeps out, beyond the call asked about. values are what it
+// names: rules: permission rules as the agent writes them · mode: a Conclave permission mode ·
+// directories: folders · command: the command asked about · files: the files asked about ·
+// prefix: the words a command starts with · host: a network host. other: one Conclave cannot read.
+export const ApprovalGrant = z.object({
+  kind: z.enum(['rules', 'mode', 'directories', 'command', 'files', 'prefix', 'host', 'other']).catch('other'),
+  values: z.array(z.string()),
+  scope: ApprovalScope.catch('run'),
+  behavior: z.enum(['allow', 'deny', 'ask']).catch('allow')
+})
+export type ApprovalGrant = z.infer<typeof ApprovalGrant>
+
+// One answer the agent takes, as it offers it: the decision it amounts to, and what it lets
+// through beyond this call. A plain allow or deny grants nothing.
+export const ApprovalChoice = z.object({
+  id: z.string(),
+  label: z.string().optional(),
+  decision: ChatDecision.catch('deny'),
+  grants: z.array(ApprovalGrant)
+})
+export type ApprovalChoice = z.infer<typeof ApprovalChoice>
+
+// Conclave's names for how freely an agent may act; each agent maps them onto its own settings and
+// offers the ones it has. Cursor maps ask to Agent, plan to Plan and readOnly to native Ask;
+// these names do not imply an OS sandbox. Others: ask: confirm each call · acceptEdits: file edits go through (Codex:
+// on-request) · plan: read and plan only · auto: the agent's own judgement · readOnly: a read-only
+// sandbox · bypass: nothing asked, nothing sandboxed.
+export const CHAT_PERMISSION_MODES = ['ask', 'acceptEdits', 'plan', 'auto', 'readOnly', 'bypass'] as const
+export const ChatPermissionMode = z.enum(CHAT_PERMISSION_MODES)
+export type ChatPermissionMode = z.infer<typeof ChatPermissionMode>
+
+export const TaskLaunchOptions = z.object({
+  permissionMode: ChatPermissionMode.optional(),
+  // null resets a previous task stage's choice to the agent/model default.
+  model: z.string().trim().min(1).max(200).nullable().optional(),
+  effort: z.string().trim().min(1).max(200).nullable().optional(),
+  // The model provider the task's conversation starts on; null its agent's own account. Fixed once
+  // the conversation is made: a start may only name the same. Older cores leave it out.
+  modelProvider: ModelProviderId.nullable().optional()
+})
+export type TaskLaunchOptions = z.infer<typeof TaskLaunchOptions>
+
+export const CHAT_OPTIONS = ['permissionMode', 'model', 'effort'] as const
+export const ChatOption = z.enum(CHAT_OPTIONS)
+export type ChatOption = z.infer<typeof ChatOption>
+
+export const ChatTodo = z.object({
+  content: z.string(),
+  status: z.enum(['pending', 'in_progress', 'completed']).catch('pending'),
+  // How the step reads while it is under way ("Writing tests").
+  activeForm: z.string().nullable()
+})
+export type ChatTodo = z.infer<typeof ChatTodo>
+
+export const ChatModel = z.object({
+  id: z.string(),
+  label: z.string(),
+  description: z.string().nullable(),
+  // The reasoning efforts it takes, in the agent's own words; empty when it takes none.
+  efforts: z.array(z.string()),
+  isDefault: z.boolean(),
+  // The model takes Claude Code's auto mode, so a chat can start in it. Codex, and older cores,
+  // leave it out.
+  autoMode: z.boolean().optional()
+})
+export type ChatModel = z.infer<typeof ChatModel>
+
+// A slash command the agent offers: the composer sends it as the text `/name args`, and the
+// driver passes it on in whatever form its agent takes.
+export const ChatCommand = z.object({
+  name: z.string(),
+  description: z.string(),
+  // What the command takes after its name ("[branch]"), or null when it takes nothing.
+  argumentHint: z.string().nullable()
+})
+export type ChatCommand = z.infer<typeof ChatCommand>
+
+// What an agent offers a chat before one starts: the models it lists, its default among them.
+export const ChatCatalog = z.object({ models: z.array(ChatModel) })
+export type ChatCatalog = z.infer<typeof ChatCatalog>
+
+// How much of the model's context the conversation fills, in tokens; window is null until known.
+export const ChatContextUse = z.object({ used: z.number(), window: z.number().nullable() })
+export type ChatContextUse = z.infer<typeof ChatContextUse>
+
+// A file change as a unified-diff body: lines start with +, - or a space, hunks with @@.
+export const ChatDiff = z.object({
+  path: z.string(),
+  change: z.enum(['add', 'update', 'delete']).catch('update'),
+  patch: z.string()
+})
+export type ChatDiff = z.infer<typeof ChatDiff>
+
+export const ChatQuestion = z.object({
+  id: z.string(),
+  header: z.string(),
+  question: z.string(),
+  options: z.array(z.object({ id: z.string().optional(), label: z.string(), description: z.string().nullable() })),
+  multiSelect: z.boolean()
+})
+export type ChatQuestion = z.infer<typeof ChatQuestion>
+
+// An image sent with a message, from core's attachment store.
+export const ChatImage = z.object({ id: AttachmentId, width: z.number().int().positive(), height: z.number().int().positive() })
+export type ChatImage = z.infer<typeof ChatImage>
+
+// A message waiting for the turn to end, in the order the user wrote them; held after an
+// interrupted or failed turn until the user sends or drops it. ref names the user item it becomes.
+export const ChatQueued = z.object({ ref: z.string(), text: z.string(), held: z.boolean(), images: z.array(ChatImage).default([]), references: z.array(ChatReference).optional() })
+export type ChatQueued = z.infer<typeof ChatQueued>
+
+// waiting: for the limit to lift, or for the user · retrying: the continue message is going out
+// continued: it went out · cancelled: the user went on another way, or the chat cannot go on
+export const USAGE_LIMIT_STATUSES = ['waiting', 'retrying', 'continued', 'cancelled'] as const
+export type UsageLimitStatus = (typeof USAGE_LIMIT_STATUSES)[number]
+
+// Every item has a stable id; a newer revision of it replaces the one the client holds.
+const Base = z.object({ id: z.string(), stageId: z.string(), revision: z.number().int(), at: z.number() })
+
+export const ChatItem = z.discriminatedUnion('kind', [
+  // steer: sent into a running turn rather than starting one; the agent took it mid-way.
+  Base.extend({ kind: z.literal('user'), text: z.string(), images: z.array(ChatImage).default([]), steer: z.boolean().optional(), references: z.array(ChatReference).optional() }),
+  Base.extend({ kind: z.literal('assistant'), text: z.string(), streaming: z.boolean() }),
+  Base.extend({ kind: z.literal('reasoning'), text: z.string(), streaming: z.boolean() }),
+  Base.extend({
+    kind: z.literal('tool'),
+    // The agent's own tool name (Bash, Edit, commandExecution...); the UI labels the known ones.
+    name: z.string(),
+    // One line saying what the call does: a command, a path, a pattern.
+    title: z.string(),
+    // The same in words, where there are some: as the agent put it (Claude's Bash description), or
+    // as Conclave reads Codex's own parse of the command. Older cores leave it out.
+    description: z.string().nullable().optional(),
+    input: z.string().nullable(),
+    status: ChatToolStatus.catch('done'),
+    // A command's lifecycle is separate from its exit result. Keep status for older clients.
+    execution: z.object({
+      status: z.enum(['completed', 'failed']),
+      exitCode: z.number().int().nullable()
+    }).optional(),
+    output: z.string().nullable(),
+    // The agent left it working in the background, as a command run with run_in_background: it
+    // stays running past its turn until it reports. Older cores leave it out.
+    background: z.boolean().optional(),
+    // How long a command left in the background may run before its agent stops it, where the agent
+    // set that limit itself (Claude's Bash timeout). Older cores leave it out.
+    backgroundLimitMs: z.number().int().positive().optional().catch(undefined),
+    // While it runs in the background, Conclave can stop it on its own, apart from the turn
+    // (conversations.stopBackground). Older cores leave it out.
+    stoppable: z.boolean().optional(),
+    // Why a call stopped short, where the agent says: a background command that ran out its time
+    // limit, or background work the user stopped. Older cores leave it out.
+    stopReason: z.enum(['timeLimit', 'user']).optional().catch(undefined),
+    diffs: z.array(ChatDiff).default([]),
+    // What a subagent did, once it reports back: its calls, tokens and time. Older cores leave it out.
+    metrics: z.object({ tools: z.number(), tokens: z.number(), durationMs: z.number() }).nullable().optional(),
+    // Images the call returned (a browser screenshot), from core's attachment store. Older cores leave it out.
+    images: z.array(ChatImage).optional(),
+    // How the agent names an MCP tool for people, and the service it comes from (Claude Code's
+    // tool_use_meta: "Get issue" from "Atlassian"). Absent where the agent says nothing.
+    display: z.object({ name: z.string(), server: z.string().nullable() }).nullable().optional()
+  }),
+  Base.extend({
+    kind: z.literal('approval'),
+    requestId: z.string(),
+    tool: z.string(),
+    title: z.string(),
+    detail: z.string().nullable(),
+    // The tool item this asks about, whose card shows the command or diff in full.
+    toolItemId: z.string().nullable().default(null),
+    // What the agent accepts as an answer here; deny is always among them.
+    decisions: z.array(ChatDecision.catch('deny')),
+    // The same answers with what each lets through, plain deny among them; answered by its id.
+    // Older cores leave it out.
+    choices: z.array(ApprovalChoice).optional(),
+    // Why the agent asks rather than goes ahead, in its words: a rule it matched, a path outside
+    // its folders. Older cores leave it out.
+    reason: z.string().nullable().optional(),
+    resolution: z.enum(['allowed', 'allowedForSession', 'denied', 'cancelled']).catch('cancelled').nullable(),
+    // The choice it was answered with, once answered with one of choices. Older cores leave it out.
+    chosen: z.string().nullable().optional(),
+    // A plan carried out: the permission mode it was carried out in. Older cores leave it out.
+    mode: ChatPermissionMode.nullable().catch(null).optional(),
+    // A native plan review may resume in only some of the stage's permission modes.
+    runModes: z.array(ChatPermissionMode).optional()
+  }),
+  Base.extend({
+    kind: z.literal('question'),
+    requestId: z.string(),
+    questions: z.array(ChatQuestion),
+    // Question id to the chosen labels.
+    answers: z.record(z.string(), z.array(z.string())).nullable(),
+    resolution: z.enum(['answered', 'cancelled']).catch('cancelled').nullable(),
+    // Asked in passing (Codex's async questions): the agent works on, and the answer reaches it as
+    // a message. Answered with null answers when the user wrote something else instead. Older cores
+    // leave it out.
+    async: z.boolean().optional()
+  }),
+  Base.extend({
+    kind: z.literal('turn'),
+    state: ChatTurnState.catch('completed'),
+    error: z.string().nullable(),
+    durationMs: z.number().nullable(),
+    metering: ModelMetering.optional(),
+    smallModelCost: SmallModelCost.optional(),
+    // Tokens the turn sent and received, where the agent reports them; older cores leave it out.
+    usage: z.union([
+      z.object({ input: z.number(), output: z.number() }),
+      z.object({ total: z.number() })
+    ]).nullable().optional(),
+    // The turn began on its own, not from a message: something the agent left working in the
+    // background reported back. Older cores leave it out.
+    resumed: z.boolean().optional(),
+    // What reported, where the agent says: a subagent, or a command it ran in the background. Left
+    // out when not known, as by older cores, which only knew subagents to do this.
+    resumedBy: z.enum(['subagent', 'command']).optional().catch(undefined),
+    // The agent's own name for where this turn ended, which a fork of the conversation can stop
+    // at: Claude's id for the turn's last message, Codex's id for the turn. Older cores leave it out.
+    providerRef: z.string().nullable().optional()
+  }),
+  Base.extend({
+    kind: z.literal('notice'),
+    level: z.enum(['info', 'warning', 'error']).catch('info'),
+    text: z.string(),
+    // A newer core may offer a narrowly scoped recovery action. Optional so older clients can
+    // still read the notice, and nullable once the action has been used.
+    action: z.object({
+      kind: z.literal('retryTurn'),
+      userItemId: z.string(),
+      // The turn is still running, silent: retrying stops it first.
+      stop: z.boolean().optional()
+    }).nullable().optional()
+  }),
+  // The turn before it (turn:<ref> for limit:<ref>) failed because the account's usage limit was
+  // reached. The agent's words come from the stage; what is done about it is core's, kept apart.
+  Base.extend({
+    kind: z.literal('usageLimit'),
+    message: z.string().nullable(),
+    // When the limit lifts, as the agent said or core's usage reading tells; null when neither can.
+    resetsAt: z.number().nullable(),
+    // Whether core sends the continue message itself once the limit lifts.
+    autoContinue: z.boolean().default(false),
+    status: z.enum(USAGE_LIMIT_STATUSES).catch('cancelled').default('cancelled'),
+    // When core will try next, while it means to; when the continue message went out.
+    continueAt: z.number().nullable().default(null),
+    continuedAt: z.number().nullable().default(null),
+    // Why the last try did not go through.
+    error: z.string().nullable().default(null),
+    // The scheduled run that continues it (schedules.list), while core has one. Older cores leave it out.
+    runId: z.string().nullable().optional(),
+    // The account core moved the agent to, to go on at once (AgentAccount.id). Older cores leave it out.
+    switchedTo: z.string().nullable().optional()
+  }),
+  // A turn's checklist as it last stood, where the turn first touched it.
+  Base.extend({ kind: z.literal('todos'), todos: z.array(ChatTodo) }),
+  // The stage as it stands now, one per stage and not part of the conversation's flow: the
+  // composer reads it for the options it offers and the progress it shows.
+  Base.extend({
+    kind: z.literal('state'),
+    // One of CHAT_PERMISSION_MODES, or the agent's own name for a mode Conclave has none for.
+    permissionMode: z.string().nullable(),
+    permissionModes: z.array(z.string()),
+    model: z.string().nullable(),
+    billingModel: z.string().nullable().optional(),
+    models: z.array(ChatModel),
+    effort: z.string().nullable(),
+    context: ChatContextUse.nullable(),
+    todos: z.array(ChatTodo),
+    // What the agent says it is doing right now.
+    activity: z.string().nullable(),
+    // What the running turn has read and written so far, where the agent reports it as it goes;
+    // null between turns and for an agent that reports only at the end. Older cores leave it out.
+    turnUsage: z.object({ input: z.number(), output: z.number() }).nullable().default(null),
+    // The first message waiting for the turn to end, for older clients; queue has them all.
+    queued: z.object({ text: z.string(), held: z.boolean(), images: z.array(ChatImage).default([]), references: z.array(ChatReference).optional() }).nullable(),
+    queue: z.array(ChatQueued).default([]),
+    // Whether the agent takes a message into a running turn (Claude Code does, Codex does not).
+    steerable: z.boolean().default(false),
+    // The slash commands the agent offers; older cores leave it out.
+    commands: z.array(ChatCommand).default([])
+  })
+])
+export type ChatItem = z.infer<typeof ChatItem>
+
+// Conclave's own tools, as each agent names an MCP tool: Claude Code mcp__<server>__<tool>, Codex
+// <server>.<tool>. The server is `conclave` in every launch config.
+export function conclaveToolName(name: string): string | null {
+  const server = RESERVED_MCP_SERVER_NAME
+  if (name.startsWith(`mcp__${server}__`)) return name.slice(`mcp__${server}__`.length)
+  if (name.startsWith(`${server}.`)) return name.slice(`${server}.`.length)
+  return null
+}
+
+// Shows the user a file the agent wrote, in the conversation: an HTML page or an SVG in a frame of
+// its own, a picture (a screenshot, a chart it rendered) as an image.
+export const SHOW_PREVIEW_TOOL = 'show_preview'
+export const PREVIEW_IMAGE_EXTENSIONS: ReadonlySet<string> = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp'])
+export const PREVIEW_EXTENSIONS: ReadonlySet<string> = new Set(['html', 'htm', 'svg', ...PREVIEW_IMAGE_EXTENSIONS])
+export function isPreviewImage(path: string): boolean {
+  return PREVIEW_IMAGE_EXTENSIONS.has(path.split('.').at(-1)?.toLowerCase() ?? '')
+}
+
+// The tools that read the user's own history in Conclave, across agents: what had activity in a
+// stretch of time, and what was said in one of them. Read-only, and off where the user turned it off.
+export const HISTORY_TOOLS = ['list', 'read'] as const
+export type HistoryToolKind = (typeof HISTORY_TOOLS)[number]
+export function historyToolName(kind: HistoryToolKind): string {
+  return `history_${kind}`
+}
+export function historyToolKind(name: string): HistoryToolKind | null {
+  const own = conclaveToolName(name)
+  return HISTORY_TOOLS.find((kind) => own === historyToolName(kind)) ?? null
+}
+
+// Codex's call that looks at a picture on disk (its view_image tool).
+export const CODEX_IMAGE_VIEW = 'imageView'
+// Codex's call that draws a picture (its image_gen tool), titled with where it saved it.
+export const CODEX_IMAGE_GENERATION = 'imageGeneration'
+
+// The picture a call looked at on disk, which the chat shows from where it is rather than from a
+// copy: Claude's Read of an image file, Codex's imageView or imageGeneration. null for any other call.
+export function toolImagePath(item: { name: string; title: string }): string | null {
+  const reads = item.name === 'Read' || item.name === CODEX_IMAGE_VIEW || item.name === CODEX_IMAGE_GENERATION
+  const absolute = item.title.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(item.title)
+  return reads && absolute && isPreviewImage(item.title) ? item.title : null
+}
+export function isPreviewTool(name: string): boolean {
+  return conclaveToolName(name) === SHOW_PREVIEW_TOOL
+}
+
+// The browser tools, named browser_<kind>.
+export const BROWSER_TOOL_KINDS = ['navigate', 'snapshot', 'screenshot', 'click', 'type', 'press', 'hover', 'scroll', 'select', 'wait', 'tabs', 'console'] as const
+export type BrowserToolKind = (typeof BROWSER_TOOL_KINDS)[number]
+export function browserToolName(kind: BrowserToolKind): string {
+  return `browser_${kind}`
+}
+export function browserToolKind(name: string): BrowserToolKind | null {
+  const own = conclaveToolName(name)
+  if (!own?.startsWith('browser_')) return null
+  const kind = own.slice('browser_'.length)
+  const found = BROWSER_TOOL_KINDS.find((candidate) => candidate === kind)
+  return found ?? null
+}
+export function isBrowserTool(name: string): boolean {
+  return browserToolKind(name) !== null
+}
+
+// What a driver logs in place of a picture a tool brought back, once it has put the bytes in the
+// store: one marker per image on a line of its own, so a replay shows it from the store and the
+// log leaves the bytes out.
+export function imageMarker(image: ChatImage): string {
+  return `[conclave-image ${image.id} ${image.width}x${image.height}]`
+}
+const IMAGE_MARKER = /^\[conclave-image ([0-9a-f]{64}\.(?:png|jpg|gif|webp)) (\d+)x(\d+)\][ \t]*$/gm
+// The images a tool's text names, and the text without the markers.
+export function takeImageMarkers(text: string): { text: string; images: ChatImage[] } {
+  const images: ChatImage[] = []
+  const rest = text.replace(IMAGE_MARKER, (_line, id: string, width: string, height: string) => {
+    images.push({ id, width: Number(width), height: Number(height) })
+    return ''
+  })
+  return { text: images.length ? rest.replace(/\n{3,}/g, '\n\n').trim() : text, images }
+}
+
+// The notice either agent leaves where its context was compacted, which a client draws as a divider.
+export const CONTEXT_COMPACTED = '对话上下文已压缩'
+
+// A plan from plan mode waits as an approval: Claude's ExitPlanMode call, or the plan a Codex
+// plan-mode turn ended with.
+export const PLAN_TOOLS: ReadonlySet<string> = new Set(['ExitPlanMode', 'plan', 'cursor/create_plan'])
+
+// A plain check rather than a type guard: a plan has the approval type of any other approval.
+export function isPlanApproval(item: ChatItem): boolean {
+  return item.kind === 'approval' && PLAN_TOOLS.has(item.tool)
+}
+
+// Conclave's own question, as an approval: the site its browser is about to open for the first time
+// in this conversation. Not an agent tool, so the agent's names for tools never clash with it.
+export const BROWSER_HOST_TOOL = 'browser_host'
+export function isHostApproval(item: ChatItem): boolean {
+  return item.kind === 'approval' && item.tool === BROWSER_HOST_TOOL
+}
+// Request ids Conclave issues itself; an agent's never start this way, so an answer to one is
+// routed to Conclave rather than written to the agent.
+export const CONCLAVE_REQUEST_PREFIX = 'conclave:'
+export function isConclaveRequest(requestId: string): boolean {
+  return requestId.startsWith(CONCLAVE_REQUEST_PREFIX)
+}
+
+// Parsed one by one, so an item a newer core describes differently drops alone, not the batch.
+export const ChatItemList = z.array(z.unknown()).transform((items) =>
+  items.flatMap((item) => {
+    const parsed = ChatItem.safeParse(item)
+    return parsed.success ? [parsed.data] : []
+  })
+)

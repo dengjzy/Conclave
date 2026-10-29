@@ -1,0 +1,21 @@
+{
+  "id": "example.tracker",
+  "version": "0.1.0",
+  "engines": {
+    "conclave": ">=0.0.1-0 <1.0.0"
+  },
+  "contributes": {
+    "sources": [
+      {
+        "id": "example",
+        "name": "Example",
+        "settings": []
+      }
+    ]
+  },
+  "entry": {
+    "runtime": "node",
+    "main": "main.mjs"
+  },
+  "env": []
+}

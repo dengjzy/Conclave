@@ -1,0 +1,1160 @@
+import { readFileSync } from 'node:fs'
+import { describe, expect, it } from 'vitest'
+import type { ChatItem } from '@conclave/protocol'
+import type { ChatRecord, ChatStageOptions } from '../../chat-driver'
+import { parseChatRecord } from '../../chat-log'
+import { CodexAppServer, commandDescription, unwrapShell } from './codex-app-server'
+
+const OPTIONS: ChatStageOptions = { cwd: '/work/repo', extraDirs: [], resume: null }
+
+// Recorded from codex-cli 0.156.1 (codex app-server, approvalPolicy untrusted so that it asks),
+// then stripped of local paths.
+function fixture(name: string): ChatRecord[] {
+  return readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8')
+    .split('\n')
+    .flatMap((line) => {
+      const record = line.trim() ? parseChatRecord(line) : null
+      return record ? [record] : []
+    })
+}
+
+function replay(records: readonly ChatRecord[], options = OPTIONS): CodexAppServer {
+  const driver = new CodexAppServer('stage-1', options)
+  records.forEach((record) => driver.apply(record))
+  return driver
+}
+
+const ofKind = <K extends ChatItem['kind']>(items: ChatItem[], kind: K) =>
+  items.filter((item): item is Extract<ChatItem, { kind: K }> => item.kind === kind)
+const shown = (items: ChatItem[]) => items.map(({ revision: _revision, at: _at, ...item }) => item)
+
+describe('CodexAppServer', () => {
+  it.each([0, 1, 2, null])('keeps a completed command separate from exit %s when replaying its record', (exitCode) => {
+    const driver = replay([{ dir: 'in', at: 1, frame: {
+      method: 'item/completed', params: { item: {
+        type: 'commandExecution', id: 'search', command: 'rg missing .', status: 'completed', exitCode, aggregatedOutput: ''
+      } }
+    } }])
+    expect(ofKind(driver.items.list(), 'tool')[0]).toMatchObject({
+      status: exitCode === null || exitCode === 0 ? 'done' : 'failed',
+      execution: { status: 'completed', exitCode }, output: null
+    })
+  })
+
+  it('keeps execution failures and refusals distinct from completed commands', () => {
+    const driver = replay(['failed', 'declined', 'inProgress'].map((status, index) => ({
+      dir: 'in' as const, at: index, frame: { method: status === 'inProgress' ? 'item/started' : 'item/completed', params: {
+        item: { type: 'commandExecution', id: status, command: 'run', status, exitCode: status === 'failed' ? 1 : null }
+      } }
+    })))
+    const tools = ofKind(driver.items.list(), 'tool')
+    expect(tools.map((tool) => tool.status)).toEqual(['failed', 'denied', 'running'])
+    expect(tools.map((tool) => tool.execution)).toEqual([{ status: 'failed', exitCode: 1 }, undefined, undefined])
+  })
+
+  it('turns a recorded thread into messages, file and command cards, approvals and turn outcomes', () => {
+    const driver = replay(fixture('codex-session.jsonl'))
+    const items = driver.items.list()
+    expect(driver.providerSessionId()).toBe('01a0e635-ad34-74f0-8ecb-2c49cb8429ad')
+    expect(ofKind(items, 'user').map((item) => item.text)).toEqual([
+      'Create a file named codex.txt containing the single word hi, then run `cat codex.txt`. Answer in one short sentence.',
+      'Count from 1 to 400, one number per line, no other text.',
+      'Say "done" and nothing else.'
+    ])
+    const tools = ofKind(items, 'tool')
+    expect(tools.map((tool) => [tool.name, tool.title, tool.status])).toEqual([
+      ['fileChange', '/work/repo/codex.txt', 'done'],
+      ['commandExecution', 'cat codex.txt', 'done']
+    ])
+    expect(tools[0]?.diffs).toEqual([{ path: '/work/repo/codex.txt', change: 'add', patch: '+hi' }])
+    expect(tools[1]?.output).toBe('hi\n')
+    expect(tools[1]?.description).toBe('读取 codex.txt')
+    expect(ofKind(items, 'approval').map((approval) => [approval.tool, approval.resolution, approval.toolItemId])).toEqual([
+      ['fileChange', 'allowed', tools[0]?.id],
+      ['commandExecution', 'allowed', tools[1]?.id]
+    ])
+    expect(ofKind(items, 'turn').map((turn) => turn.state)).toEqual(['completed', 'interrupted', 'completed'])
+    expect(ofKind(items, 'assistant').map((item) => item.streaming)).not.toContain(true)
+    expect(driver.activity()).toBe('idle')
+  })
+
+  it('keeps each turn its own token count from the thread usage updates', () => {
+    const turns = ofKind(replay(fixture('codex-session.jsonl')).items.list(), 'turn')
+    expect(turns.map((turn) => turn.usage)).toEqual([
+      { input: 30_105, output: 223 },
+      null,
+      { input: 15_289, output: 5 }
+    ])
+  })
+
+  it('shows a total when older Codex usage updates have no input or output split', () => {
+    const turns = ofKind(replay(fixture('codex-plan.jsonl')).items.list(), 'turn')
+    expect(turns.map((turn) => turn.usage)).toEqual([
+      { total: 37_829 },
+      { total: 74_969 }
+    ])
+  })
+
+  it('does not charge a resumed turn for usage replayed from the previous turn', () => {
+    const turns = ofKind(replay(fixture('codex-resume.jsonl')).items.list(), 'turn')
+    expect(turns.map((turn) => turn.usage)).toEqual([{ input: 17_613, output: 11 }])
+  })
+
+  it('records the final answer of each turn, not its commentary', () => {
+    const messages = replay(fixture('codex-session.jsonl')).takeMessages()
+    expect(messages.filter((message) => message.role === 'assistant').map((message) => message.text))
+      .toEqual(['Created `codex.txt`; `cat codex.txt` outputs `hi`.', 'done'])
+  })
+
+  it('rebuilds the same items from its log, except text an interrupted turn only streamed', () => {
+    const records = fixture('codex-session.jsonl')
+    const live = replay(records)
+    const logger = new CodexAppServer('stage-1', OPTIONS)
+    const kept = records.flatMap((record): ChatRecord[] => {
+      if (record.dir !== 'in') return [record]
+      const frame = logger.logged(record.frame)
+      return frame === null ? [] : [{ ...record, frame }]
+    })
+    expect(kept.length).toBeLessThan(records.length / 2)
+    const streamedOnly = (item: ChatItem) => item.kind === 'assistant' && item.text.startsWith('1\n')
+    expect(live.items.list().filter(streamedOnly)).toHaveLength(1)
+    expect(shown(replay(kept).items.list())).toEqual(shown(live.items.list().filter((item) => !streamedOnly(item))))
+  })
+
+  it('forks the thread a stage names through a turn, into a thread of its own', () => {
+    const driver = new CodexAppServer('stage-1', { ...OPTIONS, resume: 'thread-1', fork: 'turn-2' })
+    // As the chat host does: what is due goes out and is logged before the answer comes in.
+    const send = () => { const frames = driver.due(); frames.forEach((frame) => driver.apply({ dir: 'out', at: 1, frame })); return frames }
+    send()
+    driver.apply({ dir: 'in', at: 1, frame: { id: 'conclave-init', result: {} } })
+    const opened = send().find((frame) => JSON.stringify(frame).includes('"method":"thread/'))
+    expect(opened).toEqual({ id: 'conclave-thread', method: 'thread/fork', params: expect.objectContaining({ threadId: 'thread-1', lastTurnId: 'turn-2', cwd: '/work/repo', excludeTurns: true }) })
+    // Asked for once: while the answer is on its way, and after, nothing asks again (each ask made
+    // Codex another thread, and each answer took the stage's turns away to it).
+    const opens = () => send().filter((frame) => JSON.stringify(frame).includes('"method":"thread/')).length
+    expect(opens()).toBe(0)
+    driver.apply({ dir: 'in', at: 2, frame: { id: 'conclave-thread', result: { thread: { id: 'thread-2' } } } })
+    expect(driver.providerSessionId()).toBe('thread-2')
+    expect(opens()).toBe(0)
+    // A thread opened again stays a stranger: the stage keeps the one it has.
+    driver.apply({ dir: 'in', at: 3, frame: { id: 'conclave-thread', result: { thread: { id: 'thread-3' } } } })
+    expect(driver.providerSessionId()).toBe('thread-2')
+  })
+
+  it('resumes the thread a stage names', () => {
+    const records = fixture('codex-resume.jsonl')
+    const resume = '01a0e635-ad34-74f0-8ecb-2c49cb8429ad'
+    const driver = replay(records, { ...OPTIONS, resume })
+    expect(records.find((record) => record.dir === 'out' && JSON.stringify(record.frame).includes('thread/resume'))).toBeDefined()
+    expect(driver.providerSessionId()).toBe(resume)
+    expect(ofKind(driver.items.list(), 'assistant').at(-1)?.text).toBe('I created `codex.txt`.')
+  })
+})
+
+describe('CodexAppServer steering', () => {
+  // A stage with a thread and a turn under way, frames as the chat host logs them.
+  function running(method = 'turn/start') {
+    const driver = new CodexAppServer('stage-1', OPTIONS)
+    const out = (frame: unknown, ref?: string) => driver.apply({ dir: 'out', at: 1, frame, ...(ref ? { ref } : {}) })
+    const answer = (frame: unknown) => driver.apply({ dir: 'in', at: 2, frame })
+    driver.due().forEach((frame) => out(frame))
+    answer({ id: 'conclave-init', result: {} })
+    driver.due().forEach((frame) => out(frame))
+    answer({ id: 'conclave-thread', result: { thread: { id: 'thread-1' } } })
+    out({ id: 'conclave-turn-1', method, params: { threadId: 'thread-1', input: [{ type: 'text', text: 'list forty numbers' }] } }, 'm1')
+    expect(driver.canSteer()).toBe(false)
+    answer({ method: 'turn/started', params: { threadId: 'thread-1', turn: { id: 'turn-1' } } })
+    return { driver, out, answer }
+  }
+
+  it('sends a message into the running turn, naming it, and shows it once Codex takes it', () => {
+    const { driver, out, answer } = running()
+    expect(driver.canSteer()).toBe(true)
+    expect(ofKind(driver.items.list(), 'state')[0]?.steerable).toBe(true)
+    const { wire } = driver.steer('stop and say STEERED')
+    expect(wire).toEqual({ id: 'conclave-steer-1', method: 'turn/steer', params: { threadId: 'thread-1', input: [{ type: 'text', text: 'stop and say STEERED', text_elements: [] }], expectedTurnId: 'turn-1' } })
+    out(wire, 'm2')
+    // Not the user's until Codex says it took it.
+    expect(driver.items.get('u:m2')).toBeUndefined()
+    answer({ id: 'conclave-steer-1', result: { turnId: 'turn-1' } })
+    expect(driver.items.get('u:m2')).toMatchObject({ kind: 'user', text: 'stop and say STEERED' })
+    expect(driver.queuedToSend()).toBeNull()
+  })
+
+  it('queues a message the turn would not take, for when it ends, and says why', () => {
+    const { driver, out, answer } = running()
+    const { wire } = driver.steer('too late')
+    out(wire, 'm2')
+    answer({ id: 'conclave-steer-1', error: { code: -32600, message: 'no active turn to steer' } })
+    expect(driver.items.get('u:m2')).toBeUndefined()
+    expect(ofKind(driver.items.list(), 'notice').at(-1)?.text).toContain('这一轮刚好结束了')
+    answer({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } })
+    expect(driver.queuedToSend()).toMatchObject({ text: 'too late', ref: 'm2' })
+  })
+
+  it('takes nothing into a review, nor before the turn has begun', () => {
+    const { driver } = running('review/start')
+    expect(driver.canSteer()).toBe(false)
+    expect(() => driver.steer('more')).toThrow()
+  })
+})
+
+describe('CodexAppServer questions asked in passing', () => {
+  function running() {
+    const driver = new CodexAppServer('stage-1', OPTIONS)
+    const out = (frame: unknown, ref?: string) => driver.apply({ dir: 'out', at: 1, frame, ...(ref ? { ref } : {}) })
+    const answer = (frame: unknown) => driver.apply({ dir: 'in', at: 2, frame })
+    driver.due().forEach((frame) => out(frame))
+    answer({ id: 'conclave-init', result: {} })
+    driver.due().forEach((frame) => out(frame))
+    answer({ id: 'conclave-thread', result: { thread: { id: 'thread-1' } } })
+    out({ id: 'conclave-turn-1', method: 'turn/start', params: { threadId: 'thread-1', input: [{ type: 'text', text: 'release it' }] } }, 'm1')
+    answer({ method: 'turn/started', params: { threadId: 'thread-1', turn: { id: 'turn-1' } } })
+    return { driver, out, answer }
+  }
+  const asked = (id: string, questions: Array<{ title: string; options?: string[] }>, text = questions.map((q) => [q.title, ...(q.options ?? []).map((o) => `- ${o}`)].join('\n')).join('\n\n')) => ({
+    method: 'item/completed',
+    params: { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'agentMessage', id, text, phase: 'final_answer', delivery: 'async', questions } }
+  })
+  const commit = { title: '可以按此提交吗？', options: ['可以，按这两条提交', '有工单号，我来提供', '先不要提交'] }
+
+  it('shows the question as a card in place of its plain text, and the turn goes on', () => {
+    const { driver, answer } = running()
+    answer(asked('call_1', [commit]))
+    expect(ofKind(driver.items.list(), 'assistant')).toEqual([])
+    expect(driver.items.get('q:async:call_1')).toMatchObject({
+      kind: 'question', requestId: 'async:call_1', async: true, resolution: null,
+      questions: [{ id: 'q1', question: '可以按此提交吗？', options: [{ label: '可以，按这两条提交', description: null }, { label: '有工单号，我来提供', description: null }, { label: '先不要提交', description: null }], multiSelect: false }]
+    })
+    expect(driver.activity()).toBe('running')
+    expect(driver.asking().map((item) => item.requestId)).toEqual(['async:call_1'])
+  })
+
+  it('keeps the text when it says more than the question', () => {
+    const { driver, answer } = running()
+    answer(asked('call_1', [commit], '改好了，类型检查通过。\n\n可以按此提交吗？'))
+    expect(ofKind(driver.items.list(), 'assistant').map((item) => item.text)).toEqual(['改好了，类型检查通过。\n\n可以按此提交吗？'])
+  })
+
+  it('answers with a message of what was chosen, and puts a question aside with none', () => {
+    const { driver, answer } = running()
+    answer(asked('call_1', [commit]))
+    expect(driver.replyByMessage('async:call_1', { decision: 'allow', answers: { q1: ['可以，按这两条提交'] } })).toEqual({ text: '可以，按这两条提交', answers: { q1: ['可以，按这两条提交'] } })
+    expect(driver.replyByMessage('async:call_1', { decision: 'deny' })).toEqual({ text: null, answers: null })
+    expect(driver.replyByMessage('7', { decision: 'allow' })).toBeUndefined()
+    driver.apply({ dir: 'reply', at: 3, requestId: 'async:call_1', answers: { q1: ['可以，按这两条提交'] } })
+    expect(driver.items.get('q:async:call_1')).toMatchObject({ resolution: 'answered', answers: { q1: ['可以，按这两条提交'] } })
+    expect(driver.asking()).toEqual([])
+  })
+
+  it('puts each answer under its question when there are several, and a reply for all once', () => {
+    const { driver, answer } = running()
+    answer(asked('call_1', [commit, { title: '要推送吗？', options: ['推送', '先不推'] }]))
+    expect(driver.replyByMessage('async:call_1', { decision: 'allow', answers: { q1: ['先不要提交'], q2: ['先不推'] } })?.text)
+      .toBe('可以按此提交吗？\n→ 先不要提交\n\n要推送吗？\n→ 先不推')
+    expect(driver.replyByMessage('async:call_1', { decision: 'allow', answers: { q1: ['都先别动'], q2: ['都先别动'] } })?.text).toBe('都先别动')
+  })
+
+  it('takes whatever the user says next as passing over what is still asked', () => {
+    const { driver, out, answer } = running()
+    answer(asked('call_1', [commit]))
+    out(driver.steer('先把 README 也改了').wire, 'm2')
+    expect(driver.items.get('q:async:call_1')).toMatchObject({ resolution: 'cancelled', answers: null })
+    expect(driver.asking()).toEqual([])
+  })
+})
+
+describe('CodexAppServer state', () => {
+  // gpt-6-luna at low effort, then medium effort with the untrusted policy (Conclave's ask).
+  const records = fixture('codex-options.jsonl')
+  const stateOf = (driver: CodexAppServer) => ofKind(driver.items.list(), 'state')[0]
+
+  it('reports the mode, model, effort and context the thread runs with', () => {
+    const state = stateOf(replay(records))
+    expect(state).toMatchObject({ permissionMode: 'ask', model: 'gpt-6-luna', effort: 'medium', permissionModes: ['ask', 'acceptEdits', 'plan', 'readOnly'] })
+    expect(state?.models.find((model) => model.id === 'gpt-6-sol')).toMatchObject({ label: 'GPT-6-Sol', isDefault: true })
+    expect(state?.models.find((model) => model.id === 'gpt-6-luna')?.efforts).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+    expect(state?.context).toEqual({ used: 22_525, window: 258_400 })
+  })
+
+  it('follows what each turn changed', () => {
+    const driver = new CodexAppServer('stage-1', OPTIONS)
+    const seen: string[] = []
+    for (const record of records) {
+      driver.apply(record)
+      const state = stateOf(driver)
+      const now = `${state?.permissionMode}/${state?.effort}`
+      if (state && seen.at(-1) !== now) seen.push(now)
+    }
+    expect(seen).toEqual(['null/null', 'acceptEdits/medium', 'acceptEdits/low', 'ask/medium'])
+  })
+
+  it('turns a plan update into the turn\'s checklist', () => {
+    const driver = new CodexAppServer('stage-1', OPTIONS)
+    driver.apply({ dir: 'out', at: 1, frame: { id: 'conclave-turn-1', method: 'turn/start', params: { input: [{ type: 'text', text: 'go' }] } }, ref: 'ref-1' })
+    driver.apply({ dir: 'in', at: 2, frame: { method: 'turn/plan/updated', params: { plan: [{ step: 'Write the parser', status: 'completed' }, { step: 'Test it', status: 'inProgress' }] } } })
+    const todos = [
+      { content: 'Write the parser', status: 'completed', activeForm: null },
+      { content: 'Test it', status: 'in_progress', activeForm: null }
+    ]
+    expect(stateOf(driver)?.todos).toEqual(todos)
+    expect(driver.items.get('todos:ref-1')).toMatchObject({ kind: 'todos', todos })
+  })
+
+  it('rebuilds the same state from what it logs', () => {
+    const logger = new CodexAppServer('stage-1', OPTIONS)
+    const kept = records.flatMap((record): ChatRecord[] => {
+      if (record.dir !== 'in') return [record]
+      const frame = logger.logged(record.frame)
+      return frame === null ? [] : [{ ...record, frame }]
+    })
+    expect(shown([stateOf(replay(kept))!])).toEqual(shown([stateOf(replay(records))!]))
+  })
+})
+
+describe('CodexAppServer options', () => {
+  const at = 3
+  const live = (options = OPTIONS) => replay(fixture('codex-options.jsonl').filter((record) => record.dir !== 'exit'), options)
+  const stateOf = (driver: CodexAppServer) => ofKind(driver.items.list(), 'state')[0]
+
+  it('shows a choice at once and sends it with the next turn', () => {
+    const driver = live()
+    expect(driver.setOption('permissionMode', 'readOnly')).toEqual([])
+    driver.apply({ dir: 'option', at, option: 'permissionMode', value: 'readOnly' })
+    driver.apply({ dir: 'option', at, option: 'model', value: 'gpt-6-sol' })
+    driver.apply({ dir: 'option', at, option: 'effort', value: 'ultra' })
+    expect(stateOf(driver)).toMatchObject({ permissionMode: 'readOnly', model: 'gpt-6-sol', effort: 'ultra' })
+    expect(driver.send('go').wire).toMatchObject({
+      params: { approvalPolicy: 'on-request', sandboxPolicy: { type: 'readOnly' }, model: 'gpt-6-sol', effort: 'ultra' }
+    })
+  })
+
+  it('refuses what the catalog does not list, and bypass unless the user allows it', () => {
+    const driver = live()
+    expect(() => driver.setOption('model', 'sonnet')).toThrow(expect.objectContaining({ reason: 'chat-option-invalid' }))
+    expect(() => driver.setOption('effort', 'ultra')).toThrow(expect.objectContaining({ reason: 'chat-option-invalid' }))
+    expect(() => driver.setOption('permissionMode', 'bypass')).toThrow(expect.objectContaining({ reason: 'chat-option-invalid' }))
+    const allowed = live({ ...OPTIONS, allowBypass: true })
+    allowed.apply({ dir: 'option', at, option: 'permissionMode', value: 'bypass' })
+    expect(allowed.send('go').wire).toMatchObject({ params: { approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' } } })
+  })
+
+  it('lets the auto mode reach the network, as Claude Code does, and keeps asking and read-only modes off it', () => {
+    const driver = live(OPTIONS)
+    expect(driver.send('go').wire).toMatchObject({ params: { approvalPolicy: 'on-request', sandboxPolicy: { type: 'workspaceWrite', networkAccess: true } } })
+    for (const [mode, sandboxPolicy] of [['ask', { type: 'workspaceWrite', networkAccess: false }], ['readOnly', { type: 'readOnly', networkAccess: false }]] as const) {
+      const other = live(OPTIONS)
+      other.apply({ dir: 'option', at, option: 'permissionMode', value: mode })
+      expect(other.send('go').wire).toMatchObject({ params: { sandboxPolicy } })
+    }
+  })
+
+  it('opens a thread with what the conversation chose last time', () => {
+    const driver = new CodexAppServer('stage-1', { ...OPTIONS, preferred: { permissionMode: 'ask', model: 'gpt-6-luna' } })
+    driver.apply({ dir: 'out', at, frame: driver.due()[0] })
+    driver.apply({ dir: 'in', at, frame: { id: 'conclave-init', result: {} } })
+    expect(driver.due()[1]).toMatchObject({ method: 'thread/start', params: { approvalPolicy: 'untrusted', sandbox: 'workspace-write', model: 'gpt-6-luna' } })
+  })
+})
+
+describe('CodexAppServer commands', () => {
+  const at = 1
+  const handshake = (driver: CodexAppServer, threadId = 'thread-1', thread: Record<string, unknown> = {}) => {
+    driver.due().forEach((frame) => driver.apply({ dir: 'out', at, frame }))
+    driver.apply({ dir: 'in', at, frame: { id: 'conclave-init', result: {} } })
+    const [initialized, open, models, config, skills] = driver.due()
+    expect(models).toEqual({ id: 'conclave-models', method: 'model/list', params: {} })
+    expect(config).toEqual({ id: 'conclave-config', method: 'config/read', params: { cwd: '/work/repo' } })
+    expect(skills).toEqual({ id: 'conclave-skills', method: 'skills/list', params: { cwds: ['/work/repo'] } })
+    for (const frame of [initialized, open, models, config, skills]) driver.apply({ dir: 'out', at, frame })
+    driver.apply({ dir: 'in', at, frame: { id: 'conclave-thread', result: { thread: { id: threadId }, ...thread } } })
+    return { initialized, open }
+  }
+
+  // A thread in plan mode whose first turn ended with a plan.
+  const planned = (options = OPTIONS) => {
+    const driver = new CodexAppServer('stage-1', options)
+    handshake(driver, 'thread-1', { model: 'gpt-x', reasoningEffort: 'low' })
+    expect(driver.setOption('permissionMode', 'plan')).toEqual([])
+    driver.apply({ dir: 'option', at, option: 'permissionMode', value: 'plan' })
+    const turn = driver.send('Plan a README').wire
+    driver.apply({ dir: 'out', at, frame: turn, ref: 'ref-1' })
+    const plan = (id: string, text: string) => {
+      driver.apply({ dir: 'in', at, frame: { method: 'item/completed', params: { item: { type: 'plan', id, text } } } })
+      driver.apply({ dir: 'in', at, frame: { method: 'turn/completed', params: { turn: { id: `turn-${id}`, status: 'completed', error: null } } } })
+    }
+    plan('p1', '1. Write README.md')
+    return { driver, turn, plan }
+  }
+  const modeOf = (driver: CodexAppServer) => ofKind(driver.items.list(), 'state')[0]?.permissionMode
+
+  it('keeps a stage that may only plan in plan mode and read-only, and keeps its plan when asked', () => {
+    const driver = new CodexAppServer('stage-1', { ...OPTIONS, planOnly: true, allowBypass: true, preferred: { permissionMode: 'acceptEdits' } })
+    const { open } = handshake(driver, 'thread-1', { model: 'gpt-x' })
+    expect(open).toMatchObject({ params: { approvalPolicy: 'on-request', sandbox: 'read-only' } })
+    expect(ofKind(driver.items.list(), 'state')[0]).toMatchObject({ permissionMode: 'plan', permissionModes: ['plan'] })
+    expect(() => driver.setOption('permissionMode', 'acceptEdits')).toThrow(expect.objectContaining({ reason: 'chat-option-invalid' }))
+    const turn = driver.send('Plan a README').wire
+    expect(turn).toMatchObject({ params: { sandboxPolicy: { type: 'readOnly' }, collaborationMode: { mode: 'plan' } } })
+    driver.apply({ dir: 'out', at, frame: turn, ref: 'ref-1' })
+    driver.apply({ dir: 'in', at, frame: { method: 'item/completed', params: { item: { type: 'plan', id: 'p1', text: '1. Write README.md' } } } })
+    driver.apply({ dir: 'in', at, frame: { method: 'turn/completed', params: { turn: { id: 'turn-1', status: 'completed', error: null } } } })
+    expect(() => driver.respond('plan:p1', { decision: 'allowForSession' })).toThrow(expect.objectContaining({ reason: 'plan-only' }))
+    const [kept] = driver.respond('plan:p1', { decision: 'deny', saved: true })
+    expect(kept).toMatchObject({ params: { input: [{ text: expect.stringContaining('计划已保存') }], sandboxPolicy: { type: 'readOnly' }, collaborationMode: { mode: 'plan' } } })
+    driver.apply({ dir: 'out', at, frame: kept, ref: 'ref-2' })
+    expect(driver.items.get('a:plan:p1')).toMatchObject({ resolution: 'denied' })
+    expect(modeOf(driver)).toBe('plan')
+  })
+
+  it('takes the model config.toml names as the default, keeping only that of the config', () => {
+    const driver = new CodexAppServer('stage-1', OPTIONS)
+    handshake(driver)
+    driver.apply({ dir: 'in', at, frame: { id: 'conclave-models', result: { data: [{ id: 'gpt-x', isDefault: true }, { id: 'gpt-y', isDefault: false }] } } })
+    const reply = { id: 'conclave-config', result: { config: { model: 'gpt-y', mcp_servers: { secret: { env: { TOKEN: 'x' } } } } } }
+    expect(driver.logged(reply)).toEqual({ id: 'conclave-config', result: { config: { model: 'gpt-y' } } })
+    driver.apply({ dir: 'in', at, frame: reply })
+    expect(ofKind(driver.items.list(), 'state')[0]?.models.map((model) => [model.id, model.isDefault])).toEqual([['gpt-x', false], ['gpt-y', true]])
+  })
+
+  it('offers a provider\'s models in place of what model/list says', () => {
+    const providerModels = [
+      { id: 'ark-code-latest', label: 'Ark Code', description: null, efforts: ['low', 'high'], isDefault: true },
+      { id: 'doubao-seed-code', label: 'Doubao Seed Code', description: null, efforts: [], isDefault: false }
+    ]
+    const driver = new CodexAppServer('stage-1', { ...OPTIONS, providerModels })
+    handshake(driver)
+    driver.apply({ dir: 'in', at, frame: { id: 'conclave-models', result: { data: [{ id: 'gpt-x', isDefault: true }] } } })
+    driver.apply({ dir: 'in', at, frame: { id: 'conclave-config', result: { config: { model: 'ark-code-latest' } } } })
+    const state = ofKind(driver.items.list(), 'state')[0]
+    expect(state?.models.map((model) => [model.id, model.label, model.isDefault])).toEqual([['ark-code-latest', 'Ark Code', true], ['doubao-seed-code', 'Doubao Seed Code', false]])
+    expect(state?.models[0]?.efforts).toEqual(['low', 'high'])
+    expect(() => driver.setOption('model', 'gpt-x')).toThrow(expect.objectContaining({ reason: 'chat-option-invalid' }))
+  })
+
+  const skillsReply = {
+    id: 'conclave-skills',
+    result: {
+      data: [{
+        cwd: '/work/repo',
+        errors: [],
+        skills: [
+          { name: 'simplify', description: `Simplify code.\n${'Detail. '.repeat(50)}`, path: '/home/.codex/skills/simplify/SKILL.md', scope: 'user', enabled: true },
+          { name: 'old', description: 'Off', path: '/home/.codex/skills/old/SKILL.md', scope: 'user', enabled: false },
+          { name: 'review', description: 'Shadowed', path: '/home/.codex/skills/review/SKILL.md', scope: 'user', enabled: true }
+        ]
+      }]
+    }
+  }
+  const withSkills = () => {
+    const driver = new CodexAppServer('stage-1', OPTIONS)
+    handshake(driver)
+    driver.apply({ dir: 'in', at, frame: driver.logged(skillsReply) })
+    return driver
+  }
+  const userTexts = (driver: CodexAppServer) => ofKind(driver.items.list(), 'user').map((item) => item.text)
+
+  it('offers /compact, /review and each enabled skill, and logs a line of each', () => {
+    const driver = withSkills()
+    expect(JSON.stringify(driver.logged(skillsReply))).not.toContain('Detail.')
+    expect(ofKind(driver.items.list(), 'state')[0]?.commands).toEqual([
+      { name: 'compact', description: expect.any(String), argumentHint: null },
+      { name: 'review', description: expect.any(String), argumentHint: '[分支]' },
+      { name: 'simplify', description: 'Simplify code.', argumentHint: null }
+    ])
+  })
+
+  it('compacts the thread on /compact, as a turn of its own', () => {
+    const driver = withSkills()
+    const { wire } = driver.send('/compact')
+    expect(wire).toEqual({ id: 'conclave-turn-1', method: 'thread/compact/start', params: { threadId: 'thread-1' } })
+    driver.apply({ dir: 'out', at, frame: wire, ref: 'ref-1' })
+    expect(userTexts(driver)).toEqual(['/compact'])
+    driver.apply({ dir: 'in', at, frame: { id: 'conclave-turn-1', result: {} } })
+    driver.apply({ dir: 'in', at, frame: { method: 'turn/started', params: { threadId: 'thread-1', turn: { id: 't-1', status: 'inProgress' } } } })
+    expect(driver.interrupt()).toContainEqual(expect.objectContaining({ method: 'turn/interrupt', params: { threadId: 'thread-1', turnId: 't-1' } }))
+    driver.apply({ dir: 'in', at, frame: { method: 'item/completed', params: { threadId: 'thread-1', item: { type: 'contextCompaction', id: 'c-1' } } } })
+    driver.apply({ dir: 'in', at, frame: { method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 't-1', status: 'completed', error: null } } } })
+    expect(driver.activity()).toBe('idle')
+    expect(ofKind(driver.items.list(), 'notice').map((notice) => notice.text)).toHaveLength(1)
+    expect(() => driver.send('/compact', [{ id: `${'a'.repeat(64)}.png`, width: 4, height: 3, mime: 'image/png' as const, path: '/store/a.png', read: () => Uint8Array.from([]) }])).toThrow(expect.objectContaining({ reason: 'chat-command-images' }))
+  })
+
+  it('reviews uncommitted changes on /review, or those against a branch', () => {
+    const driver = withSkills()
+    expect(driver.send('/review').wire).toMatchObject({ method: 'review/start', params: { threadId: 'thread-1', target: { type: 'uncommittedChanges' }, delivery: 'inline' } })
+    const { wire } = driver.send('/review  main ')
+    expect(wire).toMatchObject({ method: 'review/start', params: { target: { type: 'baseBranch', branch: 'main' } } })
+    driver.apply({ dir: 'out', at, frame: wire, ref: 'ref-1' })
+    driver.apply({ dir: 'in', at, frame: driver.logged({ id: 'conclave-turn-1', result: { turn: { id: 't-1', items: [{ type: 'userMessage' }] }, reviewThreadId: 'thread-1' } }) })
+    expect(userTexts(driver)).toEqual(['/review main'])
+    expect(driver.interrupt()).toContainEqual(expect.objectContaining({ params: { threadId: 'thread-1', turnId: 't-1' } }))
+  })
+
+  it('sends a skill along with the message that names it, and anything else as typed', () => {
+    const driver = withSkills()
+    expect(driver.send('/simplify calc.py').wire).toMatchObject({
+      method: 'turn/start',
+      params: { input: [{ type: 'text', text: '/simplify calc.py' }, { type: 'skill', name: 'simplify', path: '/home/.codex/skills/simplify/SKILL.md' }] }
+    })
+    expect(driver.send('/old').wire).toMatchObject({ method: 'turn/start', params: { input: [{ type: 'text', text: '/old' }] } })
+    expect(driver.send('/review is this right?').wire).toMatchObject({ method: 'turn/start' })
+  })
+
+  it('lists the skills again when Codex says they changed', () => {
+    const driver = withSkills()
+    expect(driver.due()).toEqual([])
+    driver.apply({ dir: 'in', at, frame: { method: 'skills/changed', params: {} } })
+    expect(driver.due()).toEqual([{ id: 'conclave-skills', method: 'skills/list', params: { cwds: ['/work/repo'] } }])
+  })
+
+  it('leaves a waiting plan waiting through a command', () => {
+    const { driver } = planned()
+    const { wire } = driver.send('/compact')
+    driver.apply({ dir: 'out', at, frame: wire, ref: 'ref-2' })
+    expect(driver.items.get('a:plan:p1')).toMatchObject({ resolution: null })
+  })
+
+  it('plans in Codex plan mode, and carries the plan out in the mode picked', () => {
+    const { driver, turn } = planned()
+    expect(turn).toMatchObject({
+      method: 'turn/start',
+      params: {
+        approvalPolicy: 'on-request',
+        sandboxPolicy: { type: 'readOnly' },
+        collaborationMode: { mode: 'plan', settings: { model: 'gpt-x', reasoning_effort: 'low', developer_instructions: null } }
+      }
+    })
+    expect(driver.items.get('a:plan:p1')).toMatchObject({ kind: 'approval', tool: 'plan', detail: '1. Write README.md', resolution: null })
+    // The turn is over, yet the plan waits on the user.
+    expect(driver.activity()).toBe('awaiting')
+    const [execute] = driver.respond('plan:p1', { decision: 'allowForSession' })
+    expect(execute).toMatchObject({
+      method: 'turn/start',
+      params: { input: [{ text: '按这个计划开始执行。' }], approvalPolicy: 'on-request', sandboxPolicy: { type: 'workspaceWrite' }, collaborationMode: { mode: 'default' } }
+    })
+    driver.apply({ dir: 'out', at, frame: execute, ref: 'ref-2' })
+    expect(driver.items.get('a:plan:p1')).toMatchObject({ resolution: 'allowedForSession' })
+    expect(modeOf(driver)).toBe('acceptEdits')
+    expect(driver.activity()).toBe('running')
+    driver.apply({ dir: 'in', at, frame: { method: 'turn/completed', params: { turn: { id: 'turn-2', status: 'completed', error: null } } } })
+    // Out of plan mode, later turns say nothing of it.
+    expect(driver.send('next').wire).not.toHaveProperty('params.collaborationMode')
+  })
+
+  it('carries a plan out in the explicitly picked bypass mode', () => {
+    const plain = planned().driver
+    expect(() => plain.respond('plan:p1', { decision: 'allowForSession', mode: 'bypass' })).toThrow(expect.objectContaining({ reason: 'chat-option-invalid' }))
+    expect(() => plain.respond('plan:p1', { decision: 'allow', mode: 'plan' })).toThrow(expect.objectContaining({ reason: 'chat-option-invalid' }))
+
+    const { driver } = planned({ ...OPTIONS, allowBypass: true })
+    const [execute] = driver.respond('plan:p1', { decision: 'allowForSession', mode: 'bypass' })
+    expect(execute).toMatchObject({
+      method: 'turn/start',
+      params: { approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' }, collaborationMode: { mode: 'default' } }
+    })
+    driver.apply({ dir: 'out', at, frame: execute, ref: 'ref-2' })
+    expect(driver.items.get('a:plan:p1')).toMatchObject({ resolution: 'allowedForSession', mode: 'bypass' })
+    expect(modeOf(driver)).toBe('bypass')
+  })
+
+  it('sends a plan back with a note, takes a message as more planning, and lets it go on exit', () => {
+    const { driver, plan } = planned()
+    const [again] = driver.respond('plan:p1', { decision: 'deny', message: 'Add a usage section' })
+    expect(again).toMatchObject({ params: { input: [{ text: '继续规划：Add a usage section' }], collaborationMode: { mode: 'plan' } } })
+    driver.apply({ dir: 'out', at, frame: again, ref: 'ref-2' })
+    expect(driver.items.get('a:plan:p1')).toMatchObject({ resolution: 'denied' })
+    expect(modeOf(driver)).toBe('plan')
+    plan('p2', '1. Write README.md\n2. Add usage')
+    const typed = driver.send('Shorter, please').wire
+    expect(typed).toMatchObject({ params: { collaborationMode: { mode: 'plan' } } })
+    driver.apply({ dir: 'out', at, frame: typed, ref: 'ref-3' })
+    expect(driver.items.get('a:plan:p2')).toMatchObject({ resolution: 'denied' })
+    plan('p3', '1. README with usage')
+    driver.apply({ dir: 'exit', at, code: 0, stderr: '' })
+    expect(driver.items.get('a:plan:p3')).toMatchObject({ resolution: 'cancelled' })
+    expect(driver.activity()).toBe('idle')
+  })
+
+  it('shakes hands, then opens a thread with its policy stated outright', () => {
+    const driver = new CodexAppServer('stage-1', { ...OPTIONS, extraDirs: ['/work/web'] })
+    expect(driver.due()).toEqual([expect.objectContaining({ id: 'conclave-init', method: 'initialize' })])
+    const { initialized, open } = handshake(driver)
+    expect(initialized).toEqual({ method: 'initialized' })
+    expect(open).toEqual({ id: 'conclave-thread', method: 'thread/start', params: { cwd: '/work/repo', approvalPolicy: 'on-request', sandbox: 'workspace-write' } })
+    expect(driver.ready()).toBe(true)
+    expect(driver.due()).toEqual([])
+    expect(driver.send('go').wire).toMatchObject({
+      method: 'turn/start',
+      params: { threadId: 'thread-1', approvalPolicy: 'on-request', sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['/work/web'] } }
+    })
+  })
+
+  it('makes the user\'s vault a writable root of each turn, but only where the stage may write it', () => {
+    const writable = new CodexAppServer('stage-1', { ...OPTIONS, extraDirs: ['/work/web'], knowledgeBase: { path: '/notes/vault', write: true } })
+    handshake(writable)
+    expect(writable.send('go').wire).toMatchObject({ params: { sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['/work/web', '/notes/vault'] } } })
+    const reading = new CodexAppServer('stage-1', { ...OPTIONS, knowledgeBase: { path: '/notes/vault', write: false } })
+    handshake(reading)
+    expect(reading.send('go').wire).toMatchObject({ params: { sandboxPolicy: { type: 'workspaceWrite', writableRoots: [] } } })
+  })
+
+  it('declines an edit of a reference project itself, and leaves other edits to the user', () => {
+    const driver = new CodexAppServer('stage-1', { ...OPTIONS, references: ['/refs/docs'] })
+    handshake(driver)
+    driver.apply({ dir: 'out', at, frame: driver.send('go').wire, ref: 'ref-1' })
+    const edit = (id: number, itemId: string, file: string) => {
+      driver.apply({ dir: 'in', at, frame: { method: 'item/started', params: { item: { type: 'fileChange', id: itemId, status: 'inProgress', changes: [{ path: file, kind: { type: 'update' }, diff: '+b' }] } } } })
+      driver.apply({ dir: 'in', at, frame: { id, method: 'item/fileChange/requestApproval', params: { itemId } } })
+    }
+    edit(0, 'edit-1', '/refs/docs/README.md')
+    edit(1, 'edit-2', '/work/repo/b.txt')
+    expect(driver.due()).toContainEqual({ id: 0, result: { decision: 'decline' } })
+    expect(driver.items.get('a:0')).toMatchObject({ resolution: 'denied', detail: expect.stringContaining('/refs/docs/README.md') })
+    expect(driver.items.get('a:1')).toMatchObject({ resolution: null })
+    driver.apply({ dir: 'out', at, frame: { id: 0, result: { decision: 'decline' } } })
+    expect(driver.due()).not.toContainEqual({ id: 0, result: { decision: 'decline' } })
+  })
+
+  it('denies with decline where Codex offers it and with cancel where it does not', () => {
+    const driver = new CodexAppServer('stage-1', OPTIONS)
+    handshake(driver)
+    driver.apply({ dir: 'out', at, frame: driver.send('go').wire, ref: 'ref-1' })
+    driver.apply({ dir: 'in', at, frame: { id: 0, method: 'item/fileChange/requestApproval', params: { itemId: 'exec-1' } } })
+    driver.apply({ dir: 'in', at, frame: { id: 1, method: 'item/commandExecution/requestApproval', params: { itemId: 'exec-2', command: "/bin/zsh -lc 'rm -rf build'", availableDecisions: ['accept', 'cancel'] } } })
+    expect(driver.activity()).toBe('awaiting')
+    expect(driver.items.get('a:1')).toMatchObject({ title: 'rm -rf build', decisions: ['allow', 'deny'] })
+    expect(driver.respond('0', { decision: 'deny' })).toEqual([{ id: 0, result: { decision: 'decline' } }])
+    expect(driver.respond('1', { decision: 'deny' })).toEqual([{ id: 1, result: { decision: 'cancel' } }])
+    driver.apply({ dir: 'out', at, frame: driver.respond('0', { decision: 'allowForSession' })[0] })
+    expect(driver.items.get('a:0')).toMatchObject({ resolution: 'allowedForSession' })
+  })
+
+  it('offers a short prefix in place of the one Codex proposes, and reads the answer back off it', () => {
+    const driver = new CodexAppServer('stage-1', OPTIONS)
+    handshake(driver)
+    driver.apply({ dir: 'out', at, frame: driver.send('go').wire, ref: 'ref-1' })
+    const execpolicy = { acceptWithExecpolicyAmendment: { execpolicy_amendment: ['cat', 'plan.md'] } }
+    driver.apply({ dir: 'in', at, frame: { id: 3, method: 'item/commandExecution/requestApproval', params: { itemId: 'exec-3', command: "/bin/zsh -lc 'cat plan.md'", availableDecisions: ['accept', execpolicy, 'cancel'] } } })
+    // Codex proposes the command word for word; Conclave sends its own short prefix in its place.
+    const ours = { acceptWithExecpolicyAmendment: { execpolicy_amendment: ['cat'] } }
+    expect(driver.items.get('a:3')).toMatchObject({
+      decisions: ['allow', 'allowForSession', 'deny'],
+      choices: [
+        { id: 'accept', decision: 'allow', grants: [] },
+        { id: 'execpolicy', decision: 'allowForSession', grants: [{ kind: 'prefix', values: ['cat'], scope: 'agent' }] },
+        { id: 'cancel', decision: 'deny', grants: [] }
+      ]
+    })
+    // A client that answers by decision gets what Codex listed for it, not an answer it did not offer.
+    expect(driver.respond('3', { decision: 'allowForSession' })).toEqual([{ id: 3, result: { decision: ours } }])
+    const [answer] = driver.respond('3', { decision: 'allowForSession', choice: 'execpolicy' })
+    expect(answer).toEqual({ id: 3, result: { decision: ours } })
+    driver.apply({ dir: 'out', at, frame: answer })
+    expect(driver.items.get('a:3')).toMatchObject({ resolution: 'allowedForSession', chosen: 'execpolicy' })
+  })
+
+  it('interrupts the running turn after cancelling what waits on the user', () => {
+    const driver = new CodexAppServer('stage-1', OPTIONS)
+    handshake(driver)
+    driver.apply({ dir: 'out', at, frame: driver.send('go').wire, ref: 'ref-1' })
+    expect(() => driver.interrupt()).toThrow(expect.objectContaining({ reason: 'chat-busy' }))
+    driver.apply({ dir: 'in', at, frame: { id: 'conclave-turn-1', result: { turn: { id: 'turn-9' } } } })
+    driver.apply({ dir: 'in', at, frame: { id: 4, method: 'item/tool/requestUserInput', params: { questions: [{ id: 'q1', header: 'Pick', question: 'Which?', options: [{ label: 'A' }] }] } } })
+    expect(driver.interrupt()).toEqual([
+      { id: 4, result: { answers: {} } },
+      { id: 'conclave-interrupt-1', method: 'turn/interrupt', params: { threadId: 'thread-1', turnId: 'turn-9' } }
+    ])
+  })
+
+  it('marks calls the user stopped as interrupted rather than failed', () => {
+    const driver = new CodexAppServer('stage-1', OPTIONS)
+    handshake(driver)
+    driver.apply({ dir: 'out', at, frame: driver.send('go').wire, ref: 'ref-1' })
+    driver.apply({ dir: 'in', at, frame: { id: 'conclave-turn-1', result: { turn: { id: 'turn-9' } } } })
+    const command = (id: string, status: string) => ({ type: 'commandExecution', id, command: 'sleep 5', status, exitCode: status === 'inProgress' ? null : 1 })
+    driver.apply({ dir: 'in', at, frame: { method: 'item/completed', params: { item: command('exec-1', 'failed') } } })
+    driver.apply({ dir: 'in', at, frame: { method: 'item/started', params: { item: command('exec-2', 'inProgress') } } })
+    driver.apply({ dir: 'in', at, frame: { method: 'item/started', params: { item: command('exec-3', 'inProgress') } } })
+    driver.interrupt().forEach((frame) => driver.apply({ dir: 'out', at, frame }))
+    driver.apply({ dir: 'in', at, frame: { method: 'item/completed', params: { item: command('exec-2', 'failed') } } })
+    driver.apply({ dir: 'in', at, frame: { method: 'turn/completed', params: { turn: { id: 'turn-9', status: 'interrupted', error: null } } } })
+    expect(ofKind(driver.items.list(), 'tool').map((tool) => tool.status)).toEqual(['failed', 'interrupted', 'interrupted'])
+  })
+
+  it('asks the user before an MCP tool call, on the call\'s card, and answers as Codex expects', () => {
+    const driver = new CodexAppServer('stage-1', OPTIONS)
+    handshake(driver)
+    const call = { type: 'mcpToolCall', id: 'exec-1', server: 'slack', tool: 'post_message', status: 'inProgress', arguments: { text: 'hello' } }
+    driver.apply({ dir: 'in', at, frame: { method: 'item/started', params: { item: call } } })
+    // As Codex 0.160 sends it.
+    driver.apply({ dir: 'in', at, frame: { id: 0, method: 'mcpServer/elicitation/request', params: {
+      threadId: 'thread-1', turnId: 'turn-1', serverName: 'slack', mode: 'form', message: 'Allow the slack MCP server to run tool "post_message"?', requestedSchema: { type: 'object', properties: {} },
+      _meta: { codex_approval_kind: 'mcp_tool_call', persist: ['session', 'always'], tool_description: 'Posts a message', tool_params: { text: 'hello' }, tool_params_display: [{ name: 'text', value: 'hello', display_name: 'text' }] }
+    } } })
+    expect(driver.due()).toEqual([])
+    const [approval] = ofKind(driver.items.list(), 'approval')
+    expect(approval).toMatchObject({ requestId: '0', tool: 'mcpToolCall', title: 'slack.post_message', detail: 'text: hello', toolItemId: 't:exec-1', decisions: ['allow', 'allowForSession', 'deny'] })
+    expect(approval?.choices?.[1]?.grants).toEqual([{ kind: 'rules', values: ['slack.post_message'], scope: 'run', behavior: 'allow' }])
+    expect(driver.respond('0', { decision: 'allowForSession', choice: 'allowForSession' })).toEqual([{ id: 0, result: { action: 'accept', content: null, _meta: { persist: 'session' } } }])
+    expect(driver.respond('0', { decision: 'deny' })).toEqual([{ id: 0, result: { action: 'decline', content: null, _meta: null } }])
+  })
+
+  it('says which of the user\'s MCP servers did not start, and still does when rebuilt from its log', () => {
+    const driver = new CodexAppServer('stage-1', { ...OPTIONS, userMcp: [{ name: 'github', type: 'stdio', command: 'node', args: [] }] })
+    handshake(driver)
+    const status = (name: string, state: string) => ({ method: 'mcpServer/startupStatus/updated', params: { threadId: 'thread-1', name, status: state, error: null, failureReason: null } })
+    const frames = [status('github', 'starting'), status('github', 'failed'), status('codex_apps', 'failed')]
+    frames.forEach((frame) => driver.apply({ dir: 'in', at, frame }))
+    expect(ofKind(driver.items.list(), 'notice')).toMatchObject([{ id: 'mcp:github', text: expect.stringContaining('github') }])
+    const logged = frames.map((frame) => driver.logged(frame)).filter((frame) => frame !== null)
+    expect(logged).toEqual([{ method: 'mcpServer/startupStatus/updated', params: { name: 'github', status: 'failed', userMcp: true } }])
+    expect(ofKind(replay(logged.map((frame) => ({ dir: 'in' as const, at, frame }))).items.list(), 'notice')).toMatchObject([{ id: 'mcp:github' }])
+  })
+
+  it('answers a request it does not handle with an error, once', () => {
+    const driver = new CodexAppServer('stage-1', OPTIONS)
+    handshake(driver)
+    driver.apply({ dir: 'in', at, frame: { id: 7, method: 'mcpServer/elicitation/request', params: {} } })
+    const [reply] = driver.due()
+    expect(reply).toMatchObject({ id: 7, error: { code: -32601 } })
+    driver.apply({ dir: 'out', at, frame: reply })
+    expect(driver.due()).toEqual([])
+  })
+
+  it('says plainly when the installed Codex has no app-server', () => {
+    const old = new CodexAppServer('stage-1', OPTIONS)
+    old.due().forEach((frame) => old.apply({ dir: 'out', at, frame }))
+    old.apply({ dir: 'exit', at, code: 2, stderr: "error: unrecognized subcommand 'app-server'" })
+    expect(old.failure()).toContain('不支持聊天模式')
+    expect(ofKind(old.items.list(), 'notice')[0]?.level).toBe('error')
+  })
+
+  it('says what to do when the Codex app has the thread open', () => {
+    const resumed = new CodexAppServer('stage-1', OPTIONS)
+    resumed.due().forEach((frame) => resumed.apply({ dir: 'out', at, frame }))
+    const stderr = '\u001b[2m2026-10-18T09:12:42Z\u001b[0m \u001b[31mERROR\u001b[0m Failed to create session: thread-store conflict: thread 01a14aad already has an active writer'
+    expect(resumed.explainFailure(stderr)).toContain('Codex 应用')
+    resumed.apply({ dir: 'exit', at, code: 1, stderr })
+    const notice = ofKind(resumed.items.list(), 'notice')[0]
+    expect(notice?.text).toContain('退出它，再回来重新发送')
+    expect(notice?.text).not.toContain('\u001b')
+    expect(resumed.explainFailure('error: something else')).toBeNull()
+  })
+
+  it('reads the command inside the shell wrapper Codex adds', () => {
+    expect(unwrapShell("/bin/zsh -lc 'cat codex.txt'")).toBe('cat codex.txt')
+    expect(unwrapShell(`bash -lc 'echo '\\''hi'\\'''`)).toBe("echo 'hi'")
+    expect(unwrapShell('git status')).toBe('git status')
+    expect(unwrapShell(`"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -NoProfile -Command 'Get-Content a.txt'`)).toBe('Get-Content a.txt')
+    expect(unwrapShell(`C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -Command "dir src"`)).toBe('dir src')
+    expect(unwrapShell('cmd.exe /d /c "type a.txt"')).toBe('type a.txt')
+    expect(unwrapShell('powershell.exe -File script.ps1')).toBe('powershell.exe -File script.ps1')
+  })
+
+  it('puts a command in words from Codex\'s own reading of it, when every part is one Conclave knows', () => {
+    const read = (name: string) => ({ type: 'read', name, path: `/work/repo/${name}` })
+    expect(commandDescription([read('a.ts'), read('b.ts')])).toBe('读取 a.ts、b.ts')
+    expect(commandDescription([{ type: 'listFiles', path: 'src' }, read('a.ts')])).toBe('列出 src 里的文件，读取 a.ts')
+    expect(commandDescription([{ type: 'search', query: 'TODO', path: 'src' }])).toBe('搜索「TODO」（src）')
+    // One part it cannot read, or can only half say, leaves the command to speak for itself.
+    expect(commandDescription([read('a.ts'), { type: 'unknown' }])).toBeNull()
+    expect(commandDescription([{ type: 'listFiles', path: null }])).toBeNull()
+    expect(commandDescription([{ type: 'search', query: null, path: 'src' }])).toBeNull()
+    expect(commandDescription([])).toBeNull()
+    expect(commandDescription(undefined)).toBeNull()
+  })
+
+  it('reads the script however Codex quoted it, as its own command actions do', () => {
+    // Each pair as Codex 0.156.1 sent them: the command, and the script its commandActions named.
+    const recorded = [
+      ['/bin/zsh -lc pwd', 'pwd'],
+      [`/bin/zsh -lc "python3 -c 'from pathlib import Path; Path(\\"plan.md\\").write_text(\\"ok\\\\n\\")'"`, `python3 -c 'from pathlib import Path; Path("plan.md").write_text("ok\\n")'`],
+      [`/bin/zsh -lc "pwd && rg --files -g 'codex-plan.txt' -g '"'!target'"' -g '"'!node_modules'"' | head -n 20"`, "pwd && rg --files -g 'codex-plan.txt' -g '!target' -g '!node_modules' | head -n 20"],
+      [`sh -c "echo \\$HOME and \\\\n kept"`, 'echo $HOME and \\n kept']
+    ]
+    for (const [command, script] of recorded) expect(unwrapShell(command!)).toBe(script)
+    // Anything else is shown as it came: an open quote, a flag it does not know, more than a script.
+    for (const command of [`/bin/zsh -lc 'unclosed`, '/bin/zsh -x ls', "bash -lc 'ls' extra", 'fish -c ls']) expect(unwrapShell(command)).toBe(command)
+  })
+  it('hands an image to Codex by its path, after the text when there is any', () => {
+    const driver = new CodexAppServer('stage-1', OPTIONS)
+    handshake(driver)
+    const image = { id: `${'a'.repeat(64)}.png`, width: 4, height: 3, mime: 'image/png' as const, path: '/store/a.png', read: () => Uint8Array.from([]) }
+    const { wire, logged } = driver.send('look', [image])
+    expect(logged).toBe(wire)
+    expect(wire).toMatchObject({ method: 'turn/start', params: { input: [{ type: 'text', text: 'look', text_elements: [] }, { type: 'localImage', path: '/store/a.png' }] } })
+    expect(driver.send('', [image]).wire).toMatchObject({ params: { input: [{ type: 'localImage', path: '/store/a.png' }] } })
+    driver.apply({ dir: 'out', at, frame: wire, ref: 'ref-1', images: [{ id: image.id, width: 4, height: 3 }] })
+    expect(driver.items.get('u:ref-1')).toMatchObject({ kind: 'user', text: 'look', images: [{ id: image.id, width: 4, height: 3 }] })
+    expect(driver.takeMessages()).toEqual([{ role: 'user', text: 'look\n\n（附了 1 张图片）', eventKey: 'chat:ref-1:user', complete: false }])
+  })
+})
+
+describe('CodexAppServer plan mode, as recorded', () => {
+  // Codex 0.156.1: a plan-mode turn that ended with a plan, then the turn that carried it out with
+  // edits accepted, as Conclave logged them.
+  const records = fixture('codex-plan.jsonl')
+
+  it('shows the plan as one approval, answered by the turn that carried it out', () => {
+    const items = replay(records).items.list()
+    const [plan] = ofKind(items, 'approval')
+    expect(plan).toMatchObject({ tool: 'plan', title: '计划', resolution: 'allowedForSession' })
+    expect(plan?.detail).toContain('codex-plan.txt')
+    expect(ofKind(items, 'user').map((item) => item.text)).toEqual([expect.stringContaining('Plan adding a file codex-plan.txt'), '按这个计划开始执行。'])
+    expect(ofKind(items, 'tool').map((tool) => [tool.name, tool.status])).toEqual([
+      ['commandExecution', 'done'],
+      ['fileChange', 'done'],
+      ['commandExecution', 'done']
+    ])
+    expect(ofKind(items, 'turn').map((turn) => turn.state)).toEqual(['completed', 'completed'])
+    expect(ofKind(items, 'state')[0]?.permissionMode).toBe('acceptEdits')
+  })
+
+  it('waits on the user between the plan and its answer', () => {
+    const answer = records.findIndex((record, index) => index > 0 && record.dir === 'out' && JSON.stringify(record.frame).includes('按这个计划开始执行'))
+    const driver = replay(records.slice(0, answer))
+    expect(driver.activity()).toBe('awaiting')
+    expect(ofKind(driver.items.list(), 'state')[0]?.permissionMode).toBe('plan')
+    expect(ofKind(driver.items.list(), 'approval')[0]?.resolution).toBeNull()
+  })
+
+  it('puts a plan waiting after its turn aside, as not carried out, with nothing sent', () => {
+    const answer = records.findIndex((record, index) => index > 0 && record.dir === 'out' && JSON.stringify(record.frame).includes('按这个计划开始执行'))
+    const driver = replay(records.slice(0, answer))
+    const [requestId] = driver.waitingPlans()
+    const plan = ofKind(driver.items.list(), 'approval')[0]
+    expect(requestId).toBe(plan?.requestId)
+    // There is no turn for interrupt() to end.
+    expect(() => driver.interrupt()).toThrow('no turn is running')
+    driver.apply({ dir: 'answer', at: 1, requestId: requestId ?? '', resolution: 'cancelled' })
+    expect(ofKind(driver.items.list(), 'approval')[0]?.resolution).toBe('cancelled')
+    expect(driver.waitingPlans()).toEqual([])
+    expect(driver.activity()).toBe('idle')
+  })
+
+  it('has no plan to put aside while a turn runs', () => {
+    const answer = records.findIndex((record, index) => index > 0 && record.dir === 'out' && JSON.stringify(record.frame).includes('按这个计划开始执行'))
+    expect(replay(records.slice(0, answer + 1)).waitingPlans()).toEqual([])
+  })
+})
+
+describe('CodexAppServer subagents, as recorded', () => {
+  // Codex 0.156.1: a turn that spawned one subagent and waited on it. The subagent's own thread
+  // streams its items and turn on the same connection.
+  const records = fixture('codex-subagent.jsonl')
+  const child = '01a0ec12-779d-7c02-af68-8b645a8012e8'
+  const text = (record: ChatRecord) => (record.dir === 'in' || record.dir === 'out' ? JSON.stringify(record.frame) : '')
+  const childDone = records.findIndex((record) => text(record).startsWith(`{"method":"turn/completed","params":{"threadId":"${child}"`))
+  const logs = (records: readonly ChatRecord[]) => {
+    const logger = new CodexAppServer('stage-1', OPTIONS)
+    return records.flatMap((record): ChatRecord[] => {
+      logger.apply(record)
+      if (record.dir !== 'in') return [record]
+      const frame = logger.logged(record.frame)
+      return frame === null ? [] : [{ ...record, frame }]
+    })
+  }
+
+  it('shows the subagent as one call, with what it was told and what it reported', () => {
+    const items = replay(records).items.list()
+    const tools = ofKind(items, 'tool')
+    expect(tools.map((tool) => [tool.name, tool.title, tool.status])).toEqual([
+      ['spawnAgent', 'In the workspace, run `wc -l a.txt` and report the exact output. Do not do anything else.', 'done']
+    ])
+    expect(JSON.parse(tools[0]?.input ?? '')).toEqual({ prompt: 'In the workspace, run `wc -l a.txt` and report the exact output. Do not do anything else.' })
+    expect(tools[0]?.output).toBe('       1 a.txt')
+  })
+
+  it('keeps the subagent\'s own thread out of the chat', () => {
+    const driver = replay(records)
+    const items = driver.items.list()
+    expect(ofKind(items, 'assistant').map((item) => item.text)).toEqual([
+      'I’ll delegate the line count to a subagent and wait for its result.',
+      '`a.txt` contains 1 line.'
+    ])
+    expect(ofKind(items, 'turn').map((turn) => turn.state)).toEqual(['completed'])
+    expect(ofKind(items, 'state')[0]?.context?.used).toBe(18_146)
+    expect(childDone).toBeGreaterThan(0)
+    expect(replay(records.slice(0, childDone + 1)).activity()).toBe('running')
+  })
+
+  it('logs only how the subagent\'s turns ended, and rebuilds the same items from that', () => {
+    const kept = logs(records)
+    const ofChild = (record: ChatRecord) => text(record).includes(`"threadId":"${child}"`)
+    expect(records.filter(ofChild).length).toBeGreaterThan(10)
+    expect(kept.filter(ofChild).map((record) => /"method":"([^"]+)"/.exec(text(record))?.[1])).toEqual(['turn/completed'])
+    expect(shown(replay(kept).items.list())).toEqual(shown(replay(records).items.list()))
+  })
+
+  it('settles a subagent it does not wait on by the subagent\'s own turn', () => {
+    const spawned = records.findIndex((record) => text(record).includes('"tool":"spawnAgent","status":"completed"'))
+    const driver = replay([...records.slice(0, spawned + 1), records[childDone]!])
+    expect(ofKind(driver.items.list(), 'tool').map((tool) => [tool.status, tool.output])).toEqual([['done', '       1 a.txt']])
+  })
+})
+
+describe('CodexAppServer subagents', () => {
+  const thread = 'thread-main'
+  const opened = (): CodexAppServer => {
+    const driver = new CodexAppServer('stage-1', OPTIONS)
+    driver.apply({ dir: 'out', at: 1, frame: { id: 'conclave-thread', method: 'thread/start', params: {} } })
+    driver.apply({ dir: 'in', at: 2, frame: { id: 'conclave-thread', result: { thread: { id: thread } } } })
+    driver.apply({ dir: 'out', at: 3, frame: { id: 'conclave-turn-1', method: 'turn/start', params: { threadId: thread, input: [{ type: 'text', text: 'go' }] } }, ref: 'ref-1' })
+    return driver
+  }
+  const collab = (id: string, tool: string, status: string, receiverThreadIds: string[], agentsStates: Record<string, { status: string; message: string | null }>) => ({
+    type: 'collabAgentToolCall', id, tool, status, senderThreadId: thread, receiverThreadIds, prompt: tool === 'spawnAgent' ? 'Look around\nand report' : null, agentsStates
+  })
+  const item = (driver: CodexAppServer, at: number, body: object, completed = true) =>
+    driver.apply({ dir: 'in', at, frame: { method: completed ? 'item/completed' : 'item/started', params: { threadId: thread, item: body } } })
+  const agentOf = (driver: CodexAppServer) => driver.items.get('t:spawn-1')
+
+  it('runs while it works, and fails with what it said when it errors', () => {
+    const driver = opened()
+    item(driver, 4, collab('spawn-1', 'spawnAgent', 'inProgress', [], {}), false)
+    expect(agentOf(driver)).toMatchObject({ kind: 'tool', name: 'spawnAgent', title: 'Look around', status: 'running', output: null })
+    item(driver, 5, collab('spawn-1', 'spawnAgent', 'completed', ['child-1'], { 'child-1': { status: 'pendingInit', message: null } }))
+    expect(agentOf(driver)).toMatchObject({ status: 'running' })
+    item(driver, 6, collab('wait-1', 'wait', 'completed', ['child-1'], { 'child-1': { status: 'errored', message: 'ran out of turns' } }))
+    expect(agentOf(driver)).toMatchObject({ status: 'failed', output: 'ran out of turns' })
+    expect(driver.items.get('t:wait-1')).toBeUndefined()
+  })
+
+  it('stays done when closed after finishing, and is interrupted when closed before', () => {
+    const driver = opened()
+    item(driver, 4, collab('spawn-1', 'spawnAgent', 'completed', ['child-1'], { 'child-1': { status: 'running', message: null } }))
+    item(driver, 5, collab('spawn-2', 'spawnAgent', 'completed', ['child-2'], { 'child-2': { status: 'running', message: null } }))
+    item(driver, 6, collab('wait-1', 'wait', 'completed', ['child-1'], { 'child-1': { status: 'completed', message: 'found it' } }))
+    item(driver, 7, collab('close-1', 'closeAgent', 'completed', ['child-1', 'child-2'], {
+      'child-1': { status: 'shutdown', message: null },
+      'child-2': { status: 'shutdown', message: null }
+    }))
+    expect(agentOf(driver)).toMatchObject({ status: 'done', output: 'found it' })
+    expect(driver.items.get('t:spawn-2')).toMatchObject({ status: 'interrupted' })
+  })
+
+  it('fails a spawn Codex refused, and interrupts subagents still at work when the agent exits', () => {
+    const driver = opened()
+    item(driver, 4, collab('spawn-1', 'spawnAgent', 'failed', [], {}))
+    expect(agentOf(driver)).toMatchObject({ status: 'failed' })
+    item(driver, 5, collab('spawn-2', 'spawnAgent', 'completed', ['child-2'], { 'child-2': { status: 'running', message: null } }))
+    driver.apply({ dir: 'in', at: 6, frame: { method: 'turn/completed', params: { threadId: thread, turn: { id: 'turn-1', status: 'completed' } } } })
+    expect(driver.items.get('t:spawn-2')).toMatchObject({ status: 'running' })
+    driver.apply({ dir: 'exit', at: 7, code: 0, stderr: '' })
+    expect(driver.items.get('t:spawn-2')).toMatchObject({ status: 'interrupted' })
+  })
+
+  it('asks for a subagent\'s approval here, naming the files it would change', () => {
+    const driver = opened()
+    const childItem = { type: 'fileChange', id: 'edit-1', status: 'inProgress', changes: [{ path: '/work/repo/b.txt', kind: { type: 'add' }, diff: '+b' }] }
+    const started = { method: 'item/started', params: { threadId: 'child-1', item: childItem } }
+    driver.apply({ dir: 'in', at: 4, frame: started })
+    expect(driver.logged(started)).toEqual(started)
+    driver.apply({ dir: 'in', at: 5, frame: { id: 7, method: 'item/fileChange/requestApproval', params: { threadId: 'child-1', itemId: 'edit-1' } } })
+    expect(ofKind(driver.items.list(), 'tool')).toEqual([])
+    expect(ofKind(driver.items.list(), 'approval')[0]).toMatchObject({ tool: 'fileChange', title: '/work/repo/b.txt', detail: '子 Agent 的请求' })
+    driver.apply({ dir: 'in', at: 6, frame: { method: 'serverRequest/resolved', params: { threadId: 'child-1', requestId: 7 } } })
+    expect(ofKind(driver.items.list(), 'approval')[0]?.resolution).toBe('cancelled')
+  })
+})
+
+describe('CodexAppServer rate limits', () => {
+  const update = (rateLimits: Record<string, unknown>): ChatRecord => ({ dir: 'in', at: 1, frame: { method: 'account/rateLimits/updated', params: { rateLimits } } })
+  const limits = {
+    limitId: 'codex',
+    limitName: null,
+    primary: { usedPercent: 42, windowDurationMins: 300, resetsAt: 1_790_000_000 },
+    secondary: { usedPercent: 7, windowDurationMins: 10_080, resetsAt: null },
+    planType: 'plus'
+  }
+
+  it('reports the plan limit once, as usage windows', () => {
+    const driver = replay([update(limits)])
+    expect(driver.takeUsage()).toEqual({
+      at: 1,
+      windows: [
+        { kind: 'session', model: null, usedPercent: 42, windowMinutes: 300, resetsAt: 1_790_000_000_000 },
+        { kind: 'weekly', model: null, usedPercent: 7, windowMinutes: 10_080, resetsAt: null }
+      ],
+      plan: 'plus',
+      refresh: false
+    })
+    expect(driver.takeUsage()).toBeNull()
+  })
+
+  it('treats a missing window as no news, and later updates as winning', () => {
+    const driver = replay([update(limits), update({ ...limits, primary: { usedPercent: 50, windowDurationMins: 300, resetsAt: null }, secondary: null, planType: null })])
+    expect(driver.takeUsage()?.windows.map((w) => [w.kind, w.usedPercent])).toEqual([['weekly', 7], ['session', 50]])
+  })
+
+  it('leaves out other metered limits, and never logs the frame', () => {
+    const record = update({ ...limits, limitId: 'codex_other' })
+    const driver = replay([record])
+    expect(driver.takeUsage()).toBeNull()
+    expect(driver.logged({ method: 'account/rateLimits/updated', params: { rateLimits: limits } })).toBeNull()
+  })
+})
+
+describe('CodexAppServer usage limits', () => {
+  const at = 1_790_000_000_000
+  const frame = (value: Record<string, unknown>): ChatRecord => ({ dir: 'in', at, frame: value })
+  const records = (error: Record<string, unknown>, willRetry: boolean): ChatRecord[] => [
+    { dir: 'out', at, frame: { method: 'turn/start', id: 'conclave-turn-1', params: {} }, ref: 'ref-1' },
+    frame({ method: 'turn/started', params: { turn: { id: 'turn-a' } } }),
+    frame({ method: 'error', params: { error, willRetry, threadId: 'thread-1', turnId: 'turn-a' } }),
+    // A retried request goes on; one Codex gave up on ends the turn with the same error.
+    frame({ method: 'turn/completed', params: { turn: willRetry ? { id: 'turn-a', status: 'completed' } : { id: 'turn-a', status: 'failed', error: { message: error.message, codexErrorInfo: error.codexErrorInfo } } } })
+  ]
+
+  it('shows the plan limit once, as a limit item after the turn instead of an error notice', () => {
+    const driver = replay(records({ message: "You've hit your usage limit.", codexErrorInfo: 'usageLimitExceeded' }, false))
+    const items = driver.items.list()
+    expect(ofKind(items, 'notice')).toEqual([])
+    const turn = ofKind(items, 'turn').at(-1)
+    expect(ofKind(items, 'usageLimit')).toEqual([expect.objectContaining({ id: turn?.id.replace('turn:', 'limit:'), message: "You've hit your usage limit.", resetsAt: null })])
+  })
+
+  it('keeps a throttled request or one Codex retries as it was', () => {
+    for (const [error, willRetry] of [[{ message: 'slow down', codexErrorInfo: 'rateLimitExceeded' }, false], [{ message: 'retrying', codexErrorInfo: 'usageLimitExceeded' }, true]] as const) {
+      const items = replay(records(error, willRetry)).items.list()
+      expect(ofKind(items, 'notice').map((notice) => notice.text)).toEqual([error.message])
+      expect(ofKind(items, 'usageLimit')).toEqual([])
+    }
+  })
+
+  it('keeps a picture an MCP tool returns in its bytes and logs its marker instead, and shows a view_image by its path', () => {
+    const id = `${'c'.repeat(64)}.png`
+    const driver = new CodexAppServer('stage-1', { ...OPTIONS, keepImage: () => ({ id, width: 8, height: 6 }) })
+    const completed = { method: 'item/completed', params: { item: {
+      type: 'mcpToolCall', id: 'i1', server: 'playwright', tool: 'screenshot', status: 'completed', arguments: {},
+      result: { content: [{ type: 'image', data: 'AAAA', mimeType: 'image/png' }, { type: 'text', text: 'saved' }] }
+    } } }
+    driver.apply({ dir: 'in', at: 1, frame: completed })
+    expect(driver.items.get('t:i1')).toMatchObject({ output: 'saved', images: [{ id, width: 8, height: 6 }] })
+    const logged = driver.logged(completed)
+    expect(JSON.stringify(logged)).not.toContain('AAAA')
+    expect(JSON.stringify(logged)).toContain(`[conclave-image ${id} 8x6]`)
+    const replayed = replay([{ dir: 'in', at: 1, frame: logged }])
+    expect(replayed.items.get('t:i1')).toMatchObject({ output: 'saved', images: [{ id, width: 8, height: 6 }] })
+
+    driver.apply({ dir: 'in', at: 2, frame: { method: 'item/completed', params: { item: { type: 'imageView', id: 'i2', path: '/tmp/shot.png' } } } })
+    expect(driver.items.get('t:i2')).toMatchObject({ kind: 'tool', name: 'imageView', title: '/tmp/shot.png', status: 'done' })
+  })
+
+  // codex-cli 0.160: image_gen sends the picture's bytes and where it saved them.
+  it('shows a picture Codex drew from where it saved it', () => {
+    const driver = new CodexAppServer('stage-1', OPTIONS)
+    const started = { type: 'imageGeneration', id: 'g1', status: 'in_progress', result: '', transparentBackground: null, failure: null }
+    driver.apply({ dir: 'in', at: 1, frame: { method: 'item/started', params: { item: started } } })
+    expect(driver.items.get('t:g1')).toMatchObject({ kind: 'tool', name: 'imageGeneration', title: '', status: 'running' })
+
+    const saved = { ...started, status: 'completed', revisedPrompt: 'A felt ant', result: 'iVBORw0KGgo', transparentBackground: false, savedPath: '/tmp/generated/g1.png' }
+    const completed = { method: 'item/completed', params: { item: saved } }
+    driver.apply({ dir: 'in', at: 2, frame: completed })
+    expect(driver.items.get('t:g1')).toMatchObject({ title: '/tmp/generated/g1.png', input: 'A felt ant', status: 'done', output: null })
+    expect(driver.logged(completed)).toEqual({ method: 'item/completed', params: { item: { ...saved, result: '' } } })
+
+    driver.apply({ dir: 'in', at: 3, frame: { method: 'item/completed', params: { item: { ...started, id: 'g2', status: 'failed', failure: 'moderation_blocked' } } } })
+    expect(driver.items.get('t:g2')).toMatchObject({ status: 'failed', output: 'moderation_blocked' })
+
+    // Codex gave up on one that never came back, and drew it again.
+    driver.apply({ dir: 'in', at: 4, frame: { method: 'item/started', params: { item: { ...started, id: 'g3' } } } })
+    driver.apply({ dir: 'in', at: 5, frame: { method: 'turn/completed', params: { turn: { id: 'turn-1', status: 'completed' } } } })
+    expect(driver.items.get('t:g3')).toMatchObject({ status: 'failed' })
+  })
+})
+
+describe('CodexAppServer stopping a background command it asked approval for', () => {
+  // Codex 0.160.1, approval on request: the command starts before it is approved, without a process
+  // id, and none follows. Conclave lists the thread's background terminals for it, then stops it.
+  const records = fixture('codex-background-approved-stop.jsonl')
+  const listed = records.findIndex((record) => record.dir === 'out' && JSON.stringify(record.frame).includes('backgroundTerminals/list'))
+  const asked = records.findIndex((record) => record.dir === 'out' && JSON.stringify(record.frame).includes('backgroundTerminals/terminate'))
+
+  it('asks for the process of a background command that started without one, once', () => {
+    const driver = replay(records.slice(0, listed))
+    const [command] = ofKind(driver.items.list(), 'tool')
+    expect(command).toMatchObject({ name: 'commandExecution', status: 'running', background: true })
+    expect(command?.stoppable).toBeUndefined()
+    expect(driver.due()).toContainEqual({ id: 'conclave-terminals-1', method: 'thread/backgroundTerminals/list', params: { threadId: expect.any(String) } })
+    driver.apply(records[listed]!)
+    expect(JSON.stringify(driver.due())).not.toContain('backgroundTerminals/list')
+  })
+
+  it('makes it stoppable once the list names its process, and stops it by that process', () => {
+    const driver = replay(records.slice(0, asked))
+    const [command] = ofKind(driver.items.list(), 'tool')
+    expect(command).toMatchObject({ status: 'running', background: true, stoppable: true })
+    expect(driver.stopBackground(command!.id)).toEqual([{ id: 'conclave-stop-1', method: 'thread/backgroundTerminals/terminate', params: { threadId: expect.any(String), processId: '67014' } }])
+    expect(JSON.stringify(driver.due())).not.toContain('backgroundTerminals/list')
+  })
+
+  it('keeps only the items and processes of the list in the log, and ends the command as stopped', () => {
+    const driver = replay(records)
+    const response = records.flatMap((record) => record.dir === 'in' && JSON.stringify(record.frame).includes('"conclave-terminals-1"') ? [record.frame] : [])[0]
+    expect(driver.logged(response)).toEqual({ id: 'conclave-terminals-1', result: { data: [{ itemId: expect.stringMatching(/^exec-/), processId: '67014' }] } })
+    expect(ofKind(driver.items.list(), 'tool')[0]).toMatchObject({ status: 'interrupted', stopReason: 'user', background: true })
+  })
+})
+
+describe('CodexAppServer stopping a background command', () => {
+  // codex-cli 0.160.1: a command left running in its session as the turn completes, then
+  // thread/backgroundTerminals/terminate for its process: the call returns, and the command's item
+  // completes failed with exit code -1.
+  const records = fixture('codex-background-stop.jsonl')
+  const asked = records.findIndex((record) => record.dir === 'out' && JSON.stringify(record.frame).includes('backgroundTerminals/terminate'))
+
+  it('marks a command left in the background as one the chat can stop, and stops it by its process', () => {
+    const driver = replay(records.slice(0, asked))
+    const [command] = ofKind(driver.items.list(), 'tool')
+    expect(command).toMatchObject({ name: 'commandExecution', status: 'running', background: true, stoppable: true })
+    expect(driver.stopBackground(command!.id)).toEqual([{
+      id: 'conclave-stop-1',
+      method: 'thread/backgroundTerminals/terminate',
+      params: { threadId: expect.any(String), processId: '9016' }
+    }])
+    expect(() => driver.stopBackground('t:nothing')).toThrow('not running in the background')
+  })
+
+  it('says the user stopped it rather than that it failed, and lets the stage go idle', () => {
+    const driver = replay(records)
+    const [command] = ofKind(driver.items.list(), 'tool')
+    expect(command).toMatchObject({ status: 'interrupted', stopReason: 'user', background: true })
+    expect(command?.execution).toBeUndefined()
+    expect(driver.activity()).toBe('idle')
+  })
+
+  it('says when Codex could not stop it', () => {
+    // The recording asked as request 22.
+    const driver = replay(records.slice(0, asked + 1))
+    driver.apply({ dir: 'in', at: 1790000020000, frame: { id: 22, result: { terminated: false } } })
+    expect(ofKind(driver.items.list(), 'notice').map((notice) => notice.text)).toEqual(['没能停止后台命令：它已经结束了'])
+    expect(driver.stopBackground(ofKind(driver.items.list(), 'tool')[0]!.id)).toMatchObject([{ id: 'conclave-stop-2' }])
+  })
+})
+
+describe('CodexAppServer commands that outlive their turn', () => {
+  // codex-cli 0.160.1, unified exec: a command started with a short yield keeps running in its
+  // session after the turn completes, the agent looks at it in a second turn, and it exits later.
+  const records = fixture('codex-unified-exec.jsonl')
+  const firstEnd = records.findIndex((record) => record.dir === 'in' && JSON.stringify(record.frame).includes('"turn/completed"'))
+
+  it('keeps one still running as its turn completes as background work, the stage busy', () => {
+    const driver = replay(records.slice(0, firstEnd + 1))
+    const [command] = ofKind(driver.items.list(), 'tool')
+    expect(command).toMatchObject({ name: 'commandExecution', status: 'running', background: true })
+    expect(driver.activity()).toBe('running')
+    expect(ofKind(driver.items.list(), 'state')[0]?.activity).toBe('等 1 个后台命令结束')
+  })
+
+  it('settles it when it exits after the turns, and lets the stage go idle', () => {
+    const driver = replay(records)
+    const [command] = ofKind(driver.items.list(), 'tool')
+    expect(command).toMatchObject({ status: 'done', background: true, execution: { status: 'completed', exitCode: 0 } })
+    expect(command?.output).toContain('tick 35')
+    expect(driver.activity()).toBe('idle')
+    expect(ofKind(driver.items.list(), 'state')[0]?.activity ?? null).toBeNull()
+  })
+})
+

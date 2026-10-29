@@ -1,0 +1,1715 @@
+import { stripAnsi } from '../../ansi-text'
+import type { ModelTokens } from '@conclave/protocol'
+import { z } from 'zod'
+import { browserToolKind, ChatPermissionMode, CODEX_IMAGE_GENERATION, CODEX_IMAGE_VIEW, CONTEXT_COMPACTED, takeImageMarkers, type ChatDecision, type ChatDiff, type ChatImage, type ChatItem, type ChatModel, type ChatOption, type ChatQuestion, type ChatTodo, type ChatToolStatus, type ChatTurnActivity, type ChatTurnState } from '@conclave/protocol'
+import { choiceDecisions, codexAnswerAllows, codexChoiceOf, codexChoices, type CodexChoice } from '../../approval-choices'
+import { describeBrowserTool, showBrowserInput } from '../../browser-tools'
+import { keepImageBlocks, markKeptImages, stripImageBytes } from '../../image-frames'
+import { ConclaveRequests } from '../../conclave-requests'
+import { messageText, type ChatAnswer, type ChatDriver, type ChatImageFile, type ChatOutgoing, type ChatPreferences, type ChatRecord, type ChatStageOptions, type StageMessage } from '../../chat-driver'
+import { ChatItems, clip, type UsageLimitHit } from '../../chat-items'
+import { ChatQueue } from '../../chat-queue'
+import { StageState } from '../../chat-stage-state'
+import { Rejection } from '../../rejection'
+import { codexCommand, codexCommands, commandRequest, requestText, type CodexSkill } from './codex-commands'
+import { offeredCommand } from '../../agent-commands'
+import { windowOf } from './codex-usage'
+import { mergeUsageReports, type UsageReport } from '../../usage-source'
+import { referencePathIn } from '../../reference-paths'
+
+// Codex's app-server protocol (`codex app-server`): JSON-RPC over stdio without the jsonrpc field,
+// as codex-cli 0.156.1 speaks it. `codex app-server generate-ts` prints the full schema; this reads
+// only the part Conclave uses, loosely, since the server is marked experimental.
+
+const MAX_PATCH = 50_000
+// How Conclave names itself to Codex, which keeps it as the originator of each thread it starts.
+export const CODEX_CLIENT_NAME = 'conclave'
+
+const Id = z.union([z.string(), z.number()])
+const Frame = z.looseObject({
+  id: Id.optional(),
+  method: z.string().optional(),
+  params: z.unknown().optional(),
+  result: z.unknown().optional(),
+  error: z.looseObject({ code: z.number().optional(), message: z.string().optional() }).optional()
+})
+type Frame = z.infer<typeof Frame>
+const Item = z.looseObject({
+  type: z.string(),
+  id: z.string(),
+  text: z.string().optional(),
+  summary: z.array(z.string()).catch([]).optional(),
+  content: z.array(z.unknown()).catch([]).optional(),
+  command: z.string().optional(),
+  // Codex's own reading of the command: each part a read, a listing, a search, or unknown.
+  commandActions: z.array(z.looseObject({
+    type: z.string(),
+    name: z.string().nullish(),
+    path: z.string().nullish(),
+    query: z.string().nullish()
+  })).catch([]).optional(),
+  aggregatedOutput: z.string().nullish(),
+  // The session a command runs in, by which a background one is stopped.
+  processId: z.string().nullish(),
+  exitCode: z.number().nullish(),
+  // An agent message that asks in passing: Codex works on, and takes the answer as a message.
+  delivery: z.string().nullish(),
+  questions: z.array(z.looseObject({ title: z.string(), options: z.array(z.string()).nullish() })).nullish().catch(null),
+  status: z.string().optional(),
+  changes: z.array(z.looseObject({
+    path: z.string(),
+    kind: z.looseObject({ type: z.string() }).catch({ type: 'update' }),
+    diff: z.string().catch('')
+  })).catch([]).optional(),
+  server: z.string().optional(),
+  tool: z.string().optional(),
+  arguments: z.unknown().optional(),
+  result: z.unknown().optional(),
+  error: z.looseObject({ message: z.string().optional() }).nullish(),
+  // The picture an imageView item looked at.
+  path: z.string().optional(),
+  // What an imageGeneration item drew, where Codex saved it, and why it could not.
+  revisedPrompt: z.string().nullish(),
+  savedPath: z.string().nullish(),
+  failure: z.union([z.string(), z.looseObject({ message: z.string().optional() })]).nullish().catch(null),
+  query: z.string().optional(),
+  prompt: z.string().nullish(),
+  receiverThreadIds: z.array(z.string()).catch([]).optional(),
+  agentsStates: z.record(z.string(), z.looseObject({ status: z.string(), message: z.string().nullish() })).catch({}).optional()
+})
+type Item = z.infer<typeof Item>
+const ItemEvent = z.looseObject({ item: Item })
+const DrawnEvent = z.looseObject({ item: z.looseObject({ type: z.literal(CODEX_IMAGE_GENERATION), result: z.string().min(1) }) })
+
+// A picture Codex drew is on disk where it saved it, which the chat shows it from: the log keeps
+// the item without its bytes, megabytes each.
+function withoutDrawnBytes(frame: Frame): Frame {
+  const event = DrawnEvent.safeParse(frame.params)
+  return event.success ? { ...frame, params: { ...event.data, item: { ...event.data.item, result: '' } } } : frame
+}
+const Delta = z.looseObject({ itemId: z.string(), delta: z.string() })
+const TurnEvent = z.looseObject({
+  turn: z.looseObject({
+    id: z.string(),
+    status: z.string().optional(),
+    error: z.looseObject({ message: z.string().optional(), codexErrorInfo: z.unknown().optional() }).nullish(),
+    durationMs: z.number().nullish()
+  })
+})
+const ThreadEvent = z.looseObject({ thread: z.looseObject({ id: z.string() }) })
+const ThreadRef = z.looseObject({ threadId: z.string() })
+const ChildTurn = z.looseObject({
+  turn: z.looseObject({
+    status: z.string().optional(),
+    items: z.array(z.looseObject({ type: z.string(), text: z.string().optional() })).catch([]).optional(),
+    error: z.looseObject({ message: z.string().optional() }).nullish()
+  })
+})
+const SandboxShape = z.looseObject({ type: z.string() })
+// What a thread was opened with, from the thread/start or thread/resume answer.
+// Codex's plan mode is a collaboration mode, set per turn beside the approval policy and sandbox.
+const Collaboration = z.looseObject({ mode: z.string() }).nullish().catch(undefined)
+const ThreadOpened = z.looseObject({
+  thread: z.looseObject({ id: z.string() }),
+  model: z.string().nullish(),
+  reasoningEffort: z.string().nullish(),
+  approvalPolicy: z.unknown().optional(),
+  sandbox: SandboxShape.optional().catch(undefined),
+  collaborationMode: Collaboration
+})
+// What the thread runs with after a turn's overrides took effect.
+const SettingsUpdated = z.looseObject({
+  threadSettings: z.looseObject({
+    approvalPolicy: z.unknown().optional(),
+    sandboxPolicy: SandboxShape.optional().catch(undefined),
+    model: z.string().nullish(),
+    effort: z.string().nullish(),
+    collaborationMode: Collaboration
+  })
+})
+const TurnParams = z.looseObject({
+  approvalPolicy: z.unknown().optional(),
+  sandboxPolicy: SandboxShape.optional().catch(undefined),
+  collaborationMode: Collaboration
+})
+// last is one model call; total accumulates calls across the thread.
+const TokenCount = z.looseObject({
+  totalTokens: z.number(),
+  inputTokens: z.number().optional(),
+  outputTokens: z.number().optional(),
+  cachedInputTokens: z.number().optional(),
+  cacheWriteInputTokens: z.number().optional()
+})
+const TokenUsage = z.looseObject({
+  turnId: z.string().optional(),
+  tokenUsage: z.looseObject({
+    last: TokenCount,
+    total: TokenCount.optional(),
+    modelContextWindow: z.number().nullish()
+  })
+})
+const LimitWindow = z.looseObject({ usedPercent: z.number(), windowDurationMins: z.number().nullish(), resetsAt: z.number().nullish() })
+// A sparse rolling update: a null window has no news, not no window.
+const RateLimits = z.looseObject({
+  rateLimits: z.looseObject({
+    limitId: z.string().nullish(),
+    primary: LimitWindow.nullish().catch(null),
+    secondary: LimitWindow.nullish().catch(null),
+    planType: z.string().nullish().catch(null)
+  })
+})
+// The plan's own limit, the one the usage endpoint reports; other metered limits are left out.
+const PLAN_LIMIT_ID = 'codex'
+const PlanUpdated = z.looseObject({ plan: z.array(z.looseObject({ step: z.string(), status: z.string() })).catch([]) })
+const ModelEntry = z.looseObject({
+  id: z.string(),
+  displayName: z.string().nullish(),
+  description: z.string().nullish(),
+  hidden: z.boolean().optional(),
+  isDefault: z.boolean().optional(),
+  supportedReasoningEfforts: z.array(z.looseObject({ reasoningEffort: z.string() })).catch([]).optional(),
+  defaultReasoningEffort: z.string().nullish()
+})
+type ModelEntry = z.infer<typeof ModelEntry>
+const ModelList = z.looseObject({ data: z.array(z.unknown()).catch([]) })
+const SkillsList = z.looseObject({ data: z.array(z.looseObject({ skills: z.array(z.unknown()).catch([]) })).catch([]) })
+const SkillEntry = z.looseObject({
+  name: z.string().min(1),
+  description: z.string().nullish(),
+  shortDescription: z.string().nullish(),
+  path: z.string(),
+  enabled: z.boolean().optional()
+})
+// The requests that start a turn: a message, and the commands Conclave offers.
+const TURN_METHODS: ReadonlySet<string> = new Set(['turn/start', 'thread/compact/start', 'review/start'])
+// The text of a turn/start or turn/steer's input, its text parts joined.
+function inputText(params: unknown): string {
+  const input = z.looseObject({ input: z.array(z.looseObject({ type: z.string(), text: z.string().optional() })).catch([]) }).safeParse(params)
+  return input.success ? input.data.input.flatMap((part) => (part.type === 'text' ? [part.text ?? ''] : [])).join('\n') : ''
+}
+// Of the effective config, only the model: the rest may hold secrets and stays out of the log.
+// thread/backgroundTerminals/list (experimental): each running terminal's item and process.
+const TerminalList = z.looseObject({ data: z.array(z.looseObject({ itemId: z.string(), processId: z.string() })) })
+const ConfigRead = z.looseObject({ config: z.looseObject({ model: z.string().nullish() }) })
+const ErrorEvent = z.looseObject({
+  error: z.looseObject({ message: z.string().optional(), codexErrorInfo: z.unknown().optional() }).catch({}),
+  willRetry: z.boolean().optional()
+})
+// The plan's usage limit, as against rateLimitExceeded, a short burst the server throttles.
+const isUsageLimit = (info: unknown) => info === 'usageLimitExceeded'
+const Resolved = z.looseObject({ requestId: Id })
+const CommandApproval = z.looseObject({
+  itemId: z.string().optional(),
+  command: z.string().nullish(),
+  reason: z.string().nullish(),
+  availableDecisions: z.array(z.unknown()).nullish()
+}).catch({})
+const FileApproval = z.looseObject({ itemId: z.string().optional(), reason: z.string().nullish() }).catch({})
+const UserInput = z.looseObject({
+  questions: z.array(z.looseObject({
+    id: z.string(),
+    header: z.string().catch(''),
+    question: z.string().catch(''),
+    options: z.array(z.looseObject({ label: z.string(), description: z.string().nullish() })).nullish()
+  })).catch([])
+}).catch({ questions: [] })
+// Codex asks before an MCP tool call as an elicitation of its own: a form with nothing to fill,
+// told apart from a server's own elicitation by its _meta.
+const McpToolApproval = z.looseObject({
+  serverName: z.string(),
+  message: z.string().catch(''),
+  _meta: z.looseObject({
+    codex_approval_kind: z.literal('mcp_tool_call'),
+    persist: z.array(z.string()).catch([]),
+    tool_params_display: z.array(z.looseObject({ name: z.string().nullish(), display_name: z.string().nullish(), value: z.unknown() })).catch([])
+  })
+})
+const Decision = z.looseObject({ decision: z.unknown().optional(), answers: z.record(z.string(), z.unknown()).optional() })
+// userMcp: Conclave's mark, in the log, that the server was one of the user's it handed Codex.
+const McpStartup = z.looseObject({ name: z.string(), status: z.string(), userMcp: z.boolean().optional() })
+const Answers = z.looseObject({ answers: z.array(z.string()).catch([]) })
+
+type Pending = {
+  // A plan is Codex's last word on a plan-mode turn: it waits past the turn for the next one.
+  kind: 'approval' | 'question' | 'plan'
+  itemId: string
+  // The JSON-RPC id exactly as the server sent it, number or string.
+  rawId: string | number
+  // What deny means here: decline where the server offers it, else cancel, which ends the turn.
+  denial: 'decline' | 'cancel'
+  // An approval's answers, each with the decision sent back for it.
+  choices?: CodexChoice[]
+  // An MCP tool call's: each choice's raw is the whole answer (an elicitation result).
+  elicitation?: boolean
+}
+
+type Sandbox = 'workspace-write' | 'read-only' | 'danger-full-access'
+
+// Conclave's permission modes as Codex's approval policy and sandbox. acceptEdits is what the Codex
+// TUI starts with: the sandbox lets it write the workspace, and it asks when it wants out. It may
+// also reach the network, as Claude Code in the same mode does: closed, every install or fetch
+// failed first and then asked to leave the sandbox anyway, and config.toml, where the TUI turns it
+// on, is not read here.
+type CodexMode = { approvalPolicy: string; sandbox: Sandbox; network?: boolean }
+const DEFAULT_MODE: CodexMode = { approvalPolicy: 'on-request', sandbox: 'workspace-write', network: true }
+export const CODEX_MODES: Record<string, CodexMode> = {
+  ask: { approvalPolicy: 'untrusted', sandbox: 'workspace-write' },
+  acceptEdits: DEFAULT_MODE,
+  readOnly: { approvalPolicy: 'on-request', sandbox: 'read-only' },
+  bypass: { approvalPolicy: 'never', sandbox: 'danger-full-access' },
+  // Plan mode keeps Codex to reading, with the sandbox to back it up. Last, so the policy and
+  // sandbox alone read as readOnly (see codexMode).
+  plan: { approvalPolicy: 'on-request', sandbox: 'read-only' }
+}
+const PLAN_MODE = 'plan'
+const PLAN_SAVED = '计划已保存到任务里，等它依赖的任务完成后再执行。现在不要实现，也不要再修改计划，回复一句确认即可。'
+
+// The protocol spells a sandbox in kebab case on a thread and as a tagged object in a policy.
+function sandboxName(type: string | undefined): Sandbox | null {
+  switch (type) {
+    case 'workspace-write':
+    case 'workspaceWrite':
+      return 'workspace-write'
+    case 'read-only':
+    case 'readOnly':
+      return 'read-only'
+    case 'danger-full-access':
+    case 'dangerFullAccess':
+      return 'danger-full-access'
+    default:
+      return null
+  }
+}
+
+// Conclave's name for a policy and sandbox, or Codex's own words for a pairing it has no name for.
+export function codexMode(approvalPolicy: unknown, sandbox: Sandbox | null): string | null {
+  if (typeof approvalPolicy !== 'string' || !sandbox) return null
+  const found = Object.entries(CODEX_MODES).find(([, mode]) => mode.approvalPolicy === approvalPolicy && mode.sandbox === sandbox)
+  return found ? found[0] : `${approvalPolicy} · ${sandbox}`
+}
+
+function sandboxPolicy(sandbox: Sandbox, writableRoots: readonly string[], network: boolean): unknown {
+  switch (sandbox) {
+    case 'workspace-write':
+      return { type: 'workspaceWrite', writableRoots: [...writableRoots], networkAccess: network, excludeTmpdirEnvVar: false, excludeSlashTmp: false }
+    case 'read-only':
+      return { type: 'readOnly', networkAccess: false }
+    case 'danger-full-access':
+      return { type: 'dangerFullAccess' }
+  }
+}
+
+const TODO_STATUS: Record<string, ChatTodo['status']> = { pending: 'pending', inProgress: 'in_progress', completed: 'completed' }
+
+const RESOLUTIONS: Record<ChatDecision, 'allowed' | 'allowedForSession' | 'denied'> = { allow: 'allowed', allowForSession: 'allowedForSession', deny: 'denied' }
+const DECISIONS: Record<string, 'allowed' | 'allowedForSession' | 'denied'> = {
+  accept: 'allowed',
+  acceptForSession: 'allowedForSession',
+  decline: 'denied',
+  cancel: 'denied'
+}
+
+// The words of a command line as a POSIX shell reads its quoting, with nothing expanded; null
+// when a quote is left open.
+function shellWords(line: string): string[] | null {
+  const words: string[] = []
+  let word: string | null = null
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i]!
+    if (c === "'") {
+      const end = line.indexOf("'", i + 1)
+      if (end < 0) return null
+      word = (word ?? '') + line.slice(i + 1, end)
+      i = end
+    } else if (c === '"') {
+      let text = ''
+      for (i++; i < line.length && line[i] !== '"'; i++) {
+        // Within double quotes a backslash escapes only these; before anything else it stays.
+        const next = line[i + 1]
+        if (line[i] === '\\' && next !== undefined && '$`"\\\n'.includes(next)) i++
+        text += line[i]
+      }
+      if (i >= line.length) return null
+      word = (word ?? '') + text
+    } else if (c === '\\') {
+      word = (word ?? '') + (line[++i] ?? '')
+    } else if (/\s/.test(c)) {
+      if (word !== null) words.push(word)
+      word = null
+    } else {
+      word = (word ?? '') + c
+    }
+  }
+  if (word !== null) words.push(word)
+  return words
+}
+
+const POSIX_SHELL = /^(?:\S*\/)?(?:bash|zsh|sh)$/
+// Read with POSIX quoting, an unquoted C:\x\cmd.exe loses its backslashes; the name still ends it.
+const POWERSHELL = /(?:^|[^a-z])(?:pwsh|powershell)(?:\.exe)?$/i
+const CMD = /(?:^|[^a-z])cmd(?:\.exe)?$/i
+
+// `/bin/zsh -lc 'cat x'` is how Codex runs `cat x`, quoting the script whichever way suits it (not
+// at all, in single quotes, in double quotes, or both run together); on Windows it is
+// `powershell.exe -NoProfile -Command 'cat x'` or `cmd.exe /c cat x`. The script is what the user
+// reads.
+export function unwrapShell(command: string): string {
+  const words = shellWords(command)
+  if (!words || words.length < 3) return command
+  const [shell = '', ...rest] = words
+  const script = rest.at(-1)
+  const flags = rest.slice(0, -1).map((flag) => flag.toLowerCase())
+  const last = flags.at(-1)
+  const wrapped = POSIX_SHELL.test(shell) ? flags.length === 1 && (last === '-lc' || last === '-c')
+    : POWERSHELL.test(shell) ? (last === '-command' || last === '-c') && flags.slice(0, -1).every((flag) => /^-(?:nologo|noprofile|noninteractive)$/.test(flag))
+      : CMD.test(shell) ? last === '/c' && flags.every((flag) => /^\/[dsc]$/.test(flag))
+        : false
+  return wrapped && script ? script : command
+}
+
+type CommandAction = NonNullable<Item['commandActions']>[number]
+
+// What a command does in words, from Codex's own reading of it, but only when every part of it is
+// a read of a named file, a listing of a named folder or a search for something: words that leave
+// out what, as "列出文件" four times over, say less than the command itself.
+export function commandDescription(actions: readonly CommandAction[] | undefined): string | null {
+  if (!actions?.length) return null
+  const parts: string[] = []
+  let reads: string[] = []
+  const flush = () => {
+    if (reads.length) parts.push(`读取 ${reads.join('、')}`)
+    reads = []
+  }
+  for (const action of actions) {
+    if (action.type === 'read' && action.name) {
+      reads.push(action.name)
+      continue
+    }
+    flush()
+    if (action.type === 'listFiles' && action.path) parts.push(`列出 ${action.path} 里的文件`)
+    else if (action.type === 'search' && action.query) parts.push(`搜索「${action.query}」${action.path ? `（${action.path}）` : ''}`)
+    else return null
+  }
+  flush()
+  return parts.join('，')
+}
+
+// A subagent's state, as Codex reports it on the calls that deal with it. notFound says nothing.
+const AGENT_STATUS: Record<string, ChatToolStatus> = {
+  pendingInit: 'running',
+  running: 'running',
+  completed: 'done',
+  errored: 'failed',
+  interrupted: 'interrupted',
+  shutdown: 'interrupted'
+}
+const TURN_AGENT_STATUS: Record<string, string> = { completed: 'completed', interrupted: 'interrupted', failed: 'errored' }
+
+function toolStatus(status: string | undefined, exitCode: number | null | undefined): ChatToolStatus {
+  switch (status) {
+    case 'inProgress':
+      return 'running'
+    case 'declined':
+      return 'denied'
+    case 'failed':
+      return 'failed'
+    default:
+      return exitCode !== null && exitCode !== undefined && exitCode !== 0 ? 'failed' : 'done'
+  }
+}
+
+const lines = (text: string) => (text === '' ? [] : text.replace(/\n$/, '').split('\n'))
+
+// An added file comes as its content and a deleted one may too; an update is a unified diff already.
+export function diffOf(change: { path: string; kind: { type: string }; diff: string }): ChatDiff {
+  const kind = change.kind.type === 'add' || change.kind.type === 'delete' ? change.kind.type : 'update'
+  const looksLikeDiff = /^(@@|---|\+\+\+)/m.test(change.diff)
+  const patch = kind === 'update' || looksLikeDiff
+    ? change.diff
+    : lines(change.diff).map((line) => `${kind === 'add' ? '+' : '-'}${line}`).join('\n')
+  return { path: change.path, change: kind, patch: clip(patch, MAX_PATCH) }
+}
+
+const McpContent = z.looseObject({ content: z.array(z.looseObject({ type: z.string().optional(), text: z.string().optional() })).catch([]) })
+
+// An MCP result's text and the images it names (see imageMarker) or that were just kept from its
+// bytes; the error's message when it failed.
+function mcpResult(item: Item, kept: readonly ChatImage[] = []): { text: string | null; images: ChatImage[] } {
+  if (item.error?.message) return { text: item.error.message, images: [] }
+  const content = McpContent.safeParse(item.result)
+  const taken = takeImageMarkers(content.success ? content.data.content.map((part) => part.text ?? '').filter(Boolean).join('\n') : '')
+  return { text: taken.text || null, images: [...taken.images, ...kept] }
+}
+
+// How Codex writes an async question as plain text: its title, then a line per option.
+function plainQuestions(questions: ReadonlyArray<{ title: string; options?: string[] | null }>): string {
+  return questions.map((question) => [question.title, ...(question.options ?? []).map((option) => `- ${option}`)].join('\n')).join('\n\n').trim()
+}
+
+// The answer as the message Codex takes it in: the choice alone for one question, each under its
+// question for several. A reply typed once for all of them goes once.
+function replyText(questions: readonly ChatQuestion[], answers: Readonly<Record<string, string[]>>): string {
+  const each = questions.map((question) => ({ question: question.question, answer: (answers[question.id] ?? []).join('；') }))
+  const single = new Set(each.map((one) => one.answer))
+  if (each.length === 1 || single.size === 1) return each[0]?.answer ?? ''
+  return each.filter((one) => one.answer).map((one) => `${one.question}\n→ ${one.answer}`).join('\n\n')
+}
+
+// Codex's refusal to open a thread another process is writing.
+const WRITER_CONFLICT = /already has an active writer/i
+const WRITER_CONFLICT_TEXT = '这条会话的 Codex 线程正被别处占用：Codex 应用（ChatGPT 桌面版）或另一个 codex 进程正开着它，Codex 同一时间只允许一处写入。在 Codex 应用里切到别的对话或退出它，再回来重新发送。'
+
+export class CodexAppServer implements ChatDriver {
+  readonly items: ChatItems
+  private readonly conclave: ConclaveRequests
+  // Conclave's own requests by id, to know what each response answers.
+  private readonly requests = new Map<string, string>()
+  private initSent = false
+  private initialized = false
+  private initializedSent = false
+  private threadRequested = false
+  private threadId: string | null = null
+  // The subagents this thread sent off, by their own thread, to the call that spawned each.
+  private readonly agents = new Map<string, string>()
+  // What files a subagent's pending change touches, to name them when it asks to make it.
+  private readonly childFiles = new Map<string, string>()
+  private startError: string | null = null
+  private exited = false
+  // steerable: started by a message; a review or a compaction takes none into it.
+  private turn: { ref: string; turnId: string | null; assistant: string | null; steerable?: boolean } | null = null
+  // Messages sent into the running turn, by request, until Codex takes or refuses them: one taken
+  // shows as sent then; one refused waits in the queue for the turn to end instead.
+  private readonly steering = new Map<string, { text: string; images: ChatImage[]; ref: string }>()
+  // Questions asked in passing and not yet answered, by request id, oldest first.
+  private readonly asks = new Map<string, string>()
+  private steers = 0
+  // What this turn used, summed across its model calls.
+  private turnUsage: { input: number; output: number } | { total: number } | null = null
+  private meteredRequests: ModelTokens[] = []
+  private readonly meteredReports = new Set<string>()
+  private threadUsage: z.infer<typeof TokenCount> | null = null
+  private readonly pending = new Map<string, Pending>()
+  // Images an MCP result carried in its bytes and the store took, by item id, until the log names
+  // them instead (withKeptImages).
+  private readonly keptImages = new Map<string, ChatImage[]>()
+  private readonly unanswered = new Map<string, string | number>()
+  // Requests to edit a reference project, declined without asking (ChatStageOptions.references).
+  private readonly refused = new Map<string, string | number>()
+  // The MCP tool call each server is running, to tie Codex's asking about it to its card.
+  private readonly mcpCalls = new Map<string, { itemId: string; tool: string }>()
+  private turns = 0
+  private interrupts = 0
+  // The session each command runs in, by its item; and the stops asked for, by request, of items.
+  private readonly processes = new Map<string, string>()
+  // A command Codex asked approval for starts without its process id, and Codex never sends one
+  // after: the thread's background terminals are listed for it once, by request id while asked.
+  private readonly terminalsAsked = new Set<string>()
+  private listingTerminals: string | null = null
+  private terminalLists = 0
+  private readonly stopsAsked = new Map<string, string>()
+  private stops = 0
+  // The user asked the running turn to stop: calls that fail from here on were cut short.
+  private stopping = false
+  private results = 0
+  private messages: StageMessage[] = []
+  private readonly state: StageState
+  private readonly queue = new ChatQueue()
+  private modelsRequested = false
+  private configRequested = false
+  private skillsRequested = false
+  private skills: CodexSkill[] = []
+  private catalog: ModelEntry[] = []
+  // The model config.toml names, which a thread runs when none is chosen, over the catalog's default.
+  private configModel: string | null = null
+  private model: string | null = null
+  private effort: string | null = null
+  private approvalPolicy: unknown = null
+  private sandbox: Sandbox | null = null
+  // Whether the thread runs in Codex's plan mode, as the last turn set it or the thread reports.
+  private planning = false
+  // Rate limits reported since the host last took them.
+  private usage: UsageReport | null = null
+  // What Codex said when the running turn hit the plan's usage limit, until the turn ends.
+  private limited: string | null = null
+  // What the user chose, sent with every turn: Codex takes options per turn, not in between.
+  private readonly chosen: ChatPreferences
+
+  constructor(stageId: string, private readonly options: ChatStageOptions) {
+    this.items = new ChatItems(stageId)
+    this.conclave = new ConclaveRequests(this.items)
+    this.state = new StageState(this.items)
+    // A stage that only plans runs every turn in plan mode, whatever was remembered.
+    this.chosen = { ...options.preferred, ...(options.planOnly ? { permissionMode: PLAN_MODE } : options.readOnly ? { permissionMode: 'readOnly' } : {}) }
+    // On a provider, its models stand in for what model/list offers, which knows only OpenAI's.
+    if (options.providerModels) {
+      this.catalog = options.providerModels.map((model) => ({ id: model.id, displayName: model.label, description: model.description, isDefault: model.isDefault, supportedReasoningEfforts: model.efforts.map((effort) => ({ reasoningEffort: effort })), defaultReasoningEffort: null }))
+    }
+  }
+
+  apply(record: ChatRecord): void {
+    if (record.dir === 'out' && record.ref && record.references) this.items.rememberReferences(record.ref, record.references)
+    switch (record.dir) {
+      case 'in': {
+        const frame = Frame.safeParse(record.frame)
+        if (frame.success) this.receive(frame.data, record.at)
+        break
+      }
+      case 'out': {
+        const frame = Frame.safeParse(record.frame)
+        if (frame.success) this.sent(frame.data, record.at, record.ref, record.images ?? [])
+        break
+      }
+      case 'note':
+        this.items.notice(record.level, record.text, record.at, {
+          ...(record.id !== undefined ? { id: record.id } : {}),
+          ...(record.action !== undefined ? { action: record.action } : {})
+        })
+        break
+      case 'option':
+        this.choose(record.option, record.value)
+        break
+      case 'queue':
+        this.queue.apply(record)
+        break
+      case 'exit':
+        this.ended(record.stderr, record.at)
+        break
+      case 'ask':
+        this.conclave.apply(record)
+        break
+      case 'answer':
+        // A plan put aside (see waitingPlans); any other answer is to Conclave's own question.
+        if (this.pending.get(record.requestId)?.kind === 'plan') this.resolve(record.requestId, record.resolution, null, record.at)
+        else this.conclave.apply(record)
+        break
+      case 'reply':
+        this.closeAsk(record.requestId, record.answers, record.at)
+        break
+      case 'item':
+        this.items.put(record.item, record.at)
+    }
+    this.refreshOptions()
+    // The composer offers sending into the turn while one that takes it runs.
+    if (this.state.current.steerable !== this.canSteer()) this.state.set({ steerable: this.canSteer() })
+    this.state.publish(record.at)
+  }
+
+  due(): unknown[] {
+    if (this.exited) return []
+    const frames: unknown[] = [
+      ...[...this.unanswered.values()].map((id) => ({ id, error: { code: -32601, message: 'Conclave does not handle this request' } })),
+      ...[...this.refused.values()].map((id) => ({ id, result: { decision: 'decline' } }))
+    ]
+    if (!this.initSent) {
+      frames.push({
+        id: 'conclave-init',
+        method: 'initialize',
+        params: { clientInfo: { name: CODEX_CLIENT_NAME, title: 'Conclave', version: '0.1.0' }, capabilities: { experimentalApi: true, requestAttestation: false } }
+      })
+      return frames
+    }
+    if (!this.initialized || this.startError) return frames
+    if (!this.initializedSent) frames.push({ method: 'initialized' })
+    if (!this.threadRequested) frames.push(this.openThread())
+    if (!this.modelsRequested) frames.push({ id: 'conclave-models', method: 'model/list', params: {} })
+    if (!this.configRequested) frames.push({ id: 'conclave-config', method: 'config/read', params: { cwd: this.options.cwd } })
+    if (!this.skillsRequested) frames.push({ id: 'conclave-skills', method: 'skills/list', params: { cwds: [this.options.cwd] } })
+    if (this.threadId && !this.listingTerminals && this.unlistedBackground().length > 0) {
+      frames.push({ id: `conclave-terminals-${this.terminalLists + 1}`, method: 'thread/backgroundTerminals/list', params: { threadId: this.threadId } })
+    }
+    return frames
+  }
+
+  // Background commands not yet tied to a process, and not yet looked up.
+  private unlistedBackground(): string[] {
+    return this.items.list().flatMap((item) => {
+      const id = item.id.slice(2)
+      return item.kind === 'tool' && item.name === 'commandExecution' && item.background && item.status === 'running' && !this.processes.has(id) && !this.terminalsAsked.has(id) ? [id] : []
+    })
+  }
+
+  ready(): boolean {
+    return this.threadId !== null && !this.exited
+  }
+
+  failure(): string | null {
+    if (this.startError) return this.startError
+    return this.exited && this.threadId === null ? 'exited' : null
+  }
+
+  activeTurnRef(): string | null { return this.turn?.ref ?? null }
+
+  // Between turns, a command left running in its session keeps the stage busy, so it is neither
+  // stopped as idle nor out of sight.
+  activity(): ChatTurnActivity {
+    if (this.conclave.pending > 0) return 'awaiting'
+    if (!this.turn) return [...this.pending.values()].some((pending) => pending.kind === 'plan') ? 'awaiting' : this.backgroundCommands() > 0 ? 'running' : 'idle'
+    return this.pending.size > 0 ? 'awaiting' : 'running'
+  }
+
+  private backgroundCommands(): number {
+    return this.items.list().filter((item) => item.kind === 'tool' && item.background && item.status === 'running').length
+  }
+
+  // What the stage waits on between turns, for the working line; nothing once the last one exits.
+  private showBackground(): void {
+    const commands = this.backgroundCommands()
+    this.state.set({ activity: commands > 0 ? `等 ${commands} 个后台命令结束` : null })
+  }
+
+  providerSessionId(): string | null {
+    return this.threadId
+  }
+
+  // A message while a plan waits carries on planning, in plan mode as before. Codex reads an
+  // image from its path itself, so the frame is what the log keeps.
+  send(text: string, images: readonly ChatImageFile[] = []): ChatOutgoing {
+    if (!this.ready() || !this.threadId) throw new Rejection('chat-starting', 'the agent is still starting')
+    if (this.turn) throw new Rejection('chat-busy', 'the agent is still working on the last message')
+    const command = codexCommand(text, this.skills)
+    if (command && command.kind !== 'skill') {
+      if (images.length > 0) throw new Rejection('chat-command-images', `/${command.kind} takes no images`)
+      const frame = commandRequest(command, `conclave-turn-${this.turns + 1}`, this.threadId)
+      return { wire: frame, logged: frame }
+    }
+    const skill = command?.kind === 'skill' ? { type: 'skill', name: command.skill.name, path: command.skill.path } : null
+    const frame = this.turnStart(this.threadId, text, this.chosen.permissionMode, images, skill)
+    return { wire: frame, logged: frame }
+  }
+
+  // Into the running turn with turn/steer, which names the turn so a message meant for one that has
+  // just ended is refused rather than starting another.
+  steer(text: string, images: readonly ChatImageFile[] = []): ChatOutgoing {
+    if (!this.threadId || !this.turn?.turnId) throw new Rejection('chat-starting', 'the turn has not started yet')
+    if (!this.canSteer()) throw new Rejection('chat-no-steer', 'this turn takes no message into it')
+    const input = [
+      ...(text || images.length === 0 ? [{ type: 'text', text, text_elements: [] }] : []),
+      ...images.map((image) => ({ type: 'localImage', path: image.path }))
+    ]
+    const frame = { id: `conclave-steer-${this.steers + 1}`, method: 'turn/steer', params: { threadId: this.threadId, input, expectedTurnId: this.turn.turnId } }
+    return { wire: frame, logged: frame }
+  }
+
+  canSteer(): boolean {
+    return Boolean(this.turn?.turnId && this.turn.steerable)
+  }
+
+  private turnStart(threadId: string, text: string, permissionMode: string | undefined, images: readonly ChatImageFile[] = [], skill: unknown = null): unknown {
+    const input = [
+      ...(text || images.length === 0 ? [{ type: 'text', text, text_elements: [] }] : []),
+      ...(skill ? [skill] : []),
+      ...images.map((image) => ({ type: 'localImage', path: image.path }))
+    ]
+    return {
+      id: `conclave-turn-${this.turns + 1}`,
+      method: 'turn/start',
+      params: { threadId, input, ...this.turnOptions(permissionMode) }
+    }
+  }
+
+  queuedToSend() {
+    return this.ready() && !this.turn ? this.queue.next() : null
+  }
+
+  setOption(option: ChatOption, value: string): unknown[] {
+    if (!this.ready()) throw new Rejection('chat-starting', 'the agent is still starting')
+    const state = this.state.current
+    if (option === 'permissionMode') {
+      if (!state.permissionModes.includes(value)) throw new Rejection('chat-option-invalid', `this stage offers no permission mode ${value}`)
+      return []
+    }
+    if (this.turn) throw new Rejection('chat-busy', 'the model and effort change between turns')
+    if (option === 'model') {
+      if (!state.models.some((model) => model.id === value)) throw new Rejection('chat-option-invalid', `Codex lists no model ${value}`)
+      return []
+    }
+    const model = state.models.find((each) => each.id === state.model)
+    if (!model?.efforts.includes(value)) throw new Rejection('chat-option-invalid', `the model takes no effort ${value}`)
+    return []
+  }
+
+  respond(requestId: string, answer: ChatAnswer): unknown[] {
+    const pending = this.pending.get(requestId)
+    if (!pending) throw new Rejection('chat-request-gone', 'this request is no longer waiting for an answer')
+    if (pending.kind === 'plan') {
+      if (!this.threadId || this.turn) throw new Rejection('chat-busy', 'the agent is still working on the last message')
+      // Carrying the plan out is the next turn, out of plan mode, in the mode picked for it; sending
+      // it back is one more plan-mode turn with the user's note, and so is keeping it for later.
+      if (answer.saved) return [this.turnStart(this.threadId, PLAN_SAVED, PLAN_MODE)]
+      if (answer.decision === 'deny') {
+        return [this.turnStart(this.threadId, answer.message ? `继续规划：${answer.message}` : '继续规划：请完善这个计划后再给我。', PLAN_MODE)]
+      }
+      // Its checkout stays read-only however the plan is answered.
+      if (this.options.planOnly || this.options.readOnly) throw new Rejection('plan-only', 'this stage may only plan')
+      const mode = answer.mode ?? (answer.decision === 'allowForSession' ? 'acceptEdits' : 'ask')
+      if (mode === PLAN_MODE || !this.state.current.permissionModes.includes(mode)) {
+        throw new Rejection('chat-option-invalid', `this stage offers no permission mode ${mode} to carry out a plan in`)
+      }
+      return [this.turnStart(this.threadId, '按这个计划开始执行。', mode)]
+    }
+    return [{ id: pending.rawId, result: this.answerBody(pending, answer) }]
+  }
+
+  replyByMessage(requestId: string, answer: ChatAnswer): { text: string | null; answers: Record<string, string[]> | null } | undefined {
+    const itemId = this.asks.get(requestId)
+    if (!itemId) return undefined
+    const item = this.items.get(itemId)
+    if (item?.kind !== 'question') return undefined
+    const answers = answer.decision === 'deny' ? null : answer.answers ?? null
+    return { text: answers ? replyText(item.questions, answers) : null, answers }
+  }
+
+  asking(): Array<Extract<ChatItem, { kind: 'question' }>> {
+    return [...this.asks.values()].flatMap((itemId) => {
+      const item = this.items.get(itemId)
+      return item?.kind === 'question' ? [item] : []
+    })
+  }
+
+  // Answered with what the user chose; null, when they put it aside or wrote something else.
+  private closeAsk(requestId: string, answers: Record<string, string[]> | null, at: number): void {
+    const itemId = this.asks.get(requestId)
+    if (!itemId) return
+    this.asks.delete(requestId)
+    const item = this.items.get(itemId)
+    if (item?.kind !== 'question') return
+    const chose = answers !== null && Object.values(answers).some((each) => each.length > 0)
+    this.items.put({ ...item, answers: chose ? answers : null, resolution: chose ? 'answered' : 'cancelled' }, at)
+  }
+
+  waitingPlans(): string[] {
+    return this.turn ? [] : [...this.pending].filter(([, pending]) => pending.kind === 'plan').map(([requestId]) => requestId)
+  }
+
+  interrupt(): unknown[] {
+    if (!this.turn || !this.threadId) throw new Rejection('chat-idle', 'no turn is running')
+    if (!this.turn.turnId) throw new Rejection('chat-busy', 'the turn has not started yet')
+    const cancels = [...this.pending.values()].filter((pending) => pending.kind !== 'plan').map((pending) => ({
+      id: pending.rawId,
+      result: pending.kind === 'question' ? { answers: {} } : { decision: 'cancel' }
+    }))
+    const request = { id: `conclave-interrupt-${this.interrupts + 1}`, method: 'turn/interrupt', params: { threadId: this.threadId, turnId: this.turn.turnId } }
+    return [...cancels, request]
+  }
+
+  stopBackground(itemId: string): unknown[] {
+    const tool = this.items.get(itemId)
+    const processId = this.processes.get(itemId.slice(2))
+    if (!this.threadId || tool?.kind !== 'tool' || !tool.background || tool.status !== 'running' || !processId) {
+      throw new Rejection('chat-not-stoppable', 'that work is not running in the background')
+    }
+    return [{ id: `conclave-stop-${this.stops + 1}`, method: 'thread/backgroundTerminals/terminate', params: { threadId: this.threadId, processId } }]
+  }
+
+  logged(frame: unknown): unknown | null {
+    const parsed = Frame.safeParse(frame)
+    if (!parsed.success) return null
+    const { id, method } = parsed.data
+    if (method === undefined) return this.loggedResponse(parsed.data)
+    // Server requests are kept whole; of the notifications, only those that change what the chat shows.
+    if (id !== undefined) return frame
+    // Of a subagent's thread, only how each turn ended and the files it may ask to change.
+    if (this.childThread(method, parsed.data.params)) {
+      return method === 'turn/completed' || (method === 'item/started' && ItemEvent.safeParse(parsed.data.params).data?.item.type === 'fileChange') ? frame : null
+    }
+    if (method === 'thread/settings/updated') {
+      const update = SettingsUpdated.safeParse(parsed.data.params)
+      if (!update.success) return null
+      const { approvalPolicy, sandboxPolicy, model, effort, collaborationMode } = update.data.threadSettings
+      const collaboration = collaborationMode ? { mode: collaborationMode.mode } : undefined
+      return { method, params: { threadSettings: { approvalPolicy, sandboxPolicy: sandboxPolicy ? { type: sandboxPolicy.type } : undefined, model, effort, collaborationMode: collaboration } } }
+    }
+    if (method === 'thread/tokenUsage/updated') {
+      const usage = TokenUsage.safeParse(parsed.data.params)
+      if (!usage.success) return null
+      const { last, total, modelContextWindow } = usage.data.tokenUsage
+      const counts = ({ totalTokens, inputTokens, outputTokens, cachedInputTokens, cacheWriteInputTokens }: z.infer<typeof TokenCount>) => ({ totalTokens, inputTokens, outputTokens, cachedInputTokens, cacheWriteInputTokens })
+      return { method, params: { turnId: usage.data.turnId, tokenUsage: { last: counts(last), total: total ? counts(total) : undefined, modelContextWindow } } }
+    }
+    if (method === 'mcpServer/startupStatus/updated') {
+      const startup = McpStartup.safeParse(parsed.data.params)
+      return startup.success && this.unreachableUserMcp(startup.data) ? { method, params: { name: startup.data.name, status: startup.data.status, userMcp: true } } : null
+    }
+    const kept = ['thread/started', 'turn/started', 'turn/completed', 'turn/plan/updated', 'item/started', 'item/completed', 'serverRequest/resolved', 'error']
+    return kept.includes(method) ? stripImageBytes(this.withKeptImages(withoutDrawnBytes(parsed.data))) : null
+  }
+
+  // Codex reports every server it starts, its own config's too; only the user's that Conclave handed
+  // it are Conclave's to point out, which a stage rebuilt from its log knows by the mark.
+  private unreachableUserMcp(startup: z.infer<typeof McpStartup>): boolean {
+    return startup.status === 'failed' && (startup.userMcp === true || (this.options.userMcp ?? []).some((server) => server.name === startup.name))
+  }
+
+  // Stores the pictures an MCP result carries in its bytes (a screenshot), for the card to show.
+  private keepImages(item: Item): ChatImage[] {
+    const keep = this.options.keepImage
+    const result = z.looseObject({ content: z.array(z.unknown()).catch([]) }).safeParse(item.result)
+    if (!keep || !result.success) return []
+    const kept = keepImageBlocks(result.data.content, keep)
+    if (kept.length) this.keptImages.set(item.id, kept)
+    return kept
+  }
+
+  // A completed item as the log keeps it: each picture the store took named by its marker instead.
+  private withKeptImages(frame: Frame): unknown {
+    if (this.keptImages.size === 0 || frame.method !== 'item/completed') return frame
+    const event = ItemEvent.safeParse(frame.params)
+    const kept = event.success ? this.keptImages.get(event.data.item.id) : undefined
+    const result = event.success ? z.looseObject({ content: z.array(z.unknown()) }).safeParse(event.data.item.result) : null
+    if (!event.success || !kept || !result?.success) return frame
+    this.keptImages.delete(event.data.item.id)
+    const item = { ...event.data.item, result: { ...result.data, content: markKeptImages(result.data.content, kept) } }
+    return { ...frame, params: { ...event.data, item } }
+  }
+
+  takeMessages(): StageMessage[] {
+    const messages = this.messages
+    this.messages = []
+    return messages
+  }
+
+  takeUsage(): UsageReport | null {
+    const usage = this.usage
+    this.usage = null
+    return usage
+  }
+
+  private loggedResponse(frame: Frame): unknown {
+    if (frame.id === undefined || frame.error) return frame
+    const method = this.requests.get(String(frame.id))
+    const thread = ThreadOpened.safeParse(frame.result)
+    if ((method === 'thread/start' || method === 'thread/resume') && thread.success) {
+      const { model, reasoningEffort, approvalPolicy, sandbox, collaborationMode } = thread.data
+      const collaboration = collaborationMode ? { mode: collaborationMode.mode } : undefined
+      return { id: frame.id, result: { thread: { id: thread.data.thread.id }, model, reasoningEffort, approvalPolicy, sandbox: sandbox ? { type: sandbox.type } : undefined, collaborationMode: collaboration } }
+    }
+    if (method === 'model/list') {
+      const list = ModelList.safeParse(frame.result)
+      return { id: frame.id, result: { data: list.success ? this.modelEntries(list.data.data) : [] } }
+    }
+    if (method === 'config/read') return { id: frame.id, result: { config: { model: ConfigRead.safeParse(frame.result).data?.config.model ?? null } } }
+    if (method === 'skills/list') return { id: frame.id, result: { data: [{ skills: this.skillEntries(frame.result) }] } }
+    if (method === 'thread/backgroundTerminals/list') {
+      return { id: frame.id, result: { data: (TerminalList.safeParse(frame.result).data?.data ?? []).map(({ itemId, processId }) => ({ itemId, processId })) } }
+    }
+    const turn = TurnEvent.safeParse(frame.result)
+    if (method && TURN_METHODS.has(method)) return { id: frame.id, result: turn.success ? { turn: { id: turn.data.turn.id } } : {} }
+    return method === 'initialize' ? { id: frame.id, result: {} } : frame
+  }
+
+  private modelEntries(data: readonly unknown[]): ModelEntry[] {
+    return data.flatMap((raw) => {
+      const entry = ModelEntry.safeParse(raw)
+      if (!entry.success || entry.data.hidden) return []
+      const { id, displayName, description, isDefault, supportedReasoningEfforts, defaultReasoningEffort } = entry.data
+      return [{ id, displayName, description, isDefault, supportedReasoningEfforts, defaultReasoningEffort }]
+    })
+  }
+
+  // The skills the user may call on, a line of what each does: the log keeps no more.
+  private skillEntries(result: unknown): CodexSkill[] {
+    const list = SkillsList.safeParse(result)
+    if (!list.success) return []
+    return list.data.data.flatMap((entry) => entry.skills).flatMap((raw) => {
+      const skill = SkillEntry.safeParse(raw)
+      if (!skill.success || skill.data.enabled === false) return []
+      const { name, path, shortDescription, description } = skill.data
+      return [{ name, path, description: offeredCommand(name, shortDescription ?? description, null).description }]
+    })
+  }
+
+  private refreshOptions(): void {
+    const configured = this.catalog.some((entry) => entry.id === this.configModel)
+    const models: ChatModel[] = this.catalog.map((entry) => ({
+      id: entry.id,
+      label: entry.displayName ?? entry.id,
+      description: entry.description ?? null,
+      efforts: (entry.supportedReasoningEfforts ?? []).map((effort) => effort.reasoningEffort),
+      isDefault: configured ? entry.id === this.configModel : (entry.isDefault ?? false)
+    }))
+    const current = this.catalog.find((entry) => entry.id === this.model)
+    this.state.set({
+      queued: this.queue.first,
+      queue: this.queue.view,
+      steerable: false,
+      commands: codexCommands(this.skills),
+      models,
+      model: this.model,
+      // A thread on its model's default effort reports none.
+      effort: this.effort ?? current?.defaultReasoningEffort ?? null,
+      permissionMode: this.planning ? PLAN_MODE : codexMode(this.approvalPolicy, this.sandbox),
+      permissionModes: this.options.planOnly ? [PLAN_MODE] : this.options.readOnly ? ['readOnly'] : ['ask', 'acceptEdits', PLAN_MODE, 'readOnly', ...(this.options.allowBypass ? ['bypass'] : [])]
+    })
+  }
+
+  // The mode a turn runs in: what the user chose, if this stage may run it, else the TUI's default.
+  // It is always stated outright: left out, a thread takes whatever config.toml says.
+  private mode(chosen = this.chosen.permissionMode): CodexMode {
+    const allowed = chosen !== 'bypass' || this.options.allowBypass
+    return (chosen && allowed ? CODEX_MODES[chosen] : undefined) ?? DEFAULT_MODE
+  }
+
+  private turnOptions(permissionMode = this.chosen.permissionMode): Record<string, unknown> {
+    const { approvalPolicy, sandbox, network = false } = this.mode(permissionMode)
+    const plan = permissionMode === PLAN_MODE
+    // Plan mode is set on each turn in it, and left once on the next turn out of it. Its settings
+    // name the model outright, which the mode then takes over the turn's own.
+    const model = this.chosen.model ?? this.model ?? this.catalog.find((entry) => entry.isDefault)?.id
+    const collaboration = (plan || this.planning) && model
+      ? { collaborationMode: { mode: plan ? PLAN_MODE : 'default', settings: { model, reasoning_effort: this.chosen.effort ?? this.effort ?? null, developer_instructions: null } } }
+      : {}
+    return {
+      approvalPolicy,
+      // The conversation's other projects are writable too, as --add-dir makes them in the TUI,
+      // and the user's vault where the stage may write it. A read-only sandbox takes no roots, so
+      // there the vault, like everything, is only read.
+      sandboxPolicy: sandboxPolicy(sandbox, [...this.options.extraDirs, ...(this.options.knowledgeBase?.write ? [this.options.knowledgeBase.path] : [])], network),
+      ...(this.chosen.model ? { model: this.chosen.model } : {}),
+      ...(this.chosen.effort ? { effort: this.chosen.effort } : {}),
+      ...collaboration
+    }
+  }
+
+  // Shows the choice at once; the next turn carries it to Codex, and its settings update confirms it.
+  private choose(option: ChatOption, value: string): void {
+    this.chosen[option] = value
+    if (option === 'model') this.model = value
+    if (option === 'effort') this.effort = value
+    if (option === 'permissionMode') this.showMode(value)
+  }
+
+  private showMode(permissionMode: string): void {
+    const { approvalPolicy, sandbox } = this.mode(permissionMode)
+    this.approvalPolicy = approvalPolicy
+    this.sandbox = sandbox
+    this.planning = permissionMode === PLAN_MODE
+  }
+
+  // A fork takes the thread over through one turn into a new thread of its own (thread/fork with
+  // lastTurnId, inclusive); the thread forked from stays as it was.
+  private openThread(): unknown {
+    const { cwd, resume, fork } = this.options
+    const { approvalPolicy, sandbox } = this.mode()
+    const common = { cwd, approvalPolicy, sandbox, ...(this.chosen.model ? { model: this.chosen.model } : {}) }
+    if (resume && fork) return { id: 'conclave-thread', method: 'thread/fork', params: { threadId: resume, lastTurnId: fork, ...common, excludeTurns: true } }
+    return resume
+      ? { id: 'conclave-thread', method: 'thread/resume', params: { threadId: resume, ...common, excludeTurns: true } }
+      : { id: 'conclave-thread', method: 'thread/start', params: common }
+  }
+
+  private answerBody(pending: Pending, answer: ChatAnswer): unknown {
+    if (pending.kind === 'question') {
+      const answers = answer.decision === 'deny' || !answer.answers ? {} : answer.answers
+      return { answers: Object.fromEntries(Object.entries(answers).map(([question, labels]) => [question, { answers: labels }])) }
+    }
+    const choices = pending.choices ?? []
+    if (pending.elicitation) {
+      const chosen = answer.choice ? choices.find((each) => each.id === answer.choice) : choices.find((each) => each.decision === answer.decision)
+      if (!chosen) throw new Rejection('chat-option-invalid', `this request offers no choice ${answer.choice ?? answer.decision}`)
+      return chosen.raw
+    }
+    if (answer.choice) {
+      const choice = choices.find((each) => each.id === answer.choice)
+      if (!choice) throw new Rejection('chat-option-invalid', `this request offers no choice ${answer.choice}`)
+      return { decision: choice.raw }
+    }
+    // A client that answers by decision gets the first answer Codex listed for it.
+    if (answer.decision === 'deny') return { decision: pending.denial }
+    const listed = choices.find((each) => each.decision === answer.decision)?.raw
+    return { decision: listed ?? (answer.decision === 'allow' ? 'accept' : 'acceptForSession') }
+  }
+
+  private receive(frame: Frame, at: number): void {
+    if (frame.method !== undefined && frame.id !== undefined) return this.serverRequest(frame.method, frame.id, frame.params, at)
+    if (frame.method !== undefined) return this.notification(frame.method, frame.params, at)
+    if (frame.id !== undefined) this.response(frame, at)
+  }
+
+  private response(frame: Frame, at: number): void {
+    const method = this.requests.get(String(frame.id))
+    const error = frame.error ? (frame.error.message ?? `error ${frame.error.code ?? ''}`.trim()) : null
+    if (method === 'initialize') {
+      if (error) {
+        this.startError = frame.error?.code === -32601 ? '当前 Codex 版本不支持聊天模式，请升级 Codex 或改用终端' : error
+      } else {
+        this.initialized = true
+      }
+    } else if (method === 'thread/start' || method === 'thread/resume' || method === 'thread/fork') {
+      const thread = ThreadOpened.safeParse(frame.result)
+      // The stage's thread is the first one opened: another would take its turns for a subagent's.
+      if (thread.success && !this.threadId) {
+        this.threadId = thread.data.thread.id
+        this.model = thread.data.model ?? this.model
+        this.effort = thread.data.reasoningEffort ?? this.effort
+        this.approvalPolicy = thread.data.approvalPolicy ?? this.approvalPolicy
+        this.sandbox = sandboxName(thread.data.sandbox?.type) ?? this.sandbox
+        // A thread opened for a plan-mode start is not in plan mode until its first turn says so.
+        this.planning = thread.data.collaborationMode ? thread.data.collaborationMode.mode === PLAN_MODE : this.chosen.permissionMode === PLAN_MODE
+      } else if (!thread.success) {
+        this.startError = error ?? 'Codex did not open a thread'
+      }
+    } else if (method === 'turn/steer') {
+      this.steered(String(frame.id), error, at)
+    } else if (method === 'thread/backgroundTerminals/list') {
+      if (this.listingTerminals === String(frame.id)) this.listingTerminals = null
+      for (const terminal of TerminalList.safeParse(frame.result).data?.data ?? []) {
+        this.processes.set(terminal.itemId, terminal.processId)
+        const tool = this.items.get(`t:${terminal.itemId}`)
+        if (tool?.kind === 'tool' && tool.background && tool.status === 'running' && !tool.stoppable) this.items.put({ ...tool, stoppable: true }, at)
+      }
+    } else if (method === 'thread/backgroundTerminals/terminate') {
+      const terminated = z.looseObject({ terminated: z.boolean() }).safeParse(frame.result).data?.terminated
+      if ((error || terminated === false) && this.stopsAsked.delete(String(frame.id))) {
+        this.items.notice('warning', `没能停止后台命令：${error ?? '它已经结束了'}`, at)
+      }
+    } else if (method === 'model/list') {
+      const list = ModelList.safeParse(frame.result)
+      if (list.success && !this.options.providerModels) this.catalog = this.modelEntries(list.data.data)
+    } else if (method === 'config/read') {
+      this.configModel = ConfigRead.safeParse(frame.result).data?.config.model ?? null
+    } else if (method === 'skills/list') {
+      if (!error) this.skills = this.skillEntries(frame.result)
+    } else if (method && TURN_METHODS.has(method)) {
+      const turn = TurnEvent.safeParse(frame.result)
+      if (turn.success && this.turn && !this.turn.turnId) this.turn.turnId = turn.data.turn.id
+      if (error) this.endTurn('failed', error, null, at)
+    }
+  }
+
+  // A subagent's thread streams on the connection Conclave opened: its calls and replies are not this
+  // chat's. Whether a request it made was resolved still is, as the request shows here.
+  private childThread(method: string, params: unknown): string | null {
+    if (!this.threadId || method === 'serverRequest/resolved') return null
+    const thread = ThreadRef.safeParse(params)
+    return thread.success && thread.data.threadId !== this.threadId ? thread.data.threadId : null
+  }
+
+  private childNotification(threadId: string, method: string, params: unknown, at: number): void {
+    if (method === 'item/started') {
+      const event = ItemEvent.safeParse(params)
+      if (event.success && event.data.item.type === 'fileChange') {
+        this.childFiles.set(event.data.item.id, (event.data.item.changes ?? []).map((change) => change.path).join(', '))
+      }
+      return
+    }
+    if (method !== 'turn/completed') return
+    // A subagent the thread does not wait on is settled by its own turn's end.
+    const turn = ChildTurn.safeParse(params)
+    if (!turn.success) return
+    const { status, items, error } = turn.data.turn
+    const reply = (items ?? []).filter((item) => item.type === 'agentMessage' && item.text?.trim()).at(-1)?.text ?? null
+    this.agentState(threadId, TURN_AGENT_STATUS[status ?? ''] ?? 'completed', status === 'failed' ? (error?.message ?? reply) : reply, at)
+  }
+
+  private notification(method: string, params: unknown, at: number): void {
+    const child = this.childThread(method, params)
+    if (child) return this.childNotification(child, method, params, at)
+    switch (method) {
+      case 'skills/changed':
+        this.skillsRequested = false
+        return
+      case 'thread/started': {
+        const thread = ThreadEvent.safeParse(params)
+        if (thread.success && !this.threadId) this.threadId = thread.data.thread.id
+        return
+      }
+      case 'mcpServer/startupStatus/updated': {
+        const startup = McpStartup.safeParse(params)
+        if (startup.success && this.unreachableUserMcp(startup.data)) this.items.mcpUnreachable(startup.data.name, at)
+        return
+      }
+      case 'turn/started': {
+        const turn = TurnEvent.safeParse(params)
+        if (turn.success && this.turn && !this.turn.turnId) this.turn.turnId = turn.data.turn.id
+        return
+      }
+      case 'turn/completed': {
+        const turn = TurnEvent.safeParse(params)
+        if (!turn.success) return
+        const { status, error, durationMs } = turn.data.turn
+        const state: ChatTurnState = status === 'interrupted' ? 'interrupted' : status === 'failed' ? 'failed' : 'completed'
+        const message = state === 'failed' ? (error?.message ?? null) : null
+        // Codex says nothing of when the limit lifts; core's usage reading does.
+        const limited = state === 'failed' && (this.limited !== null || isUsageLimit(error?.codexErrorInfo))
+        return this.endTurn(state, message, durationMs ?? null, at, limited ? { message: message ?? this.limited, resetsAt: null } : null)
+      }
+      case 'item/started':
+      case 'item/completed': {
+        const event = ItemEvent.safeParse(params)
+        if (event.success) this.item(event.data.item, method === 'item/completed', at)
+        return
+      }
+      case 'item/agentMessage/delta': {
+        const delta = Delta.safeParse(params)
+        if (!delta.success) return
+        // Made on the first delta rather than at item/started, which a replayed log also has: an
+        // interrupted message then leaves no empty item behind.
+        const id = `m:${delta.data.itemId}`
+        if (!this.items.get(id)) this.items.put({ id, kind: 'assistant', text: '', streaming: true }, at)
+        this.items.append(id, delta.data.delta)
+        return
+      }
+      case 'thread/settings/updated': {
+        const update = SettingsUpdated.safeParse(params)
+        if (!update.success) return
+        const { approvalPolicy, sandboxPolicy, model, effort, collaborationMode } = update.data.threadSettings
+        if (approvalPolicy !== undefined) this.approvalPolicy = approvalPolicy
+        this.sandbox = sandboxName(sandboxPolicy?.type) ?? this.sandbox
+        if (model) this.model = model
+        if (effort !== undefined) this.effort = effort
+        if (collaborationMode) this.planning = collaborationMode.mode === PLAN_MODE
+        return
+      }
+      case 'account/rateLimits/updated': {
+        const update = RateLimits.safeParse(params)
+        if (!update.success) return
+        const { limitId, primary, secondary, planType } = update.data.rateLimits
+        if (limitId && limitId !== PLAN_LIMIT_ID) return
+        const windows = [
+          primary ? windowOf(primary.usedPercent, primary.windowDurationMins ?? null, primary.resetsAt, 'session') : null,
+          secondary ? windowOf(secondary.usedPercent, secondary.windowDurationMins ?? null, secondary.resetsAt, 'weekly') : null
+        ].filter((window) => window !== null)
+        this.usage = mergeUsageReports(this.usage, { at, windows, plan: planType })
+        return
+      }
+      case 'thread/tokenUsage/updated': {
+        const usage = TokenUsage.safeParse(params)
+        if (!usage.success) return
+        const { last, total, modelContextWindow } = usage.data.tokenUsage
+        const previous = this.threadUsage
+        if (total) this.threadUsage = total
+        this.state.setContext({ used: last.totalTokens, window: modelContextWindow ?? null })
+        // A resumed thread may first replay usage from its previous turn.
+        if (!this.turn || (usage.data.turnId && usage.data.turnId !== this.turn.turnId)) return
+        const increment = (key: 'totalTokens' | 'inputTokens' | 'outputTokens' | 'cachedInputTokens' | 'cacheWriteInputTokens'): number | undefined => {
+          const current = total?.[key]
+          const before = previous?.[key]
+          return current !== undefined && before !== undefined && current >= before ? current - before : last[key]
+        }
+        const input = increment('inputTokens')
+        const output = increment('outputTokens')
+        const reportKey = JSON.stringify({ last, total })
+        if (!this.meteredReports.has(reportKey) && input !== undefined && output !== undefined) {
+          this.meteredReports.add(reportKey)
+          if (input > 0) this.meteredRequests.push({
+            model: this.state.current.model, input, output, cacheRead: increment('cachedInputTokens') ?? null,
+            cacheWrite: increment('cacheWriteInputTokens') ?? null, cacheWrite1h: 0, costUsd: null,
+            ...(last.inputTokens === input ? { requestInputs: [input] } : {})
+          })
+          else if (output > 0) {
+            const latest = this.meteredRequests.at(-1)
+            if (latest) latest.output += output
+          }
+        }
+
+        if (input !== undefined && output !== undefined) {
+          if (input === 0 && output === 0 && !this.turnUsage) return
+          const before = this.turnUsage && 'input' in this.turnUsage ? this.turnUsage : null
+          this.turnUsage = { input: (before?.input ?? 0) + input, output: (before?.output ?? 0) + output }
+          this.state.set({ turnUsage: this.turnUsage })
+        } else {
+          const count = increment('totalTokens')
+          if (count !== undefined && (count > 0 || this.turnUsage)) {
+            const before = this.turnUsage
+            this.turnUsage = { total: (before ? 'total' in before ? before.total : before.input + before.output : 0) + count }
+            this.state.set({ turnUsage: null })
+          }
+        }
+        return
+      }
+      case 'turn/plan/updated': {
+        const plan = PlanUpdated.safeParse(params)
+        if (!plan.success) return
+        const todos = plan.data.plan.map((step) => ({ content: step.step, status: TODO_STATUS[step.status] ?? 'pending', activeForm: null }))
+        this.state.setTodos(todos, this.turn?.ref ?? null, at)
+        return
+      }
+      case 'serverRequest/resolved': {
+        const resolved = Resolved.safeParse(params)
+        if (resolved.success) this.resolve(String(resolved.data.requestId), 'cancelled', null, at)
+        return
+      }
+      case 'error': {
+        const event = ErrorEvent.safeParse(params)
+        if (!event.success) return
+        const message = event.data.error.message ?? 'Codex reported an error'
+        // The turn's own end shows a usage limit, once, with what is done about it.
+        if (isUsageLimit(event.data.error.codexErrorInfo) && !event.data.willRetry) {
+          this.limited = message
+          return
+        }
+        this.items.notice(event.data.willRetry ? 'warning' : 'error', message, at)
+      }
+    }
+  }
+
+  private item(item: Item, completed: boolean, at: number): void {
+    const toolId = `t:${item.id}`
+    switch (item.type) {
+      case 'agentMessage': {
+        if (!completed) return
+        const text = item.text ?? ''
+        const asked = item.delivery === 'async' ? (item.questions ?? []).filter((question) => question.title.trim()) : []
+        // The text of an async question is Codex's plain rendering of it for clients that show no
+        // card; with the card, it would say the same twice.
+        if (!asked.length || text.trim() !== plainQuestions(asked)) this.items.put({ id: `m:${item.id}`, kind: 'assistant', text, streaming: false }, at)
+        if (this.turn && text.trim()) this.turn.assistant = text
+        if (asked.length) this.ask(item.id, asked, at)
+        return
+      }
+      case 'reasoning': {
+        const text = [...(item.summary ?? []), ...(item.content ?? []).filter((part) => typeof part === 'string')].join('\n')
+        if (completed && text.trim()) this.items.put({ id: `r:${item.id}`, kind: 'reasoning', text, streaming: false }, at)
+        return
+      }
+      case 'commandExecution': {
+        const command = item.command ?? ''
+        const earlier = this.items.get(toolId)
+        if (item.processId) this.processes.set(item.id, item.processId)
+        // Ended by the user's stop, Codex reports it failed: it was stopped, not a failure.
+        const stopped = completed && [...this.stopsAsked.values()].includes(toolId)
+        const background = earlier?.kind === 'tool' && earlier.background
+        this.items.put({
+          id: toolId,
+          kind: 'tool',
+          name: 'commandExecution',
+          title: unwrapShell(command),
+          description: commandDescription(item.commandActions),
+          input: unwrapShell(command),
+          status: stopped ? 'interrupted' : completed ? this.settled(toolStatus(item.status, item.exitCode)) : 'running',
+          ...(completed && !stopped && (item.status === 'completed' || item.status === 'failed') ? {
+            execution: { status: item.status, exitCode: item.exitCode ?? null }
+          } : {}),
+          output: item.aggregatedOutput ? clip(item.aggregatedOutput) : null,
+          diffs: [],
+          ...(background ? { background: true, ...(earlier.stoppable ? { stoppable: true } : {}) } : {}),
+          ...(stopped ? { stopReason: 'user' as const } : {})
+        }, at)
+        if (completed && !this.turn && earlier?.kind === 'tool' && earlier.background) this.showBackground()
+        return
+      }
+      case 'fileChange': {
+        const changes = item.changes ?? []
+        this.items.put({
+          id: toolId,
+          kind: 'tool',
+          name: 'fileChange',
+          title: changes.map((change) => change.path).join(', '),
+          input: null,
+          status: completed ? this.settled(toolStatus(item.status, null)) : 'running',
+          output: null,
+          diffs: changes.map(diffOf)
+        }, at)
+        return
+      }
+      case 'mcpToolCall': {
+        const args = z.record(z.string(), z.unknown()).catch({}).parse(item.arguments ?? {})
+        const name = `${item.server ?? 'mcp'}.${item.tool ?? 'tool'}`
+        if (item.server && item.tool) {
+          if (completed) this.mcpCalls.delete(item.server)
+          else this.mcpCalls.set(item.server, { itemId: item.id, tool: item.tool })
+        }
+        const browser = browserToolKind(name)
+        const first = Object.values(args).find((value) => typeof value === 'string')
+        const result = completed ? mcpResult(item, this.keepImages(item)) : { text: null, images: [] }
+        const earlier = this.items.get(toolId)
+        const images = result.images.length ? result.images : earlier?.kind === 'tool' ? earlier.images : undefined
+        this.items.put({
+          id: toolId,
+          kind: 'tool',
+          name,
+          title: browser ? describeBrowserTool(browser, args) : typeof first === 'string' ? first.split('\n')[0]! : '',
+          input: Object.keys(args).length && (!browser || showBrowserInput(browser)) ? clip(JSON.stringify(args, null, 2), 4000) : null,
+          status: completed ? this.settled(item.error ? 'failed' : toolStatus(item.status, null)) : 'running',
+          output: result.text,
+          diffs: [],
+          ...(images?.length ? { images } : {})
+        }, at)
+        return
+      }
+      case 'plan': {
+        if (!completed || !item.text?.trim()) return
+        const requestId = `plan:${item.id}`
+        this.items.put({
+          id: `a:${requestId}`,
+          kind: 'approval',
+          requestId,
+          tool: PLAN_MODE,
+          title: '计划',
+          detail: item.text,
+          toolItemId: null,
+          decisions: ['allow', 'allowForSession', 'deny'],
+          resolution: null
+        }, at)
+        this.pending.set(requestId, { kind: 'plan', itemId: `a:${requestId}`, rawId: requestId, denial: 'decline' })
+        return
+      }
+      case CODEX_IMAGE_VIEW: {
+        // The picture is on disk; the chat shows it from there (toolImagePath).
+        if (!item.path) return
+        this.items.put({ id: toolId, kind: 'tool', name: CODEX_IMAGE_VIEW, title: item.path, input: null, status: completed ? 'done' : 'running', output: null, diffs: [] }, at)
+        return
+      }
+      case CODEX_IMAGE_GENERATION: {
+        // Shown from the file it saved, like an imageView; the bytes it also sends are left out.
+        const failure = typeof item.failure === 'string' ? item.failure : item.failure?.message ?? null
+        const failed = item.status === 'failed' || failure !== null
+        this.items.put({
+          id: toolId,
+          kind: 'tool',
+          name: CODEX_IMAGE_GENERATION,
+          title: item.savedPath ?? '',
+          input: item.revisedPrompt ? clip(item.revisedPrompt, 4000) : null,
+          status: completed ? this.settled(failed ? 'failed' : 'done') : 'running',
+          output: failure,
+          diffs: []
+        }, at)
+        return
+      }
+      case 'webSearch': {
+        this.items.put({ id: toolId, kind: 'tool', name: 'webSearch', title: item.query ?? '', input: null, status: completed ? 'done' : 'running', output: null, diffs: [] }, at)
+        return
+      }
+      case 'collabAgentToolCall': {
+        if (item.tool === 'spawnAgent') return this.spawned(item, completed, at)
+        // Waiting on, messaging or closing subagents shows as how each of them is doing.
+        if (completed) {
+          for (const [thread, state] of Object.entries(item.agentsStates ?? {})) this.agentState(thread, state.status, state.message ?? null, at)
+        }
+        return
+      }
+      case 'contextCompaction':
+        if (completed) this.items.notice('info', CONTEXT_COMPACTED, at)
+    }
+  }
+
+  // A subagent sent off as a call of its own, like Claude's Task: what it was told, and later what it
+  // reported back.
+  private spawned(item: Item, completed: boolean, at: number): void {
+    const id = `t:${item.id}`
+    const prompt = item.prompt ?? ''
+    const receiver = item.receiverThreadIds?.[0]
+    if (receiver) this.agents.set(receiver, id)
+    const state = receiver ? item.agentsStates?.[receiver] : undefined
+    const spawnFailed = completed && item.status !== 'completed'
+    this.items.put({
+      id,
+      kind: 'tool',
+      name: 'spawnAgent',
+      title: prompt.split('\n')[0] ?? '',
+      input: prompt ? clip(JSON.stringify({ prompt }), 4000) : null,
+      status: spawnFailed ? this.settled(item.status === 'interrupted' ? 'interrupted' : 'failed') : (AGENT_STATUS[state?.status ?? ''] ?? 'running'),
+      output: state?.message ?? null,
+      diffs: []
+    }, at)
+  }
+
+  private agentState(thread: string, status: string, message: string | null, at: number): void {
+    const id = this.agents.get(thread)
+    const tool = id ? this.items.get(id) : undefined
+    const next = AGENT_STATUS[status]
+    if (tool?.kind !== 'tool' || !next) return
+    // Closing a subagent that had finished says it was shut down, which is no news of how it did.
+    if (status === 'shutdown' && tool.status !== 'running') return
+    this.items.put({ ...tool, status: this.settled(next), output: message ?? tool.output }, at)
+  }
+
+  private serverRequest(method: string, rawId: string | number, params: unknown, at: number): void {
+    const requestId = String(rawId)
+    if (method === 'item/commandExecution/requestApproval') {
+      const request = CommandApproval.parse(params)
+      const offered = request.availableDecisions
+      const denial = offered == null || offered.includes('decline') ? 'decline' : 'cancel'
+      const command = unwrapShell(request.command ?? '')
+      const choices = codexChoices(offered, { kind: 'command', values: [command] }, denial)
+      this.approval(requestId, rawId, 'commandExecution', command, this.requestDetail(method, params, request.reason ?? null), request.itemId, choices, denial, at)
+    } else if (method === 'item/fileChange/requestApproval') {
+      const request = FileApproval.parse(params)
+      const tool = request.itemId ? this.items.get(`t:${request.itemId}`) : undefined
+      const title = tool?.kind === 'tool' && tool.title ? tool.title : ((request.itemId && this.childFiles.get(request.itemId)) || '修改文件')
+      const files = tool?.kind === 'tool' && tool.diffs.length ? tool.diffs.map((diff) => diff.path) : ((request.itemId && this.childFiles.get(request.itemId)) || '').split(', ').filter(Boolean)
+      // An edit of a reference project is refused here, whoever would have answered it.
+      const fenced = referencePathIn(this.options.references ?? [], files)
+      if (fenced) {
+        this.items.put({ id: `a:${requestId}`, kind: 'approval', requestId, tool: 'fileChange', title, detail: `参考项目只读，Conclave 已拒绝修改 ${fenced}`, toolItemId: request.itemId ? `t:${request.itemId}` : null, decisions: ['allow', 'deny'], resolution: 'denied' }, at)
+        this.refused.set(requestId, rawId)
+        return
+      }
+      const choices = codexChoices(null, { kind: 'files', values: files }, 'decline')
+      this.approval(requestId, rawId, 'fileChange', title, this.requestDetail(method, params, request.reason ?? null), request.itemId, choices, 'decline', at)
+    } else if (method === 'item/tool/requestUserInput') {
+      const request = UserInput.parse(params)
+      const itemId = `q:${requestId}`
+      const questions = request.questions.map((question) => ({
+        id: question.id,
+        header: question.header,
+        question: question.question,
+        options: (question.options ?? []).map((option) => ({ label: option.label, description: option.description ?? null })),
+        multiSelect: false
+      }))
+      this.items.put({ id: itemId, kind: 'question', requestId, questions, answers: null, resolution: null }, at)
+      this.pending.set(requestId, { kind: 'question', itemId, rawId, denial: 'cancel' })
+    } else if (method === 'mcpServer/elicitation/request' && McpToolApproval.safeParse(params).success) {
+      this.mcpToolApproval(requestId, rawId, McpToolApproval.parse(params), method, params, at)
+    } else {
+      this.unanswered.set(requestId, rawId)
+    }
+  }
+
+  // Once, this run (where Codex offers to remember it for the session), or no. Remembering it
+  // always is left out: Codex would keep that in its own config, outside what Conclave can show.
+  private mcpToolApproval(requestId: string, rawId: string | number, request: z.infer<typeof McpToolApproval>, method: string, params: unknown, at: number): void {
+    const call = this.mcpCalls.get(request.serverName)
+    const tool = call?.tool ?? /"([^"]+)"/.exec(request.message)?.[1] ?? null
+    const name = tool ? `${request.serverName}.${tool}` : request.serverName
+    const shown = request._meta.tool_params_display.map((param) => `${param.display_name ?? param.name ?? ''}: ${typeof param.value === 'string' ? param.value : JSON.stringify(param.value)}`)
+    const choices: CodexChoice[] = [
+      { id: 'allow', decision: 'allow', grants: [], raw: { action: 'accept', content: null, _meta: null } },
+      ...(request._meta.persist.includes('session') ? [{ id: 'allowForSession', decision: 'allowForSession' as const, grants: [{ kind: 'rules' as const, values: [name], scope: 'run' as const, behavior: 'allow' as const }], raw: { action: 'accept', content: null, _meta: { persist: 'session' } } }] : []),
+      { id: 'deny', decision: 'deny', grants: [], raw: { action: 'decline', content: null, _meta: null } }
+    ]
+    this.approval(requestId, rawId, 'mcpToolCall', name, this.requestDetail(method, params, shown.length ? clip(shown.join('\n'), 2000) : null), call?.itemId, choices, 'decline', at)
+    const pending = this.pending.get(requestId)
+    if (pending) pending.elicitation = true
+  }
+
+  // A subagent's request is the user's to answer too, in the chat that sent it off, said to be its.
+  private requestDetail(method: string, params: unknown, reason: string | null): string | null {
+    if (!this.childThread(method, params)) return reason
+    return reason ? `子 Agent 的请求：${reason}` : '子 Agent 的请求'
+  }
+
+  private approval(
+    requestId: string,
+    rawId: string | number,
+    tool: string,
+    title: string,
+    detail: string | null,
+    itemId: string | undefined,
+    choices: CodexChoice[],
+    denial: 'decline' | 'cancel',
+    at: number
+  ): void {
+    const approvalId = `a:${requestId}`
+    this.items.put({
+      id: approvalId,
+      kind: 'approval',
+      requestId,
+      tool,
+      title,
+      detail,
+      toolItemId: itemId ? `t:${itemId}` : null,
+      decisions: choiceDecisions(choices),
+      choices: choices.map(({ id, decision, grants }) => ({ id, decision, grants })),
+      resolution: null
+    }, at)
+    this.pending.set(requestId, { kind: 'approval', itemId: approvalId, rawId, denial, choices })
+  }
+
+  // Codex's question in passing, as a question card; its options are all it offers, one to pick.
+  private ask(messageId: string, asked: ReadonlyArray<{ title: string; options?: string[] | null }>, at: number): void {
+    const requestId = `async:${messageId}`
+    const itemId = `q:${requestId}`
+    if (this.items.get(itemId)) return
+    const questions = asked.map((question, index) => ({
+      id: `q${index + 1}`,
+      header: '',
+      question: question.title,
+      options: (question.options ?? []).map((label) => ({ label, description: null })),
+      multiSelect: false
+    }))
+    this.items.put({ id: itemId, kind: 'question', requestId, questions, answers: null, resolution: null, async: true }, at)
+    this.asks.set(requestId, itemId)
+  }
+
+  private sent(frame: Frame, at: number, ref: string | undefined, images: readonly ChatImage[]): void {
+    // Whatever the user says next answers, or passes over, what was asked in passing.
+    if (frame.method === 'turn/start' || frame.method === 'turn/steer') {
+      for (const requestId of [...this.asks.keys()]) this.closeAsk(requestId, null, at)
+    }
+    if (frame.method !== undefined && frame.id !== undefined) {
+      this.requests.set(String(frame.id), frame.method)
+      if (frame.method === 'initialize') this.initSent = true
+      if (frame.method === 'thread/start' || frame.method === 'thread/resume' || frame.method === 'thread/fork') this.threadRequested = true
+      if (frame.method === 'model/list') this.modelsRequested = true
+      if (frame.method === 'config/read') this.configRequested = true
+      if (frame.method === 'skills/list') this.skillsRequested = true
+      if (frame.method === 'turn/interrupt') {
+        this.interrupts++
+        if (this.turn) this.stopping = true
+      }
+      if (frame.method === 'thread/backgroundTerminals/list') {
+        this.terminalLists++
+        this.listingTerminals = String(frame.id)
+        for (const id of this.unlistedBackground()) this.terminalsAsked.add(id)
+      }
+      if (frame.method === 'thread/backgroundTerminals/terminate') {
+        this.stops++
+        const processId = z.looseObject({ processId: z.string() }).safeParse(frame.params).data?.processId
+        const item = [...this.processes].find(([, each]) => each === processId)?.[0]
+        if (item) this.stopsAsked.set(String(frame.id), `t:${item}`)
+      }
+      if (TURN_METHODS.has(frame.method)) this.startTurn(frame, at, ref, images)
+      if (frame.method === 'turn/steer') {
+        this.steers++
+        this.steering.set(String(frame.id), { text: inputText(frame.params), images: [...images], ref: ref ?? `steer-${this.steers}` })
+      }
+      return
+    }
+    if (frame.method === 'initialized') {
+      this.initializedSent = true
+      return
+    }
+    if (frame.id === undefined) return
+    const requestId = String(frame.id)
+    if (this.unanswered.delete(requestId) || this.refused.delete(requestId)) return
+    const pending = this.pending.get(requestId)
+    const decision = Decision.safeParse(frame.result)
+    if (!pending || !decision.success) return
+    if (pending.kind === 'question') {
+      const answers = Object.fromEntries(Object.entries(decision.data.answers ?? {}).map(([question, value]) => [question, Answers.parse(value).answers]))
+      this.resolve(requestId, Object.keys(answers).length ? 'answered' : 'cancelled', answers, at)
+    } else {
+      const choice = codexChoiceOf(pending.choices ?? [], decision.data.decision)
+      const resolution = choice ? RESOLUTIONS[choice.decision] : (DECISIONS[String(decision.data.decision)] ?? (codexAnswerAllows(decision.data.decision) ? 'allowedForSession' : 'denied'))
+      this.resolve(requestId, resolution, null, at, choice?.id ?? null)
+    }
+  }
+
+  private startTurn(frame: Frame, at: number, ref: string | undefined, images: readonly ChatImage[]): void {
+    this.turns++
+    this.turnUsage = null
+    this.meteredRequests = []
+    this.meteredReports.clear()
+    this.state.set({ turnUsage: null })
+    const params = TurnParams.safeParse(frame.params)
+    // A command's turn runs in the thread's mode and leaves a waiting plan waiting.
+    if (params.success && frame.method === 'turn/start') this.turnMode(params.data, at)
+    const typed = inputText(frame.params)
+    const text = frame.method ? (requestText(frame.method, frame.params) ?? typed) : typed
+    const id = ref ?? `turn-${this.turns}`
+    this.items.put({ id: `u:${id}`, kind: 'user', text, images: [...images] }, at)
+    this.queue.sent(ref)
+    this.turn = { ref: id, turnId: null, assistant: null, steerable: frame.method === 'turn/start' }
+    this.messages.push({ role: 'user', text: messageText(text, images), eventKey: `chat:${id}:user`, complete: false })
+  }
+
+  // Codex's answer to a message sent into the turn: taken, it shows as the user's; refused (the
+  // turn ended, or takes none), it waits for the turn's end, saying why.
+  private steered(requestId: string, error: string | null, at: number): void {
+    const message = this.steering.get(requestId)
+    if (!message) return
+    this.steering.delete(requestId)
+    if (error) {
+      this.queue.add(message.text, message.ref, message.images)
+      const why = /no active turn/i.test(error) ? '这一轮刚好结束了' : error
+      this.items.notice('info', `没能插进正在进行的这一轮（${why}），已排到回合结束后发送`, at)
+      return
+    }
+    this.items.put({ id: `u:${message.ref}`, kind: 'user', text: message.text, images: message.images }, at)
+    this.queue.sent(message.ref)
+    this.messages.push({ role: 'user', text: messageText(message.text, message.images), eventKey: `chat:${message.ref}:user`, complete: false })
+  }
+
+  // A turn answers a waiting plan by the mode it runs in: plan mode keeps planning, any other
+  // carries the plan out, and the conversation goes on in that mode. Read off the frame, so a
+  // stage rebuilt from its log comes out the same.
+  private turnMode(params: z.infer<typeof TurnParams>, at: number): void {
+    if (params.collaborationMode) this.planning = params.collaborationMode.mode === PLAN_MODE
+    const plans = [...this.pending].filter(([, pending]) => pending.kind === 'plan').map(([requestId]) => requestId)
+    if (plans.length === 0) return
+    const mode = this.planning ? PLAN_MODE : codexMode(params.approvalPolicy, sandboxName(params.sandboxPolicy?.type))
+    if (mode && mode in CODEX_MODES) {
+      this.chosen.permissionMode = mode
+      this.showMode(mode)
+    }
+    const resolution = this.planning ? 'denied' : mode === 'ask' ? 'allowed' : 'allowedForSession'
+    const carriedOutIn = ChatPermissionMode.safeParse(mode)
+    plans.forEach((requestId) => this.resolve(requestId, resolution, null, at, null, carriedOutIn.success ? carriedOutIn.data : null))
+  }
+
+  private resolve(
+    requestId: string,
+    resolution: 'allowed' | 'allowedForSession' | 'denied' | 'cancelled' | 'answered',
+    answers: Record<string, string[]> | null,
+    at: number,
+    chosen: string | null = null,
+    mode: ChatPermissionMode | null = null
+  ): void {
+    const pending = this.pending.get(requestId)
+    if (!pending) return
+    this.pending.delete(requestId)
+    const item = this.items.get(pending.itemId)
+    if (item?.kind === 'question') {
+      this.items.put({ ...item, answers, resolution: resolution === 'answered' ? 'answered' : 'cancelled' }, at)
+    } else if (item?.kind === 'approval') {
+      this.items.put({ ...item, resolution: resolution === 'answered' ? 'allowed' : resolution, ...(item.choices ? { chosen } : {}), ...(mode ? { mode } : {}) }, at)
+    }
+  }
+
+  private settled(status: ChatToolStatus): ChatToolStatus {
+    return status === 'failed' && this.stopping ? 'interrupted' : status
+  }
+
+  private endTurn(state: ChatTurnState, error: string | null, durationMs: number | null, at: number, limit: UsageLimitHit | null = null): void {
+    if (state !== 'completed') this.items.settleTools(state, at)
+    this.stopping = false
+    this.state.endTurn()
+    this.queue.turnEnded(state)
+    for (const item of this.items.list()) {
+      if (item.kind === 'assistant' && item.streaming) this.items.put({ ...item, streaming: false }, at)
+      // Unlike a command, a picture never outlives its turn: one still drawing was given up on.
+      if (item.kind === 'tool' && item.name === CODEX_IMAGE_GENERATION && item.status === 'running') this.items.put({ ...item, status: 'failed' }, at)
+    }
+    for (const [requestId, pending] of [...this.pending]) {
+      if (pending.kind !== 'plan') this.resolve(requestId, 'cancelled', null, at)
+    }
+    const turn = this.turn
+    const id = turn ? `turn:${turn.ref}` : `turn:result-${++this.results}`
+    this.items.put({ id, kind: 'turn', state, error, durationMs, usage: this.turnUsage, ...(this.meteredRequests.length ? { metering: { models: this.meteredRequests, calls: this.meteredRequests.length, callsEstimated: true, reportedCostUsd: null } } : {}), providerRef: turn?.turnId ?? null }, at)
+    if (limit) this.items.usageLimit(id, limit, at)
+    this.limited = null
+    this.turnUsage = null
+    this.state.set({ turnUsage: null })
+    if (turn?.assistant) {
+      this.messages.push({ role: 'assistant', text: turn.assistant, eventKey: `chat:${turn.ref}:assistant`, complete: true })
+    }
+    this.turn = null
+    // A command still running as its turn completes runs on in its session (unified exec) until it
+    // exits, which Codex reports then: it is the agent's background work now.
+    if (state === 'completed') {
+      for (const item of this.items.list()) {
+        if (item.kind === 'tool' && item.name === 'commandExecution' && item.status === 'running') {
+          this.items.put({ ...item, background: true, ...(this.processes.has(item.id.slice(2)) ? { stoppable: true } : {}) }, at)
+        }
+      }
+      this.showBackground()
+    }
+  }
+
+  // Codex lets one process write a thread at a time: one the Codex app (or another codex) has open
+  // cannot be resumed here until it lets go.
+  explainFailure(stderr: string): string | null {
+    return WRITER_CONFLICT.test(stderr) || WRITER_CONFLICT.test(this.startError ?? '') ? WRITER_CONFLICT_TEXT : null
+  }
+
+  private ended(stderr: string, at: number): void {
+    if (this.exited) return
+    if (this.turn) this.endTurn('interrupted', 'Agent 已退出', null, at)
+    // Subagents still at work go with the agent.
+    this.items.settleTools('interrupted', at)
+    // A plan left waiting goes with the agent; the next stage starts from its own messages.
+    for (const [requestId, pending] of [...this.pending]) {
+      if (pending.kind === 'plan') this.resolve(requestId, 'cancelled', null, at)
+    }
+    this.conclave.cancelAll(at)
+    this.exited = true
+    const plain = stripAnsi(stderr)
+    const tail = plain.trim().split('\n').slice(-20).join('\n')
+    if (this.threadId) return
+    const unsupported = /unrecognized subcommand/i.test(plain)
+    const reason = unsupported ? '当前 Codex 版本不支持聊天模式，请升级 Codex 或改用终端' : (this.explainFailure(plain) ?? this.startError ?? tail)
+    if (unsupported) this.startError = reason
+    this.items.notice('error', `Codex 没能以聊天模式启动${reason ? `：\n${reason}` : ''}`, at)
+  }
+}

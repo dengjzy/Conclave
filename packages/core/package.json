@@ -1,0 +1,27 @@
+{
+  "name": "@conclave/core",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node ../../scripts/build-plugins.mjs && tsx watch src/main.ts",
+    "start": "node ../../scripts/build-plugins.mjs && tsx src/main.ts",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@conclave/protocol": "workspace:*",
+    "semver": "7.8.5",
+    "undici": "7.29.1",
+    "ws": "catalog:",
+    "yauzl": "3.2.0",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/semver": "^7.8.0",
+    "@types/ws": "catalog:",
+    "@types/yauzl": "^3.4.0",
+    "tsx": "catalog:",
+    "typescript": "catalog:"
+  }
+}

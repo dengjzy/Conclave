@@ -1,0 +1,57 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { PluginProcess, pluginEnvironment } from './plugin-process'
+import { pluginFixture } from './plugin-fixtures'
+
+describe('plugin process boundary', () => {
+  let directory: string
+  beforeEach(async () => { directory = await mkdtemp(path.join(os.tmpdir(), 'conclave-plugin-process-')) })
+  afterEach(async () => { await rm(directory, { recursive: true, force: true }) })
+
+  it('keeps multiple login prompts in one process and starts the next operation separately', async () => {
+    const manifest = await pluginFixture(directory)
+    const runtime = new PluginProcess(manifest, path.join(directory, 'main.mjs'))
+    const pids: string[] = []
+    const notices: string[] = []
+    const session = { prompt: async (prompt: { label: string }) => { pids.push(prompt.label); return String(pids.length) }, notify: (notice: { message: string }) => { notices.push(notice.message) } }
+    const result = await runtime.call('login', { source: 'demo', settings: {} }, undefined, session)
+    expect(result.credential.payload.token).toBe('1:2')
+    expect(pids[0]).toBe(pids[1])
+    expect(notices).toEqual(['Signing in'])
+    await runtime.call('login', { source: 'demo', settings: {} }, undefined, session)
+    expect(pids[2]).not.toBe(pids[0])
+    expect(pids[2]).toBe(pids[3])
+    runtime.stop()
+    await expect(runtime.call('normalizeKey', { source: 'demo', key: '1' })).rejects.toThrow('已停止')
+  })
+
+  it('passes only declared variables, PATH and the host-controlled Node mode', async () => {
+    const manifest = await pluginFixture(directory, { env: ['PLUGIN_TOKEN'], behavior: { mode: 'environment' } })
+    const runtime = new PluginProcess(manifest, path.join(directory, 'main.mjs'), { PATH: '/test', PLUGIN_TOKEN: 'allowed', AWS_SECRET_ACCESS_KEY: 'hidden' })
+    const env = JSON.parse(await runtime.call('normalizeKey', { source: 'demo', key: 'env' }))
+    expect(env.PLUGIN_TOKEN).toBe('allowed')
+    expect(env.AWS_SECRET_ACCESS_KEY).toBeUndefined()
+    expect(env.ELECTRON_RUN_AS_NODE).toBe('1')
+    expect(() => pluginEnvironment(['NODE_OPTIONS'], {})).toThrow()
+    expect(() => pluginEnvironment(['ELECTRON_RUN_AS_NODE'], {})).toThrow()
+  })
+
+  it.each(['crash', 'invalid', 'oversize', 'callback'])('rejects %s instead of leaving a call pending', async (mode) => {
+    const manifest = await pluginFixture(directory, { behavior: { mode } })
+    const runtime = new PluginProcess(manifest, path.join(directory, 'main.mjs'))
+    await expect(runtime.call('normalizeKey', { source: 'demo', key: '1' })).rejects.toBeInstanceOf(Error)
+  })
+
+  it('rejects incompatible handshakes', async () => {
+    const manifest = await pluginFixture(directory, { behavior: { badHandshake: true } })
+    await expect(new PluginProcess(manifest, path.join(directory, 'main.mjs')).providers()).rejects.toThrow('协议')
+  })
+
+  it('terminates a process that ignores cancellation', async () => {
+    const manifest = await pluginFixture(directory, { behavior: { mode: 'hang' } })
+    const runtime = new PluginProcess(manifest, path.join(directory, 'main.mjs'))
+    await expect(runtime.call('normalizeKey', { source: 'demo', key: '1' }, AbortSignal.timeout(500))).rejects.toThrow('取消或超时')
+  })
+})

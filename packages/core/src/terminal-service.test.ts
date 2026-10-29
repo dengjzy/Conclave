@@ -1,0 +1,198 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { Terminal } from '@conclave/protocol'
+import type { DaemonMethod, DaemonParams, DaemonResult } from '@conclave/protocol/node'
+import type { SessionHost } from './daemon-client'
+import { TaskStore } from './task-store'
+import { commandShell, plainOutput, TerminalService, userShell } from './terminal-service'
+
+type Handlers = { [M in DaemonMethod]: (params: DaemonParams<M>) => DaemonResult<M> }
+
+function fakeDaemon(): SessionHost & { spawns: DaemonParams<'spawn'>[]; killed: string[]; released: string[]; buffers: Map<string, string>; exited: Map<string, number> } {
+  const spawns: DaemonParams<'spawn'>[] = []
+  const killed: string[] = []
+  const released: string[] = []
+  const buffers = new Map<string, string>()
+  const exited = new Map<string, number>()
+  const handlers: Handlers = {
+    spawnCliUpgrade: () => { throw new Error('upgrade not mocked') },
+    portsList: () => [],
+    portsStop: () => ({ ok: true }),
+    spawn: (params) => {
+      spawns.push(params)
+      return { sessionId: `session-${spawns.length}` }
+    },
+    write: () => ({ ok: true }),
+    resize: () => ({ ok: true }),
+    kill: ({ sessionId }) => {
+      killed.push(sessionId)
+      return { ok: true }
+    },
+    attach: ({ sessionId }) => ({ sessionId, buffer: buffers.get(sessionId) ?? '', bufferStart: 0, endOffset: 0, exited: exited.has(sessionId), exitCode: exited.get(sessionId) ?? null }),
+    list: () => ({ sessions: [] }),
+    spawnPipe: () => { throw new Error('unused') },
+    release: ({ sessionId }) => {
+      released.push(sessionId)
+      return { ok: true }
+    },
+    awakeSet: () => ({ active: false, supported: true, problem: null }),
+    awakeStatus: () => ({ active: false, supported: true, problem: null }),
+    info: () => ({ version: '0.0.0', pid: process.pid }),
+    retire: () => ({ retired: false, live: 0 })
+  }
+  return { spawns, killed, released, buffers, exited, request: async (method, params) => handlers[method](params), onEvent: () => () => {} }
+}
+
+describe('TerminalService', () => {
+  let root: string
+  let database: string
+  let tasks: TaskStore
+  let daemon: ReturnType<typeof fakeDaemon>
+  let emitted: Terminal[][]
+  let service: TerminalService
+
+  beforeEach(() => {
+    root = mkdtempSync(path.join(os.tmpdir(), 'conclave-terminals-'))
+    database = path.join(root, 'conclave.db')
+    tasks = new TaskStore(database)
+    daemon = fakeDaemon()
+    emitted = []
+    service = new TerminalService(database, daemon, (list) => emitted.push(list))
+  })
+
+  afterEach(() => {
+    service.close()
+    tasks.close()
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('opens the user\'s shell in the folder asked for, or home when that is not a folder', async () => {
+    const opened = await service.open(root)
+    expect(opened).toMatchObject({ cwd: root, title: path.basename(root), sessionId: 'session-1' })
+    expect(daemon.spawns[0]).toMatchObject({ ...userShell(), cwd: root })
+    // What it starts carries the tab, to find a server the shell outlives.
+    expect(daemon.spawns[0]?.env).toMatchObject({ CONCLAVE_OWNER: `terminal:${opened.id}` })
+    expect((await service.open(path.join(root, 'missing'))).cwd).toBe(os.homedir())
+    expect((await service.open('relative/dir')).cwd).toBe(os.homedir())
+    expect(emitted.at(-1)).toHaveLength(3)
+  })
+
+  it('says the terminal takes colour, and asks for a prompt in colour only when the client does', async () => {
+    const prompt = { env: async () => ({ ZDOTDIR: '/conclave/shell/zsh' }) }
+    const coloured = new TerminalService(database, daemon, () => {}, Date.now, prompt)
+    await coloured.open(root)
+    await coloured.open(root, true)
+    expect(daemon.spawns[0]?.env).toMatchObject({ COLORTERM: 'truecolor', TERM_PROGRAM: 'Conclave' })
+    expect(daemon.spawns[0]?.env).not.toHaveProperty('ZDOTDIR')
+    expect(daemon.spawns[1]?.env).toMatchObject({ COLORTERM: 'truecolor', ZDOTDIR: '/conclave/shell/zsh' })
+  })
+
+  it('keeps its terminals across a core restart', async () => {
+    await service.open(root)
+    const restarted = new TerminalService(database, daemon, () => {})
+    expect(restarted.list()).toHaveLength(1)
+    restarted.close()
+  })
+
+  it('drops a terminal when it is closed, when its shell exits, or when the daemon lost it', async () => {
+    const first = await service.open(root)
+    const second = await service.open(root)
+    const third = await service.open(root)
+    await service.kill(first.id)
+    expect(daemon.killed).toEqual([first.sessionId])
+    service.handleExit(second.sessionId)
+    expect(service.list().map((terminal) => terminal.id)).toEqual([third.id])
+    service.reconcile([{ sessionId: third.sessionId, exited: true, exitCode: 0 }])
+    expect(service.list()).toEqual([])
+    expect(emitted.at(-1)).toEqual([])
+  })
+
+  it('runs an agent\'s command in a tab of its own, which outlives the command, saying how it ended', async () => {
+    const run = await service.run('conv-1', root, 'pnpm dev')
+    expect(run).toMatchObject({ conversationId: 'conv-1', command: 'pnpm dev', title: 'pnpm dev', cwd: root, exited: false })
+    expect(daemon.spawns[0]).toMatchObject({ ...commandShell('pnpm dev'), cwd: root })
+    expect(daemon.spawns[0]?.env).toMatchObject({ CONCLAVE_OWNER: 'conversation:conv-1' })
+    daemon.buffers.set(run.sessionId, '\x1b[32mready\x1b[0m on http://localhost:5173\r\n')
+    expect(await service.read('conv-1', run.id)).toMatchObject({ command: 'pnpm dev', output: 'ready on http://localhost:5173', running: true, exitCode: null })
+    service.handleExit(run.sessionId, 130)
+    expect(service.list()).toEqual([expect.objectContaining({ id: run.id, exited: true, exitCode: 130 })])
+    expect(await service.read('conv-1', run.id)).toMatchObject({ running: false, exitCode: 130 })
+    // Closing it then lets the daemon forget what it printed.
+    await service.kill(run.id)
+    expect(daemon.released).toEqual([run.sessionId])
+    expect(service.list()).toEqual([])
+  })
+
+  it('runs a project command with its own title and environment, and says when it ends', async () => {
+    const run = await service.run('conv-1', root, 'pnpm install', { title: 'setup · app', env: { CONCLAVE_ROOT_PATH: '/code/app' }, purpose: 'setup' })
+    expect(run).toMatchObject({ title: 'setup · app', purpose: 'setup' })
+    expect(daemon.spawns[0]?.env).toMatchObject({ CONCLAVE_ROOT_PATH: '/code/app' })
+    const ended = service.waitForExit(run.id)
+    service.handleExit(run.sessionId, 1)
+    expect(await ended).toBe(1)
+    expect(await service.waitForExit(run.id)).toBe(1)
+
+    // A tab closed while its command runs ends the wait too.
+    const closed = await service.run('conv-1', root, 'pnpm test', { purpose: 'check' })
+    const waiting = service.waitForExit(closed.id)
+    await service.kill(closed.id)
+    expect(await waiting).toBeNull()
+  })
+
+  it('lets a conversation reach only the terminals it opened', async () => {
+    const mine = await service.run('conv-1', root, 'pnpm dev')
+    const shell = await service.open(root)
+    await expect(service.read('conv-2', mine.id)).rejects.toMatchObject({ reason: 'terminal-not-found' })
+    await expect(service.stop('conv-1', shell.id)).rejects.toMatchObject({ reason: 'terminal-not-found' })
+    await service.stop('conv-1', mine.id)
+    expect(daemon.killed).toEqual([mine.sessionId])
+  })
+
+  it('keeps an agent\'s finished command while the daemon still holds it', async () => {
+    const run = await service.run('conv-1', root, 'pnpm test')
+    service.reconcile([{ sessionId: run.sessionId, exited: true, exitCode: 1 }])
+    expect(service.list()).toEqual([expect.objectContaining({ id: run.id, exited: true, exitCode: 1 })])
+    service.reconcile([])
+    expect(service.list()).toEqual([])
+  })
+
+  it.each(['bash', 'powershell'] as const)('keeps a user installer in its own %s tab across exit and core restart', async (shell) => {
+    const command = shell === 'bash' ? 'curl https://cursor.com/install -fsS | bash' : "irm 'https://cursor.com/install?win32=true' | iex"
+    const run = await service.installCli({ agent: 'cursor', shell, command })
+    expect(daemon.spawns[0]).toMatchObject(shell === 'bash'
+      ? { command: '/bin/bash', args: ['-o', 'pipefail', '-c', command] }
+      : { command: 'powershell.exe', args: ['-NoLogo', '-NoProfile', '-Command', `$ErrorActionPreference = 'Stop'; ${command}`] })
+    expect(run).toMatchObject({ command, title: '安装 Cursor CLI', conversationId: null, exited: false })
+    await expect(service.read('conv-1', run.id)).rejects.toMatchObject({ reason: 'terminal-not-found' })
+    const restarted = new TerminalService(database, daemon, () => {})
+    restarted.reconcile([{ sessionId: run.sessionId, exited: true, exitCode: 7 }])
+    expect(restarted.list()).toEqual([expect.objectContaining({ id: run.id, command, exited: true, exitCode: 7 })])
+    await restarted.kill(run.id)
+    expect(daemon.released).toEqual([run.sessionId])
+    restarted.close()
+  })
+
+  it('retains an installer that already failed before its spawn reply instead of leaving it running', async () => {
+    daemon.exited.set('session-1', 127)
+    const run = await service.installCli({ agent: 'cursor', shell: 'bash', command: 'curl https://cursor.com/install -fsS | bash' })
+    expect(run).toMatchObject({ exited: true, exitCode: 127 })
+    expect(service.list()).toEqual([run])
+  })
+
+  it('reads output as plain text, a redrawn line as it last stood', () => {
+    expect(plainOutput('\x1b]0;title\x07\x1b[1mbold\x1b[22m\r\nstep 1\rstep 2\rdone\n')).toBe('bold\ndone\n')
+  })
+
+  it('starts a login shell, falling back to sh', () => {
+    if (process.platform === 'win32') return
+    expect(userShell({ SHELL: '/bin/zsh' })).toEqual({ command: '/bin/zsh', args: ['-l'] })
+    expect(userShell({})).toEqual({ command: '/bin/sh', args: ['-l'] })
+    // Windows: PowerShell 7 where it is installed, else the Windows PowerShell every Windows has.
+    const windows = (files: string[]) => ({ platform: 'win32' as const, isFile: (file: string) => files.includes(file), isExecutable: (file: string) => files.includes(file), read: () => null })
+    expect(userShell({ Path: 'C:\\Program Files\\PowerShell\\7' }, windows(['C:\\Program Files\\PowerShell\\7\\pwsh.exe'])))
+      .toEqual({ command: 'C:\\Program Files\\PowerShell\\7\\pwsh.exe', args: ['-NoLogo'] })
+    expect(userShell({ Path: 'C:\\Windows' }, windows([]))).toEqual({ command: 'powershell.exe', args: ['-NoLogo'] })
+  })
+})

@@ -1,0 +1,294 @@
+import { execFile } from 'node:child_process'
+import { readFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { promisify } from 'node:util'
+import { z } from 'zod'
+import type { ResetCredit, ResetCredits, UsageWindow } from '@conclave/protocol'
+import { planLaunch } from '@conclave/protocol/node'
+import { fetchUsageJson, parseJson, type UsageReading, type UsageReport } from '../../usage-source'
+import { claudeDefaultHome, claudeKeychainService } from './claude-account'
+
+// The same endpoint Claude Code's /usage reads; it only accepts the OAuth token of a Claude subscription.
+// `cedar_ember` is Claude Code's name for the usage-limit resets promotion; asking adds its state.
+const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage?cedar_ember=1'
+// The server reports resets only to a client that looks like a recent Claude Code CLI, so the
+// request carries the version installed here; this stands in when it cannot be read.
+const FALLBACK_CLI_VERSION = '2.1.0'
+const VERSION_TIMEOUT_MS = 5_000
+const VERSION_TTL_MS = 60 * 60_000
+const KEYCHAIN_TIMEOUT_MS = 5_000
+const SESSION_MINUTES = 300
+const WEEK_MINUTES = 10_080
+const MODEL_WEEKLY_KEYS = { seven_day_opus: 'Opus', seven_day_sonnet: 'Sonnet', seven_day_fable: 'Fable' } as const
+
+const Credentials = z.object({
+  claudeAiOauth: z.object({ accessToken: z.string().min(1), subscriptionType: z.string().nullish() })
+})
+
+const Reset = z.union([z.string(), z.number()]).nullish()
+const Window = z.object({ utilization: z.number().nullish(), resets_at: Reset })
+
+const UsageResponse = z.looseObject({
+  five_hour: Window.nullish().catch(null),
+  seven_day: Window.nullish().catch(null),
+  limits: z
+    .array(
+      z.object({
+        kind: z.string().nullish(),
+        percent: z.number().nullish(),
+        resets_at: Reset,
+        scope: z.object({ model: z.object({ display_name: z.string() }).nullish() }).nullish()
+      })
+    )
+    .nullish()
+    .catch(null)
+})
+
+// Undocumented and reverse-engineered by the community: every part is optional, and a reply
+// that does not fit simply shows no resets.
+const Grant = z.object({
+  label: z.string().nullish(),
+  resets_left: z.number().nullish(),
+  ends_at: Reset,
+  clears: z.array(z.string()).nullish().catch(null)
+})
+const ResetProgram = z.object({
+  eligible: z.boolean().nullish(),
+  ineligible_reason: z.string().nullish(),
+  grants: z.array(Grant).nullish().catch(null)
+})
+const CLEARS: Record<string, UsageWindow['kind']> = { five_hour: 'session', seven_day: 'weekly' }
+
+const execFileAsync = promisify(execFile)
+
+async function keychainItem(service: string, account: string | null): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync('security', ['find-generic-password', ...(account ? ['-a', account] : []), '-s', service, '-w'], { timeout: KEYCHAIN_TIMEOUT_MS })
+    return stdout.trim() || null
+  } catch {
+    return null
+  }
+}
+
+// macOS keeps Claude Code's OAuth credentials in the login keychain; other platforms use a file.
+// home: an account's own folder; without one, the user's. An account's item is asked for under the
+// user's name first, as Claude Code writes it, since another item of that service may hold
+// something else.
+async function readCredentials(home?: string): Promise<string | null> {
+  if (process.platform === 'darwin') {
+    // The user's own folder named by CLAUDE_CONFIG_DIR is keyed by that text too.
+    const named = home ?? (process.env.CLAUDE_CONFIG_DIR || undefined)
+    const service = claudeKeychainService(named)
+    const found = (named ? await keychainItem(service, os.userInfo().username) : null) ?? await keychainItem(service, null)
+    // None: the file, which Claude Code also honors on macOS.
+    if (found) return found
+  }
+  return readFile(path.join(home ?? claudeDefaultHome(), '.credentials.json'), 'utf8').catch(() => null)
+}
+
+// Seconds or milliseconds since the epoch, or an ISO string.
+function parseReset(value: string | number | null | undefined): number | null {
+  if (value === null || value === undefined || value === '') {
+    return null
+  }
+  const numeric = Number(value)
+  if (Number.isFinite(numeric)) {
+    return numeric > 10_000_000_000 ? numeric : numeric * 1000
+  }
+  const parsed = Date.parse(String(value))
+  return Number.isNaN(parsed) ? null : parsed
+}
+
+function toWindow(
+  kind: UsageWindow['kind'],
+  model: string | null,
+  usedPercent: number | null | undefined,
+  resetsAt: string | number | null | undefined
+): UsageWindow | null {
+  if (typeof usedPercent !== 'number' || !Number.isFinite(usedPercent)) {
+    return null
+  }
+  return {
+    kind,
+    model,
+    usedPercent: Math.min(100, Math.max(0, usedPercent)),
+    windowMinutes: kind === 'session' ? SESSION_MINUTES : WEEK_MINUTES,
+    resetsAt: parseReset(resetsAt)
+  }
+}
+
+export function parseClaudeUsage(body: unknown): UsageWindow[] {
+  const parsed = UsageResponse.safeParse(body)
+  if (!parsed.success) {
+    return []
+  }
+  const data = parsed.data
+  const windows = [
+    toWindow('session', null, data.five_hour?.utilization, data.five_hour?.resets_at),
+    toWindow('weekly', null, data.seven_day?.utilization, data.seven_day?.resets_at)
+  ]
+  const models = new Set<string>()
+  for (const limit of data.limits ?? []) {
+    const model = limit.scope?.model?.display_name.trim()
+    if (limit.kind === 'weekly_scoped' && model && !models.has(model)) {
+      models.add(model)
+      windows.push(toWindow('weekly', model, limit.percent, limit.resets_at))
+    }
+  }
+  // Older responses report model caps as top-level keys instead of `limits`.
+  for (const [key, model] of Object.entries(MODEL_WEEKLY_KEYS)) {
+    const window = Window.safeParse(data[key])
+    if (window.success && !models.has(model)) {
+      windows.push(toWindow('weekly', model, window.data.utilization, window.data.resets_at))
+    }
+  }
+  return windows.filter((window) => window !== null)
+}
+
+// The windows a stream-json `rate_limit_event` may name, by its keys for them.
+const EVENT_WINDOWS: Record<string, { kind: UsageWindow['kind']; model: string | null }> = {
+  five_hour: { kind: 'session', model: null },
+  seven_day: { kind: 'weekly', model: null },
+  seven_day_opus: { kind: 'weekly', model: 'Opus' },
+  seven_day_sonnet: { kind: 'weekly', model: 'Sonnet' }
+}
+
+const RateLimitEvent = z.looseObject({
+  rate_limit_info: z.looseObject({
+    status: z.string().nullish(),
+    rateLimitType: z.string().nullish(),
+    resetsAt: Reset,
+    unifiedWindows: z.record(z.string(), z.looseObject({ utilization: z.number().nullish(), resetsAt: Reset }).nullish().catch(null)).nullish().catch(null)
+  })
+})
+
+// Claude Code sends one when its limits change. Its utilization is a fraction (0.13 where /usage
+// says 13%). A refusal is taken at its word before /usage catches up; one without numbers, or any
+// warning, is a reason to read /usage again for the windows the event leaves out.
+export function rateLimitReport(frame: unknown, at: number): UsageReport | null {
+  const parsed = RateLimitEvent.safeParse(frame)
+  if (!parsed.success) {
+    return null
+  }
+  const { status, rateLimitType, resetsAt, unifiedWindows } = parsed.data.rate_limit_info
+  const windows = Object.entries(unifiedWindows ?? {}).flatMap(([key, reading]) => {
+    const known = EVENT_WINDOWS[key]
+    const used = reading?.utilization
+    const window = known && typeof used === 'number' ? toWindow(known.kind, known.model, used * 100, reading?.resetsAt) : null
+    return window ? [window] : []
+  })
+  const refused = status === 'rejected' && rateLimitType ? EVENT_WINDOWS[rateLimitType] : undefined
+  const capped = refused ? toWindow(refused.kind, refused.model, 100, resetsAt) : null
+  return {
+    at,
+    windows: capped ? [...windows.filter((window) => window.kind !== capped.kind || window.model !== capped.model), capped] : windows,
+    refresh: windows.length === 0 || (Boolean(status) && status !== 'allowed')
+  }
+}
+
+// What of a rate_limit_event the stage log keeps: only a refusal, so a replayed stage knows its turn
+// was refused. Its numbers go out live only.
+export function loggedRefusal(frame: unknown): unknown | null {
+  const parsed = RateLimitEvent.safeParse(frame)
+  if (!parsed.success || parsed.data.rate_limit_info.status !== 'rejected') {
+    return null
+  }
+  const { status, rateLimitType, resetsAt } = parsed.data.rate_limit_info
+  return { type: 'rate_limit_event', rate_limit_info: { status, rateLimitType, resetsAt } }
+}
+
+// When a refused rate_limit_event says the limit lifts; null for any other frame.
+export function refusalResetsAt(frame: unknown): { resetsAt: number | null } | null {
+  const parsed = RateLimitEvent.safeParse(frame)
+  if (!parsed.success || parsed.data.rate_limit_info.status !== 'rejected') {
+    return null
+  }
+  return { resetsAt: parseReset(parsed.data.rate_limit_info.resetsAt) }
+}
+
+// The words Claude Code ends a turn with when a usage limit stops it, as the Agent SDK lists them
+// (USAGE_LIMIT_ERROR_PREFIXES): only the limits that lift on their own. Running out of credits or
+// a seat without usage does not, and stays an ordinary failure.
+const LIMIT_PREFIXES = ["You've hit your", "You've reached your"]
+// How older versions said it: the reset as epoch seconds after a bar.
+const LEGACY_LIMIT = /Claude AI usage limit reached\|(\d{10})/
+
+export function usageLimitText(text: string): { resetsAt: number | null } | null {
+  const legacy = LEGACY_LIMIT.exec(text)
+  if (legacy?.[1]) {
+    return { resetsAt: Number(legacy[1]) * 1000 }
+  }
+  const trimmed = text.trim()
+  return LIMIT_PREFIXES.some((prefix) => trimmed.startsWith(prefix)) ? { resetsAt: null } : null
+}
+
+// Each grant carries some resets; one credit per reset left, soonest to expire first.
+export function parseClaudeResets(body: unknown): ResetCredits | null {
+  const program = z.object({ cedar_ember: ResetProgram.nullish().catch(null) }).safeParse(body)
+  const data = program.success ? program.data.cedar_ember : null
+  if (!data) {
+    return null
+  }
+  if (data.eligible === false) {
+    // An outdated Claude Code is the one reason the user can do something about.
+    return data.ineligible_reason === 'cli_version' ? { available: 0, credits: [], blockedBy: 'cli_version' } : null
+  }
+  const credits: ResetCredit[] = (data.grants ?? []).flatMap((grant) => {
+    const left = Math.max(0, Math.floor(grant.resets_left ?? 0))
+    const clears = [...new Set((grant.clears ?? []).flatMap((key) => (CLEARS[key] ? [CLEARS[key]] : [])))]
+    const credit = { expiresAt: parseReset(grant.ends_at), label: grant.label?.trim() || null, clears }
+    return Array.from({ length: Math.min(left, 50) }, () => credit)
+  })
+  credits.sort((a, b) => (a.expiresAt ?? Number.POSITIVE_INFINITY) - (b.expiresAt ?? Number.POSITIVE_INFINITY))
+  return credits.length > 0 ? { available: credits.length, credits, blockedBy: null } : null
+}
+
+// `claude --version` prints e.g. "2.1.263 (Claude Code)".
+export function parseCliVersion(output: string): string | null {
+  return /^\s*(\d+\.\d+\.\d+)/.exec(output)?.[1] ?? null
+}
+
+let cachedVersion: { version: string; readAt: number } | null = null
+
+// Asked of the installed CLI itself, so the request claims exactly the version the user has.
+async function claudeCliVersion(): Promise<string> {
+  if (cachedVersion && Date.now() - cachedVersion.readAt < VERSION_TTL_MS) {
+    return cachedVersion.version
+  }
+  let version = FALLBACK_CLI_VERSION
+  try {
+    const launch = planLaunch('claude', ['--version'], os.homedir(), process.env)
+    const { stdout } = await execFileAsync(launch.file, launch.args, { env: launch.env, timeout: VERSION_TIMEOUT_MS, windowsHide: true })
+    version = parseCliVersion(stdout) ?? FALLBACK_CLI_VERSION
+  } catch {
+    version = FALLBACK_CLI_VERSION
+  }
+  cachedVersion = { version, readAt: Date.now() }
+  return version
+}
+
+// Whether Claude Code has an account here, without asking the service anything.
+export async function hasClaudeCredentials(home?: string): Promise<boolean> {
+  return Credentials.safeParse(parseJson(await readCredentials(home))).success
+}
+
+export async function readClaudeUsage(home?: string): Promise<UsageReading> {
+  const credentials = Credentials.safeParse(parseJson(await readCredentials(home)))
+  if (!credentials.success) {
+    return { signedIn: false }
+  }
+  const { accessToken, subscriptionType } = credentials.data.claudeAiOauth
+  // Sent as the installed Claude Code CLI, the client this endpoint serves.
+  const body = await fetchUsageJson(USAGE_URL, {
+    Authorization: `Bearer ${accessToken}`,
+    'anthropic-beta': 'oauth-2025-04-20',
+    'User-Agent': `claude-cli/${await claudeCliVersion()} (external, cli)`
+  })
+  return {
+    signedIn: true,
+    windows: parseClaudeUsage(body),
+    plan: subscriptionType ?? null,
+    resetCredits: parseClaudeResets(body)
+  }
+}

@@ -1,0 +1,22 @@
+packages:
+  - packages/protocol
+  - packages/daemon
+  - packages/core
+  - packages/dsh-runtime
+  - packages/plugin-sdk
+  - packages/web
+
+catalog:
+  '@types/node': 26.6.2
+  '@types/ws': 8.18.1
+  tsx: 4.23.15
+  typescript: 7.0.2
+  vitest: 5.0.1
+  ws: 8.21.3
+  zod: 4.6.5
+  playwright-core: 1.63.0
+
+allowBuilds:
+  esbuild: true
+  koffi: false
+  node-pty: true
