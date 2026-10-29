@@ -200,6 +200,18 @@ export function App() {
   }, [])
 
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false)
+  const [mobileView, setMobileView] = useState<'list' | 'detail'>('detail')
+
+  const onMobileSelect = () => {
+    setMobileView('detail')
+    setMobileDrawerOpen(false)
+  }
+
+  const handleBackToList = () => {
+    closeMobileDetail()
+    setMobileView('list')
+    setMobileDrawerOpen(false)
+  }
 
   const hasActiveDetail = Boolean(
     settingsOpen ||
@@ -219,22 +231,31 @@ export function App() {
       ? useCore.getState().discussions[selectedDiscussionId]?.title || t('DiscussionView.groupChat_910')
       : selectedId
         ? useCore.getState().tasks[selectedId]?.title || t('sidebar.tasks')
-        : settingsOpen
-          ? t('StatusBar.settings')
-          : ''
+        : overviewOpen
+          ? t('OverviewEntry.overview_1276')
+          : settingsOpen
+            ? t('StatusBar.settings')
+            : section === 'tasks'
+              ? t('sidebar.tasks')
+              : section === 'squads'
+                ? t('sidebar.agents')
+                : section === 'discussions'
+                  ? t('sidebar.discussions')
+                  : t('sidebar.conversations')
 
   return (
     <div
       className="app"
       data-sidebar-hidden={(sidebarHidden && !settingsOpen) || undefined}
       data-has-detail={hasActiveDetail ? 'true' : undefined}
+      data-mobile-view={mobileView}
     >
-      {hasActiveDetail && (
+      {mobileView === 'detail' && (
         <header className="mobile-nav-bar">
           <button
             type="button"
             className="mobile-nav-btn"
-            onClick={closeMobileDetail}
+            onClick={handleBackToList}
             aria-label={t('MobileNav.backToList')}
           >
             <ArrowLeftIcon />
@@ -267,6 +288,7 @@ export function App() {
               hidden={sidebarHidden}
               drawer={mobileDrawerOpen}
               onDrawerClose={() => setMobileDrawerOpen(false)}
+              onItemSelect={onMobileSelect}
             >
               <OverviewEntry />
               <InboxEntry />

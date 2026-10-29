@@ -6,10 +6,11 @@ import { clampSidebarWidth, DEFAULT_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, SIDEBAR_WI
 // The lists down the window's left. Its right edge drags to resize it between the limits in
 // sidebar-width.ts, the arrow keys nudge it, and a double-click puts it back. While dragging only
 // this element re-renders (the lists come in as children); the width is saved on release.
-export function Sidebar({ hidden, drawer, onDrawerClose, children }: {
+export function Sidebar({ hidden, drawer, onDrawerClose, onItemSelect, children }: {
   hidden: boolean
   drawer?: boolean
   onDrawerClose?: () => void
+  onItemSelect?: () => void
   children: ReactNode
 }) {
   const saved = usePreferences((p) => p.sidebarWidth)
@@ -65,8 +66,13 @@ export function Sidebar({ hidden, drawer, onDrawerClose, children }: {
       data-drawer={drawer ? 'open' : undefined}
       style={{ '--sidebar-width': `${width}px` }}
       onClickCapture={(e) => {
-        if (drawer && onDrawerClose && (e.target as HTMLElement).closest('button, a, [role="button"], .sidebar-task, .sidebar-conversation, .entry')) {
-          onDrawerClose()
+        if ((e.target as HTMLElement).closest('button, a, [role="button"], .sidebar-task, .sidebar-conversation, .entry')) {
+          if (drawer && onDrawerClose) {
+            onDrawerClose()
+          }
+          if (onItemSelect) {
+            onItemSelect()
+          }
         }
       }}
     >
