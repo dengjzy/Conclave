@@ -7143,6 +7143,34 @@ div.inspector-empty > p { margin: 0 0 8px; }
 .chat-turn-inline::before { content: '·'; margin: 0 6px 0 4px; }
 .chat-turn[data-state='failed'] { color: var(--danger); }
 
+.chat-turn-empty-prompt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 6px 12px;
+  background: var(--fill);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.chat-turn-empty-hint {
+  flex: 1;
+  min-width: 0;
+}
+.chat-turn-continue-action {
+  font-size: 12px;
+  color: var(--accent);
+  cursor: pointer;
+  white-space: nowrap;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.chat-turn-continue-action:hover {
+  filter: brightness(1.1);
+}
+
 .chat-notice {
   font-size: 12px;
   padding: 6px 12px;

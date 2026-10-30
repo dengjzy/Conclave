@@ -53,6 +53,7 @@ import { activityOf } from '../chat-activity'
 import { ChatActivityStep } from './ChatActivityStep'
 
 type ToolItem = Extract<ChatItem, { kind: 'tool' }>
+type TurnItem = Extract<ChatItem, { kind: 'turn' }>
 const NO_ITEMS: ChatItem[] = []
 // Within this many pixels of the bottom, new output keeps the list scrolled to the end.
 const PINNED_SLACK = 48
@@ -347,6 +348,48 @@ function AssistantReply({ conversationId, item, completedAt, ending, blockKey }:
   )
 }
 
+function TurnStandalone({ conversationId, item }: { conversationId: string; item: TurnItem }) {
+  const compact = useContext(ChatVariant) === 'compact'
+  const foldedTurns = useContext(FoldedTurns)
+  const isFoldedWithoutReply = !compact && foldedTurns.has(itemKey(item))
+  const [asking, setAsking] = useState(false)
+
+  const askForReport = useCallback(async () => {
+    if (asking) return
+    setAsking(true)
+    try {
+      await perform((rpc) => rpc.call('conversations.send', {
+        id: conversationId,
+        text: t('ConversationChat.askToReportPrompt')
+      }))
+    } finally {
+      setAsking(false)
+    }
+  }, [conversationId, asking])
+
+  return (
+    <div className="chat-turn" data-state={item.state}>
+      <span className="chat-turn-summary-static" data-state={item.state}>
+        {compact && item.state === 'completed' ? helperDuration(item) : turnText(item)}
+      </span>
+      {compact && <HelperTurnCost turn={item} />}
+      {isFoldedWithoutReply && (
+        <div className="chat-turn-empty-prompt">
+          <span className="chat-turn-empty-hint">{t('ConversationChat.noReplyPrompt')}</span>
+          <button
+            type="button"
+            className="button chat-turn-continue-action"
+            disabled={asking}
+            onClick={askForReport}
+          >
+            {asking ? t('ConversationChat.asking') : t('ConversationChat.askToReport')}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function Item({ conversationId, item, completedAt, blockKey }: { conversationId: string; item: ChatItem; completedAt: number | undefined; blockKey: string }) {
   const ending = useContext(Endings).get(blockKey)
   const compact = useContext(ChatVariant) === 'compact'
@@ -367,7 +410,7 @@ function Item({ conversationId, item, completedAt, blockKey }: { conversationId:
     case 'question':
       return <ChatRequestLine item={item} />
     case 'turn':
-      return <div className="chat-turn" data-state={item.state}>{compact && item.state === 'completed' ? helperDuration(item) : turnText(item)}{compact && <HelperTurnCost turn={item} />}</div>
+      return <TurnStandalone conversationId={conversationId} item={item} />
     case 'notice':
       return <ChatNotice conversationId={conversationId} item={item} />
     case 'todos':
@@ -419,8 +462,6 @@ function userAt(block: ChatBlock): number | null {
 function isUserEntry(entry: TimelineEntry): boolean {
   return entry.kind === 'item' && entry.item.kind === 'user' && !isAgentCallResult(entry.item)
 }
-
-type TurnItem = Extract<ChatItem, { kind: 'turn' }>
 
 // A finished turn's work, behind how long it took; opening it shows the calls, thinking and replies
 // on the way to its answer.

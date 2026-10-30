@@ -2627,6 +2627,10 @@ export const MESSAGES = {
     "zh": "{value1} 项已中断",
     "en": "{value1} interrupted"
   },
+  "ChatToolCard.interruptedTooltip": {
+    "zh": "命令已被终止或未随回合完成",
+    "en": "Command was stopped or did not finish with the turn"
+  },
   "ChatToolCard.viewInTerminalPanel": {
     "zh": "在终端面板里看",
     "en": "View in terminal panel"
@@ -3046,6 +3050,22 @@ export const MESSAGES = {
   "ConversationChat.completed": {
     "zh": "{why}完成{took}",
     "en": "{why}completed{took}"
+  },
+  "ConversationChat.noReplyPrompt": {
+    "zh": "智能体本轮仅执行了工具，未生成文字汇报。",
+    "en": "This turn only executed tools; no text summary was generated."
+  },
+  "ConversationChat.askToReport": {
+    "zh": "让其汇报结果",
+    "en": "Ask for report"
+  },
+  "ConversationChat.asking": {
+    "zh": "正在发送…",
+    "en": "Sending…"
+  },
+  "ConversationChat.askToReportPrompt": {
+    "zh": "请汇报本轮工具执行的结果与最新发现。",
+    "en": "Please summarize your findings and the results of this turn."
   },
   "ConversationChat.interrupted": {
     "zh": "{why}已中断{took}{value3}",

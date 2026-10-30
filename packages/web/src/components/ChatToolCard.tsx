@@ -72,7 +72,7 @@ function BackgroundLimit({ at }: { at: number }) {
 export function ToolStatus({ status, since }: { status: ChatToolStatus; since?: number }) {
   if (status === 'running') return <><Spinner label={t('ChatTodos.inProgress')} />{since !== undefined && <ToolTimer since={since} />}</>
   const text = STATUS_TEXT[status]
-  return text ? <span className="chat-tool-status" data-status={status}>{text}</span> : null
+  return text ? <span className="chat-tool-status" data-status={status} title={status === 'interrupted' ? t('ChatToolCard.interruptedTooltip') : undefined}>{text}</span> : null
 }
 
 function CommandExit({ tool }: { tool: ToolItem }) {
@@ -225,7 +225,7 @@ export function ChatToolRun({ tools, summary }: { tools: readonly ToolItem[]; su
         {running && <ToolStatus status="running" since={running.at} />}
         {outcome.failed > 0 && <span className="chat-tool-status" data-status="failed">{tr('ChatToolCard.errors', { value1: outcome.failed })}</span>}
         {outcome.denied > 0 && <span className="chat-tool-status" data-status="denied">{tr('ChatToolCard.denied', { value1: outcome.denied })}</span>}
-        {outcome.interrupted > 0 && <span className="chat-tool-status" data-status="interrupted">{tr('ChatToolCard.interrupted_530', { value1: outcome.interrupted })}</span>}
+        {outcome.interrupted > 0 && <span className="chat-tool-status" data-status="interrupted" title={t('ChatToolCard.interruptedTooltip')}>{tr('ChatToolCard.interrupted_530', { value1: outcome.interrupted })}</span>}
       </button>
       {open && (
         <div className="chat-tool-run-lines" style={{ '--chat-rail': `${(settled / tools.length) * 100}%` }}>
