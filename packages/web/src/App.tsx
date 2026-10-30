@@ -225,12 +225,16 @@ export function App() {
     selectedId
   )
 
+  const conversationTitle = useCore((s) => selectedConversationId ? s.conversations[selectedConversationId]?.title : undefined)
+  const discussionTitle = useCore((s) => selectedDiscussionId ? s.discussions[selectedDiscussionId]?.title : undefined)
+  const taskTitle = useCore((s) => selectedId ? s.tasks[selectedId]?.title : undefined)
+
   const activeMobileTitle = selectedConversationId
-    ? useCore.getState().conversations[selectedConversationId]?.title || t('sidebar.conversations')
+    ? conversationTitle || t('sidebar.conversations')
     : selectedDiscussionId
-      ? useCore.getState().discussions[selectedDiscussionId]?.title || t('DiscussionView.groupChat_910')
+      ? discussionTitle || t('DiscussionView.groupChat_910')
       : selectedId
-        ? useCore.getState().tasks[selectedId]?.title || t('sidebar.tasks')
+        ? taskTitle || t('sidebar.tasks')
         : overviewOpen
           ? t('OverviewEntry.overview_1276')
           : settingsOpen
