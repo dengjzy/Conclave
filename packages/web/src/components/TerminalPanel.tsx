@@ -5,7 +5,6 @@ import { addQuote } from '../chat-quotes'
 import { closeTerminal, openTerminal, selectTerminal, setTerminalMaximized, toggleTerminalPanel, useCore, useTerminalCommandsSupported, type CoreState } from '../core-store'
 import { AgentIcon, CloseIcon, MaximizeIcon, PlusIcon, QuoteIcon, RestoreIcon } from './icons'
 import { SessionTerminal } from './SessionTerminal'
-import { TerminalCommandsButton } from './TerminalCommandsMenu'
 import { terminalSelection } from './terminal-surface'
 
 // Where a passage of the terminal goes: the conversation whose agent runs it, else the chat the
@@ -109,7 +108,6 @@ export function TerminalPanel() {
             <PlusIcon />
           </button>
         </div>
-        {commandsSupported && <TerminalCommandsButton terminal={active} />}
         <button
           type="button"
           className="tool-button"
