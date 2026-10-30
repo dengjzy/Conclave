@@ -74,8 +74,8 @@ export function SetupGuide() {
     <aside className="setup-guide" aria-label={t('SetupGuide.title')} data-blocked={loginOpen || newTaskOpen || taskLaunchId !== null || undefined}>
       <div className="setup-guide-inner">
         <div className="setup-guide-speech">
-          <div className="pet-speech-content">
-            <div className="pet-speech-text">
+          <div className="setup-guide-content">
+            <div className="setup-guide-text">
               <span className="setup-guide-heading">
                 {step !== 'waiting' && agent && <ChatPicker
                   label={t('SetupGuide.chooseAgent')} value={agent} placeholder={t('SetupGuide.chooseAgent')} placement="above"
@@ -122,7 +122,7 @@ export function SetupGuide() {
               <button type="button" className="button ghost" onClick={pause} title={t('SetupGuide.resumeHint')}>{t('SetupGuide.pause')}</button>
             </div>
           </div>
-          <button type="button" className="pet-bubble-dismiss" aria-label={t('Pet.dismiss')} onClick={pause}>×</button>
+          <button type="button" className="tool-button setup-guide-dismiss" aria-label={t('BackdropPicker.close')} onClick={pause}>×</button>
         </div>
       </div>
     </aside>

@@ -39,7 +39,6 @@
 .settings .settings-card { padding: 0; border: 0; border-radius: 0; background: transparent; }
 .settings .settings-subsection + .settings-subsection { margin-top: var(--settings-section-gap); }
 .settings .settings-subsection-title { padding: 0 0 12px; margin: 0; border-bottom: 1px solid var(--border-2); font-size: 16px; color: var(--text); font-weight: 600; }
-.settings .pet-style-section > .settings-subsection-title { margin-bottom: 16px; }
 .settings .settings-row { padding: 20px 0; gap: 16px 24px; }
 .settings .settings-row-label { font-size: 14px; font-weight: 500; }
 .settings .settings-row-description { margin-top: 4px; max-width: 60ch; text-wrap: pretty; }

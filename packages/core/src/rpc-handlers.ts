@@ -17,7 +17,6 @@ import { ConversationFiles, fileScope } from './conversation-files'
 import type { ProjectRegistry } from './project-registry'
 import { Rejection } from './rejection'
 import type { PluginService } from './plugin-service'
-import type { PetLibrary } from './pet-library'
 import type { SourceService } from './source-service'
 import type { RpcHandlers } from './rpc-server'
 import type { TaskService } from './task-service'
@@ -99,7 +98,6 @@ export function createRpcHandlers(
   cliMaintenance?: AgentCliMaintenance,
   analytics?: UsageAnalytics,
   automation?: UsageAutomation,
-  pets?: PetLibrary,
   projectStar?: ProjectStar,
   profiles?: AgentProfileService,
   bookmarks?: BookmarkStore
@@ -111,10 +109,6 @@ export function createRpcHandlers(
   const bookmarkStore = (): BookmarkStore => {
     if (!bookmarks) throw new Rejection('bookmarks-unavailable')
     return bookmarks
-  }
-  const petLibrary = (): PetLibrary => {
-    if (!pets) throw new Rejection('pets-unavailable')
-    return pets
   }
   const maintenance = (): AgentCliMaintenance => {
     if (!cliMaintenance) throw new Rejection('agent-cli-maintenance-unavailable')
@@ -251,12 +245,7 @@ export function createRpcHandlers(
       }, conversationId ? conversations.quickProvider(conversationId) : undefined)
       return { message: cleanCommitMessage(answer.text), model: answer.model }
     },
-    'pets.list': ({ refresh }) => petLibrary().list(refresh),
-    'pets.install': ({ id }) => petLibrary().install(id),
-    'pets.cancel': ({ id }) => { petLibrary().cancel(id); return OK },
-    'pets.remove': ({ id }) => petLibrary().remove(id),
-    'pets.read': ({ id }) => petLibrary().read(id),
-    'system.hello': () => ({ protocolVersion: PROTOCOL_VERSION, serverVersion: packageJson.version, features: CORE_FEATURES.filter((feature) => (feature !== 'agent-profiles' || Boolean(profiles)) && (feature !== 'project-star' || Boolean(projectStar)) && (feature !== 'bookmarks' || Boolean(bookmarks)) && (feature !== 'pets' || Boolean(pets)) && (feature !== 'squads' || Boolean(squads)) && (!['plugins', 'plugin-recommendations'].includes(feature) || Boolean(plugins)) && (!['skills-library', 'skills-search', 'skills-activation'].includes(feature) || Boolean(skills)) && (feature !== 'mcp-servers' || Boolean(mcpServers)) && (feature !== 'small-model-stats' || Boolean(smallModels)) && (feature !== 'model-providers' || Boolean(modelProviders)) && (feature !== 'agent-accounts' || Boolean(accounts))) }),
+    'system.hello': () => ({ protocolVersion: PROTOCOL_VERSION, serverVersion: packageJson.version, features: CORE_FEATURES.filter((feature) => (feature !== 'agent-profiles' || Boolean(profiles)) && (feature !== 'project-star' || Boolean(projectStar)) && (feature !== 'bookmarks' || Boolean(bookmarks)) && (feature !== 'squads' || Boolean(squads)) && (!['plugins', 'plugin-recommendations'].includes(feature) || Boolean(plugins)) && (!['skills-library', 'skills-search', 'skills-activation'].includes(feature) || Boolean(skills)) && (feature !== 'mcp-servers' || Boolean(mcpServers)) && (feature !== 'small-model-stats' || Boolean(smallModels)) && (feature !== 'model-providers' || Boolean(modelProviders)) && (feature !== 'agent-accounts' || Boolean(accounts))) }),
     'files.resolve': ({ conversationId, roots, path }) => files.resolve(fileScope(conversationId, roots), path),
     'files.read': ({ conversationId, roots, path }) => files.read(fileScope(conversationId, roots), path),
     'files.list': ({ conversationId, roots, path }) => files.list(fileScope(conversationId, roots), path),

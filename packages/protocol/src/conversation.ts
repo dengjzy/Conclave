@@ -63,7 +63,8 @@ export const Conversation = z.object({
   chatOptions: z.object({
     permissionMode: z.string().nullable(),
     model: z.string().nullable(),
-    effort: z.string().nullable()
+    effort: z.string().nullable(),
+    allowBypass: z.boolean().optional()
   }).optional(),
   // The task this conversation runs, which keeps it out of the free conversations. Older cores leave it out.
   taskId: z.string().nullable().optional(),

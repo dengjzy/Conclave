@@ -6,7 +6,6 @@ import { AgentKind, MAX_DETAILS_LENGTH, MAX_TASK_REPOS, RepoStartOptions, Task, 
 import { ATTACHMENT_CHUNK_BYTES, AttachmentId, AttachmentInfo, Base64Chunk, ImageRef, MAX_ATTACHMENT_BYTES, MAX_CHAT_IMAGES, MAX_TASK_IMAGES } from './attachments'
 import { LoginNotice, LoginPrompt, SourceDescriptor, SourceId, SourceInbox, SourceProblem } from './source'
 import { PluginId, PluginInfo, PluginInstallSource, PluginVersion, RecommendedPlugin } from './plugin'
-import { PetId, PetLibraryState, PetResourceData } from './pet'
 import { AgentUsage, ResetCreditOutcome } from './usage'
 import { UsageFilter, UsageHistory, UsageScanStatus, UsageForecast, UsageAutomationPolicy, UsageAutomationState } from './usage-analytics'
 import { AgentStats, ConversationStats } from './agent-stats'
@@ -105,7 +104,7 @@ const UsageParams = z.object({ windowKinds: z.array(z.string()).optional() })
 // suggests what to fill it with (projects.suggestConfig).
 // conversation-references: history_read resolves explicit conclave://conversation/<id> references.
 // chat-references: user messages and queues retain the composer's explicit reference targets.
-export const CORE_FEATURES = ['chat-references', 'conversation-references', 'agent-profiles', 'pets', 'plugins', 'plugin-recommendations', 'chat-options', 'chat-images', 'task-start', 'worktrees', 'conversation-branches', 'conversation-commit-push', 'find-file', 'conversation-projects', 'browser', 'keep-awake', 'terminal-commands', 'bookmarks', 'usage-limit', 'agent-stats', 'conversation-stats', 'prompt-suggestions', 'environment', 'conversation-pin', 'schedules', 'chat-commands', 'file-mentions', 'plan-modes', 'agent-terminals', 'schedule-images', 'dashboard', 'task-conversation-summaries', 'routines', 'ports', 'conversation-fork', 'conversation-configuration', 'conversation-commit-steps', 'conversation-worktrees', 'conversation-start-branch', 'wire-log', 'file-preview', 'deferred-conversation-start', 'agent-cli-installation', 'agent-cli-maintenance', 'task-launch-options', 'git-management', 'git-commit-branches', 'task-handoff', 'handoff-model', 'handoff-mode', 'task-launch', 'discussions', 'discussion-members', 'discussion-projects', 'discussion-topics', 'discussion-requirements', 'task-cancel', 'task-redo-in-place', 'conversation-archive', 'discussion-archive', 'translate', 'commit-message', 'squads', 'squad-leader-planning', 'conversation-todos', 'knowledge-base', 'knowledge-base-kind', 'skills-library', 'skills-search', 'skills-activation', 'mcp-servers', 'source-investigate', 'todo-overview', 'conversation-helper', 'small-model-stats', 'terminal-color-prompt', 'git-commit-actions', 'file-editor', 'project-config', 'project-config-edit', 'model-providers', 'git-update', 'git-push-target', 'task-auto-run', 'session-import', 'agent-accounts', 'usage-analytics', 'task-references', 'release-idle-chats', 'project-star', 'git-favorites', 'project-files'] as const
+export const CORE_FEATURES = ['chat-references', 'conversation-references', 'agent-profiles', 'plugins', 'plugin-recommendations', 'chat-options', 'chat-images', 'task-start', 'worktrees', 'conversation-branches', 'conversation-commit-push', 'find-file', 'conversation-projects', 'browser', 'keep-awake', 'terminal-commands', 'bookmarks', 'usage-limit', 'agent-stats', 'conversation-stats', 'prompt-suggestions', 'environment', 'conversation-pin', 'schedules', 'chat-commands', 'file-mentions', 'plan-modes', 'agent-terminals', 'schedule-images', 'dashboard', 'task-conversation-summaries', 'routines', 'ports', 'conversation-fork', 'conversation-configuration', 'conversation-commit-steps', 'conversation-worktrees', 'conversation-start-branch', 'wire-log', 'file-preview', 'deferred-conversation-start', 'agent-cli-installation', 'agent-cli-maintenance', 'task-launch-options', 'git-management', 'git-commit-branches', 'task-handoff', 'handoff-model', 'handoff-mode', 'task-launch', 'discussions', 'discussion-members', 'discussion-projects', 'discussion-topics', 'discussion-requirements', 'task-cancel', 'task-redo-in-place', 'conversation-archive', 'discussion-archive', 'translate', 'commit-message', 'squads', 'squad-leader-planning', 'conversation-todos', 'knowledge-base', 'knowledge-base-kind', 'skills-library', 'skills-search', 'skills-activation', 'mcp-servers', 'source-investigate', 'todo-overview', 'conversation-helper', 'small-model-stats', 'terminal-color-prompt', 'git-commit-actions', 'file-editor', 'project-config', 'project-config-edit', 'model-providers', 'git-update', 'git-push-target', 'task-auto-run', 'session-import', 'agent-accounts', 'usage-analytics', 'task-references', 'release-idle-chats', 'project-star', 'git-favorites', 'project-files'] as const
 // session-import: core lists the sessions agents ran outside Conclave and imports them as conversations (sessionImports.*).
 // agent-accounts: Claude and Codex sign in to several accounts, one active each, and a usage limit
 // moves the agent to the next with quota (accounts.*); usage readings name their account.
@@ -143,11 +142,6 @@ const BrowserConversationRef = z.object({ conversationId: z.string().uuid() })
 const BrowserTabRef = BrowserConversationRef.extend({ tabId: BrowserTabId })
 
 export const rpcMethods = {
-  'pets.list': { params: z.object({ refresh: z.boolean().optional() }), result: PetLibraryState },
-  'pets.install': { params: z.object({ id: PetId }), result: PetLibraryState },
-  'pets.cancel': { params: z.object({ id: PetId }), result: Ok },
-  'pets.remove': { params: z.object({ id: PetId }), result: PetLibraryState },
-  'pets.read': { params: z.object({ id: PetId }), result: PetResourceData },
   'plugins.recommended': { params: z.object({}), result: z.array(RecommendedPlugin) },
   'plugins.installRecommended': { params: z.object({ id: PluginId }), result: PluginInfo },
   'plugins.list': { params: z.object({}), result: z.array(PluginInfo) },
@@ -855,7 +849,6 @@ export const rpcNotifications = {
   // Worktrees were cleaned, or their sizes counted: list them again.
   'worktrees.changed': z.object({}),
   'plugins.changed': z.object({ plugins: z.array(PluginInfo) }),
-  'pets.changed': PetLibraryState,
   'sources.listChanged': z.object({ sources: z.array(SourceDescriptor) }),
   'sources.inboxChanged': z.object({ inbox: SourceInbox }),
   // Sent only to the connection that started the flow.
@@ -945,9 +938,10 @@ export const CoreEndpoint = z.object({
 export type CoreEndpoint = z.infer<typeof CoreEndpoint>
 
 export function coreUrl(endpoint: Pick<CoreEndpoint, 'port' | 'token'>): string {
-  if (typeof window !== 'undefined' && window.location) {
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const host = window.location.hostname || '127.0.0.1'
+  const loc = typeof globalThis !== 'undefined' ? (globalThis as { window?: { location?: { protocol?: string; hostname?: string } } }).window?.location : undefined
+  if (loc) {
+    const proto = loc.protocol === 'https:' ? 'wss:' : 'ws:'
+    const host = loc.hostname || '127.0.0.1'
     return `${proto}//${host}:${endpoint.port}/?token=${encodeURIComponent(endpoint.token)}`
   }
   return `ws://127.0.0.1:${endpoint.port}/?token=${encodeURIComponent(endpoint.token)}`

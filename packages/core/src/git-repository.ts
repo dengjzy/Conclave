@@ -22,7 +22,7 @@ export async function writeGit(dir: string, args: string[]): Promise<string> {
   try {
     const { stdout } = await execFileAsync('git', ['-C', dir, ...args], {
       timeout: 120_000, maxBuffer: 16 * 1024 * 1024,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_MERGE_AUTOEDIT: 'no' }
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_MERGE_AUTOEDIT: 'no', GIT_EDITOR: 'true' }
     })
     return stdout.trim()
   } catch (error) {
