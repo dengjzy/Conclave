@@ -26,9 +26,9 @@ export const antigravity: AgentDescriptor = {
     acceptEdits: { label: 'Auto Edit', description: '直接修改文件，运行命令前仍先问你' },
     bypass: { label: 'YOLO', description: '所有工具直接运行，什么都不问' }
   },
-  startModes: ['ask', 'acceptEdits'],
+  startModes: ['ask', 'acceptEdits', 'bypass'],
   defaultStartMode: 'ask',
-  discussionMode: 'ask',
+  discussionMode: 'bypass',
   readOnlyMode: 'ask',
   // Signed in with a personal account, its file tools refuse anything outside its cwd.
   primaryOnlyFiles: true,

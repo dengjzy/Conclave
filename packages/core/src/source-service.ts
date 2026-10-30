@@ -415,7 +415,7 @@ export class SourceService {
     const title = issue.title.trim() || issue.key
     // Unless asked otherwise, it only reads: a finding first, then the user decides on a fix.
     const permissionMode = start.permissionMode ?? agentDescriptor(agent).discussionMode
-    const conversation = await conversations.investigate(agent, projectPaths, allowBypass, { ...start, permissionMode }, {
+    const conversation = await conversations.investigate(agent, projectPaths, allowBypass ?? (permissionMode === 'bypass'), { ...start, permissionMode }, {
       source,
       title,
       brief: investigationBrief(source, snapshot, images),

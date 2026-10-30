@@ -129,8 +129,9 @@ export class DiscussionService {
     const created: string[] = []
     try {
       for (const member of members) {
-        await this.deps.conversations.create(member.agent, parsed.projectPaths, undefined,
-          { permissionMode: agentDescriptor(member.agent).discussionMode, model: member.model, effort: member.effort, deferStart: true },
+        const mode = agentDescriptor(member.agent).discussionMode
+        await this.deps.conversations.create(member.agent, parsed.projectPaths, mode === 'bypass',
+          { permissionMode: mode, model: member.model, effort: member.effort, deferStart: true },
           null, member.conversationId, { id, title: `${title} · ${member.name}` })
         created.push(member.conversationId)
       }
@@ -258,8 +259,9 @@ export class DiscussionService {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(memberId, id, Number(last?.next ?? 0), conversationId, member.agent, member.model ?? null, member.effort ?? null, member.name, member.role)
       try {
-        await this.deps.conversations.create(member.agent, discussion.projectPaths, undefined,
-          { permissionMode: agentDescriptor(member.agent).discussionMode, model: member.model, effort: member.effort, deferStart: true },
+        const mode = agentDescriptor(member.agent).discussionMode
+        await this.deps.conversations.create(member.agent, discussion.projectPaths, mode === 'bypass',
+          { permissionMode: mode, model: member.model, effort: member.effort, deferStart: true },
           null, conversationId, { id, title: `${discussion.title} · ${member.name}` })
       } catch (error) {
         this.db.prepare('DELETE FROM discussion_members WHERE id = ?').run(memberId)
