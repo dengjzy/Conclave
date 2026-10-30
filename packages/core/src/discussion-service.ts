@@ -15,6 +15,7 @@ import {
   DiscussionMemberFields,
   DiscussionPost,
   PLAN_TOOLS,
+  type AgentKind,
   type ChatItem,
   type Conversation,
   type DiscussionAction,
@@ -88,6 +89,23 @@ export class DiscussionService {
   ) {
     this.db = new DatabaseSync(file)
     this.db.exec('PRAGMA journal_mode = WAL')
+    this.migrateMemberOptions()
+  }
+
+  private migrateMemberOptions(): void {
+    try {
+      const members = this.db.prepare('SELECT dm.conversation_id, dm.agent, c.chat_options FROM discussion_members dm JOIN conversations c ON dm.conversation_id = c.id').all() as { conversation_id: string; agent: AgentKind; chat_options: string | null }[]
+      for (const member of members) {
+        const mode = agentDescriptor(member.agent).discussionMode
+        const bypass = mode === 'bypass'
+        let options: Record<string, unknown> = {}
+        try { options = member.chat_options ? JSON.parse(member.chat_options) : {} } catch {}
+        if (options.permissionMode !== mode || (bypass && !options.allowBypass)) {
+          this.db.prepare('UPDATE conversations SET chat_options = ? WHERE id = ?')
+            .run(JSON.stringify({ ...options, permissionMode: mode, ...(bypass ? { allowBypass: true } : {}) }), member.conversation_id)
+        }
+      }
+    } catch {}
   }
 
   close(): void { this.db.close() }
@@ -391,8 +409,12 @@ export class DiscussionService {
     const member = this.memberOf(conversation.id)
     if (!member) return
     const request = conversation.chat?.request
-    if (request && request.kind === 'approval' && request.tool !== null && PLAN_TOOLS.has(request.tool) && this.pendingOf(member.id)) {
-      void this.deps.conversations.respond(conversation.id, request.requestId, { decision: 'deny', message: PLAN_DENIAL }).catch(() => {})
+    if (request && request.kind === 'approval' && this.pendingOf(member.id)) {
+      if (request.tool !== null && PLAN_TOOLS.has(request.tool)) {
+        void this.deps.conversations.respond(conversation.id, request.requestId, { decision: 'deny', message: PLAN_DENIAL }).catch(() => {})
+      } else if (agentDescriptor(member.agent).discussionMode === 'bypass') {
+        void this.deps.conversations.respond(conversation.id, request.requestId, { decision: 'allow' }).catch(() => {})
+      }
     }
     const status = this.statusOf(member.id, conversation)
     if (this.statuses.get(member.id) !== status) {
@@ -507,8 +529,14 @@ export class DiscussionService {
     for (const each of unseen) deliver.run(JSON.stringify([...each.delivered, member.id]), each.id)
     this.announcePosts(discussion.id, [post])
     try {
+      const mode = agentDescriptor(member.agent).discussionMode
+      const bypass = mode === 'bypass'
       const conversation = this.deps.conversations.get(member.conversationId)
-      if (!conversation.chat) await this.deps.conversations.continue(member.conversationId)
+      if (conversation.chatOptions?.permissionMode !== mode || (bypass && !conversation.chatOptions?.allowBypass)) {
+        this.db.prepare('UPDATE conversations SET chat_options = ? WHERE id = ?')
+          .run(JSON.stringify({ ...conversation.chatOptions, permissionMode: mode, ...(bypass ? { allowBypass: true } : {}) }), member.conversationId)
+      }
+      if (!conversation.chat) await this.deps.conversations.continue(member.conversationId, bypass)
       await this.deps.conversations.send(member.conversationId, text, [], true, false, `${REF_PREFIX}${post.id}`)
     } catch (error) {
       this.settle(post.id, member.conversationId, failure(error))

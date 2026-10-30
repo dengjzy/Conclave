@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -423,5 +424,61 @@ describe('DiscussionService', () => {
     await discussions.delete(discussion.id)
     expect(discussions.list()).toEqual([])
     expect(conversations.listAll()).toEqual([])
+  })
+
+  it('migrates legacy member conversation options to match discussionMode', async () => {
+    const discussion = await discussions.create(fields({
+      members: [{ agent: 'antigravity', name: 'Ann' }, { agent: 'claude', name: 'Bob' }],
+      chair: 1
+    }))
+    const ann = by(discussion, 'Ann')
+    // Manually set legacy chat options
+    store.setChatOptions(ann.conversationId, { permissionMode: 'ask', allowBypass: false })
+    expect(store.chatOptions(ann.conversationId)).toMatchObject({ permissionMode: 'ask', allowBypass: false })
+
+    // Reopen discussion service (which triggers migrateMemberOptions)
+    discussions.close()
+    discussions = new DiscussionService(path.join(root, 'conclave.db'), { conversations, events: { changed: () => {}, deleted: () => {}, posts: () => {} } })
+
+    expect(store.chatOptions(ann.conversationId)).toMatchObject({ permissionMode: 'bypass', allowBypass: true })
+  })
+
+  it('auto-approves tool requests for members whose discussionMode is bypass', async () => {
+    let responded: { id: string; requestId: string; answer: unknown } | null = null
+    const originalRespond = conversations.respond.bind(conversations)
+    conversations.respond = async (id, requestId, answer) => {
+      responded = { id, requestId, answer }
+      return originalRespond(id, requestId, answer).catch(() => {})
+    }
+    const discussion = await discussions.create(fields())
+    await until(() => state(discussion.id) === 'done')
+
+    const memberId = randomUUID()
+    const conversationId = randomUUID()
+    ;(discussions as any).db.prepare(`INSERT INTO discussion_members (id, discussion_id, position, conversation_id, agent, model, effort, name, role) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(memberId, discussion.id, 99, conversationId, 'antigravity', null, null, 'Dan', 'analyst')
+    const post = (discussions as any).insertPost(discussion.id, { round: 1, memberId, kind: 'opening', text: '', mentions: [], state: 'pending' })
+
+    const fakeConv = {
+      id: conversationId,
+      discussionId: discussion.id,
+      agent: 'antigravity',
+      chat: {
+        request: {
+          requestId: 'number:42',
+          kind: 'approval' as const,
+          tool: 'commandExecution',
+          title: 'echo hi',
+          decisions: ['allow' as const, 'deny' as const],
+          open: 1
+        }
+      }
+    }
+    discussions.conversationChanged(fakeConv as any)
+    expect(responded).toMatchObject({
+      id: conversationId,
+      requestId: 'number:42',
+      answer: { decision: 'allow' }
+    })
+    ;(discussions as any).settle(post.id, conversationId, null)
   })
 })
