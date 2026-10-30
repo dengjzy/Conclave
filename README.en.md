@@ -6,9 +6,9 @@
 
 Claude Code · Codex · Antigravity · Pi · OpenCode · Cursor · DeepSeek Harness · ZCode · Kimi · Gemini
 
-Quota Telemetry · Concurrent Fan-out · Multi-turn Debates · Agent Squads · Isolated Worktrees
+Quota Telemetry · Concurrent Fan-out · Multi-turn Debates · Agent Squads · Automations & Scheduled Runs · Isolated Worktrees
 
-[![Version](https://img.shields.io/badge/version-0.22.0--web-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.0.1--web-blue)](CHANGELOG.md)
 ![Platform](https://img.shields.io/badge/platform-Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-green)
 ![Agents](https://img.shields.io/badge/agents-10%20supported-8A2BE2)
 ![Architecture](https://img.shields.io/badge/architecture-Node%20Daemon%20%2B%20Core%20%2B%20Web-orange)
@@ -28,7 +28,30 @@ Conclave directly drives your locally installed and authenticated Agent CLIs. Co
 * **Multi-Turn Discussions**: Coordinate multiple agents in a structured topic discussion, cross-reviewing proposals and synthesizing consensus.
 * **Isolated Git Worktrees**: Every task operates within its own Git worktree, preventing agents from causing branch conflicts.
 * **Real-time Quota Telemetry**: The status bar visualizes agent token usage, reset schedules, and rate warnings.
+* **Automations & Scheduled Tasks**: Schedule recurring routines (Cron syntax) or one-off reservations with automated queuing and telemetry.
 * **Pure Web & Cross-Platform**: Stripped of heavy Electron desktop wrappers, Conclave runs efficiently via a lightweight Node daemon and pure Web UI on Linux, macOS, and Windows.
+
+---
+
+## Core Capabilities
+
+### 1. Concurrent Questioning & Multi-Turn Debates
+- **Concurrent Fan-out**: Select multiple agents and broadcast prompts simultaneously for side-by-side comparative review.
+- **Multi-Turn Discussions**: Coordinate agents in multi-round structured topic debates, cross-reviewing arguments with an assigned host synthesizing consensus.
+
+### 2. Engineering Squads & Task Delegation
+- Configure dedicated agents, models, and roles for Team Lead, Developers, and Reviewers.
+- After the Lead approves the plan, assign members to work concurrently in isolated worktrees: read-only analysis in parallel, serialized code editing with automated approvals.
+
+### 3. Contextual Conversation Handoff
+- Switch between execution agents within any ongoing conversation; full context and message history transfer smoothly without copy-pasting.
+
+### 4. Quota Telemetry & Rate Pacing
+- Real-time status bar monitoring token usage and reset windows for all agent CLIs, offering proactive warnings before hitting rate limits.
+
+### 5. Automations & Scheduled Runs
+- **Recurring & One-Off Schedules**: Set up recurring routines (hourly/daily/custom Cron expressions) or one-shot reservations to trigger agents for routine inspections or maintenance tasks.
+- **Queue & History Telemetry**: Track real-time execution queues, historical statuses, and execution logs with full traceability.
 
 ---
 
@@ -68,11 +91,13 @@ Conclave adopts a modern decoupled multi-process architecture:
 
 ## Supported Agents
 
+Conclave deeply adapts to popular local coding agent CLIs:
+
 | Agent | Connection | Permissions & Modes | Squads | Handoff |
 |---|---|---|:---:|:---:|
 | **Claude Code** | `claude -p` (stream-json) | Accept Edits · Plan Mode · Ask Before Edit | ✓ | ✓ |
 | **Codex** | `codex app-server` | Auto · Plan · Read Only | ✓ | ✓ |
-| **Antigravity** | Antigravity CLI / ACP Server | Default · Auto Edit | ✓ | ✓ |
+| **Antigravity** | Antigravity CLI / ACP Server | Default · Auto Edit · Bypass Mode | ✓ | ✓ |
 | **Pi** | `pi --mode rpc` | Default · Auto · Plan · Read Only | ✓ | ✓ |
 | **OpenCode** | `opencode acp` | Build · Auto · Plan · Read Only | ✓ | ✓ |
 | **Cursor** | `cursor-agent acp` | Agent · Plan · Ask | ✓ | ✓ |
@@ -92,15 +117,31 @@ Conclave adopts a modern decoupled multi-process architecture:
 
 ### Setup
 
-```bash
-git clone https://github.com/dengjzy/Conclave.git
-cd conclave
-pnpm install
-pnpm build
-pnpm start
-```
+1. **Clone repository**:
+   ```bash
+   git clone https://github.com/dengjzy/Conclave.git
+   cd conclave
+   ```
 
-Access the web interface at `http://127.0.0.1:43551/conclave`.
+2. **Install dependencies**:
+   ```bash
+   pnpm install
+   ```
+
+3. **Build modules**:
+   ```bash
+   pnpm build
+   ```
+
+4. **Start service**:
+   ```bash
+   pnpm start
+   # Or run in development mode:
+   pnpm dev
+   ```
+
+5. **Open browser**:
+   Access the web interface at `http://127.0.0.1:43551/conclave` (or via LAN at `http://<LAN_IP>:43551/conclave` as displayed in the console output).
 
 ---
 
@@ -118,6 +159,15 @@ Access the web interface at `http://127.0.0.1:43551/conclave`.
 | <kbd>Enter</kbd> | Send message (queues if agent is busy) |
 | <kbd>Shift</kbd> + <kbd>Enter</kbd> | Newline |
 | <kbd>Esc</kbd> | Interrupt current turn / dismiss dialogs |
+
+---
+
+## Local-First & Data Security
+
+- **Fully Localized**: All conversations, task histories, and worktrees are stored locally under `~/.conclave/`, with zero telemetry or cloud sync.
+- **Service Binding & Authentication**: Core service supports local and LAN access (listens on `0.0.0.0` by default, configurable via `CONCLAVE_HOST` or `--host`), with all WebSocket and static asset requests protected by session token authentication.
+- **Argument Isolation**: Agent CLI commands are spawned directly using parameter arrays, eliminating shell injection vulnerabilities.
+- **Traceable Code Safety**: Git worktrees verify uncommitted changes and unique commits prior to cleanup, ensuring work is never lost.
 
 ---
 

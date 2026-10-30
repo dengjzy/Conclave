@@ -6,9 +6,9 @@
 
 Claude Code · Codex · Antigravity · Pi · OpenCode · Cursor · DeepSeek Harness · ZCode · Kimi · Gemini
 
-额度监控 · 并发提问对比 · 多轮讨论 · 任务小队 · 独立 Worktree 隔离
+额度监控 · 并发提问对比 · 多轮讨论 · 研发小队 · 自动化与定时调度 · 独立 Worktree 隔离
 
-[![Version](https://img.shields.io/badge/version-0.22.0--web-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.0.1--web-blue)](CHANGELOG.md)
 ![Platform](https://img.shields.io/badge/platform-Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-green)
 ![Agents](https://img.shields.io/badge/agents-10%20supported-8A2BE2)
 ![Architecture](https://img.shields.io/badge/architecture-Node%20Daemon%20%2B%20Core%20%2B%20Web-orange)
@@ -28,6 +28,7 @@ Conclave 直接驱动你在本机装好、登录好的各 Agent CLI，配置与�
 * **多轮讨论与互审**：支持多个 Agent 共同参与议题讨论，分轮交叉质询与补充，最后汇总共识。
 * **独立 Worktree 隔离**：每个任务分配独立的 Git worktree，多 Agent 并行开发互不干扰代码库。
 * **额度用量实时把控**：底部状态栏直观展示各 Agent 的使用量、额度重置窗口与节奏预警。
+* **自动化与定时任务**：支持配置周期性循环任务（Cron 规则）与单次定时预约，自动入队并跟踪执行。
 * **纯 Web 跨平台运行**：移除厚重的桌面外壳，基于轻量 Node.js 后台 + 纯浏览器前端，Linux / macOS / Windows 均可秒级启动并流畅运行。
 
 ---
@@ -47,6 +48,10 @@ Conclave 直接驱动你在本机装好、登录好的各 Agent CLI，配置与�
 
 ### 4. 额度感知与用量监控
 - 常驻底部状态栏监控各 Agent CLI 的使用用量与恢复时间，并在额度紧张或即将重置时给出建议。
+
+### 5. 自动化与定时调度（Automations）
+- **周期与预约调度**：支持设置周期性循环任务（按小时/天/自定义 Cron 表达式）或单次预约执行，自动唤起指定 Agent 进行自动化巡检或日常维护。
+- **任务队列与执行追踪**：实时展示当前排队队列、历史执行状态及详情日志，任务完成或出错均有记录可查。
 
 ---
 
@@ -92,7 +97,7 @@ Conclave 深度适配主流的本机编程 Agent CLI：
 |---|---|---|:---:|:---:|
 | **Claude Code** | `claude -p`（stream-json） | 逐项确认 · 自动接受编辑 · 规划模式 | ✓ | ✓ |
 | **Codex** | `codex app-server` | 逐项确认 · 自动 · 规划 · 只读 | ✓ | ✓ |
-| **Antigravity** | 本机 Antigravity CLI / ACP 驱动 | 默认 · 自动编辑 | ✓ | ✓ |
+| **Antigravity** | 本机 Antigravity CLI / ACP 驱动 | 默认 · 自动编辑 · 免授权模式（Bypass） | ✓ | ✓ |
 | **Pi** | `pi --mode rpc` | 默认 · 自动 · 规划 · 只读 | ✓ | ✓ |
 | **OpenCode** | `opencode acp` | Build · 自动 · Plan · 只读 | ✓ | ✓ |
 | **Cursor** | `cursor-agent acp` | Agent · Plan · Ask | ✓ | ✓ |
