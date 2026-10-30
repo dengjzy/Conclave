@@ -28,6 +28,20 @@ function opened(extra: Partial<ChatStageOptions> = {}) {
 const update = (driver: AcpDriver, content: object) => receive(driver, { method: 'session/update', params: { sessionId: 'provider-session', update: content } })
 
 describe('Gemini CLI ACP', () => {
+  it('explains a retired consumer OAuth client without misdiagnosing it as an expired login', () => {
+    const driver = new AcpDriver(geminiDialect, 'stage', options)
+    driver.due().forEach((frame) => sent(driver, frame))
+    receive(driver, { id: 'gemini-init', result: init })
+    driver.due().forEach((frame) => sent(driver, frame))
+    receive(driver, { id: 'gemini-session', error: { code: -32603, message: 'This client is no longer supported for Gemini Code Assist for individuals. To continue using Gemini, please migrate to the Antigravity suite of products.' } })
+    expect(driver.ready()).toBe(false)
+    expect(driver.failure()).toContain('Google 已停止个人账号')
+    expect(driver.failure()).toContain('Antigravity')
+    expect(driver.failure()).toContain('Gemini API key')
+    expect(driver.failure()).toContain('重新登录或升级 CLI 无法恢复')
+    expect(geminiDialect.startupError?.('network timeout')).toBeNull()
+  })
+
   it('replays the official session, maps modes, tools and approvals, and counts cached input only once', () => {
     const driver = new AcpDriver(geminiDialect, 'stage', options)
     session.forEach((record) => driver.apply(record))
