@@ -12,6 +12,9 @@
   },
   "scripts": {
     "start": "node ./bin/conclave.mjs start",
+    "stop": "node ./bin/conclave.mjs stop",
+    "status": "node ./bin/conclave.mjs status",
+    "doctor": "node ./bin/conclave.mjs doctor",
     "postinstall": "node scripts/fix-node-pty-spawn-helper.mjs",
     "dev": "pnpm --parallel --filter @conclave/daemon --filter @conclave/core --filter @conclave/web run dev",
     "dev:daemon": "pnpm --filter @conclave/daemon run dev",

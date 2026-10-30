@@ -115,33 +115,31 @@ Conclave deeply adapts to popular local coding agent CLIs:
 - pnpm ≥ 10.0
 - At least one supported agent CLI installed and authenticated
 
-### Setup
+### One-Command Launch
 
-1. **Clone repository**:
-   ```bash
-   git clone https://github.com/dengjzy/Conclave.git
-   cd conclave
-   ```
+Clone and install dependencies, then launch everything with a single `pnpm start` command:
 
-2. **Install dependencies**:
-   ```bash
-   pnpm install
-   ```
+```bash
+git clone https://github.com/dengjzy/Conclave.git
+cd conclave
+pnpm install
+pnpm start
+```
 
-3. **Build modules**:
-   ```bash
-   pnpm build
-   ```
+Once ready, the console outputs direct links with session tokens:
+- **Local Access**: `http://127.0.0.1:43551/conclave?token=...`
+- **LAN Access**: `http://<LAN_IP>:43551/conclave?token=...` (when launched with `--host`)
 
-4. **Start service**:
-   ```bash
-   pnpm start
-   # Or run in development mode:
-   pnpm dev
-   ```
+> **Note**: `pnpm start` automatically handles on-demand web frontend compilation, background daemon supervision, and core engine orchestration. **No manual `pnpm build` required**.
 
-5. **Open browser**:
-   Access the web interface at `http://127.0.0.1:43551/conclave` (or via LAN at `http://<LAN_IP>:43551/conclave` as displayed in the console output).
+#### Useful Commands & Options
+
+- **LAN / Mobile Access**: `pnpm start -- --host` (allows remote access across devices on your local network)
+- **Auto-Open Browser**: `pnpm start -- --open`
+- **Check Status**: `pnpm status` (inspects running Daemon/Core processes and active URLs)
+- **Stop Service**: `pnpm stop`
+- **Agent Health Doctor**: `pnpm doctor` (validates local CLI agent connectivity)
+- **Source Development Mode** (for modifying Conclave itself): `pnpm dev` (launches Vite HMR frontend server and live core reloading)
 
 ---
 

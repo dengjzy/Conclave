@@ -115,33 +115,31 @@ Conclave 深度适配主流的本机编程 Agent CLI：
 - pnpm ≥ 10.0
 - 本机已安装并登录至少一个上述支持的 Agent CLI
 
-### 安装与启动
+### 一键启动
 
-1. **克隆代码仓库**：
-   ```bash
-   git clone https://github.com/dengjzy/Conclave.git
-   cd conclave
-   ```
+克隆后安装依赖，执行一行 `pnpm start` 即可自动完成前端按需编译、后台守护进程拉起与服务启动：
 
-2. **安装依赖**：
-   ```bash
-   pnpm install
-   ```
+```bash
+git clone https://github.com/dengjzy/Conclave.git
+cd conclave
+pnpm install
+pnpm start
+```
 
-3. **构建所有模块**：
-   ```bash
-   pnpm build
-   ```
+服务就绪后，终端会直接输出带鉴权 Token 的可访问链接：
+- **本机访问**：`http://127.0.0.1:43551/conclave?token=...`
+- **局域网访问**：`http://<LAN_IP>:43551/conclave?token=...`（启动时加 `--host` 参数）
 
-4. **启动服务**：
-   ```bash
-   pnpm start
-   # 或使用开发模式实时编译：
-   pnpm dev
-   ```
+> **说明**：`pnpm start` 内部已集成一体化启动逻辑，会自动检测并按需编译前端、自动在后台拉起 Daemon 守护进程并启动 Core 服务，**无需手动执行 `pnpm build`**。
 
-5. **打开浏览器**：
-   访问固定本地入口：`http://127.0.0.1:43551/conclave`（支持局域网设备直接访问控制台输出的局域网 IP 入口 `http://<LAN_IP>:43551/conclave`）。
+#### 常用命令与选项
+
+- **局域网 / 手机访问**：`pnpm start -- --host`（允许通过局域网 IP 跨设备访问）
+- **启动后自动打开浏览器**：`pnpm start -- --open`
+- **查看运行状态**：`pnpm status`（实时查看 Daemon、Core 进程状态及连接入口）
+- **停止服务**：`pnpm stop`
+- **Agent 健康自检**：`pnpm doctor`（检查各 Agent CLI 连通性）
+- **源码开发模式**（仅限修改 Conclave 自身代码时使用）：`pnpm dev`（提供 Vite 热重载前端开发服务器与内核实时编译）
 
 ---
 
