@@ -242,9 +242,9 @@ export function App() {
             : section === 'tasks'
               ? t('sidebar.tasks')
               : section === 'squads'
-                ? t('sidebar.agents')
+                ? t('Squads.developmentSquads')
                 : section === 'discussions'
-                  ? t('sidebar.discussions')
+                  ? t('DiscussionView.groupChat_910')
                   : t('sidebar.conversations')
 
   return (

@@ -185,7 +185,7 @@ export function RoutinesSection() {
   return (
     <>
       <AgentsPageHeader
-        title={t('RoutinesEntry.scheduled')}
+        title={t('RoutinesView.tabRecurring')}
         description={tr('RoutinesView.repeatingTasksEachRunOpensANewConversation', { value1: UNATTENDED_LABEL[mode], value2: <SettingsLink /> })}
         actions={<button type="button" className="button primary" onClick={create}><PlusIcon /><span>{t('RoutinesView.newRoutine')}</span></button>}
       />

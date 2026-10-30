@@ -6461,12 +6461,12 @@ export const MESSAGES = {
     "en": "Manual"
   },
   "RoutineEditor.editRoutine": {
-    "zh": "编辑定时任务",
-    "en": "Edit routine"
+    "zh": "编辑自动化任务",
+    "en": "Edit automation"
   },
   "RoutineEditor.newRoutine": {
-    "zh": "新建定时任务",
-    "en": "New routine"
+    "zh": "新建自动化任务",
+    "en": "New automation"
   },
   "RoutineEditor.name": {
     "zh": "名称 {value1}",
@@ -6533,16 +6533,16 @@ export const MESSAGES = {
     "en": "Create"
   },
   "RoutinesEntry.scheduled": {
-    "zh": "定时",
-    "en": "Routines"
+    "zh": "自动化",
+    "en": "Automations"
   },
   "RoutinesEntry.unreadRuns": {
     "zh": "{unread} 次运行未看",
     "en": "{unread} unread runs"
   },
   "RoutinesEntry.schedulesFailedToStart": {
-    "zh": "{failed} 个预约没能开始",
-    "en": "{failed} {failed, plural, one {schedule} other {schedules}} failed to start"
+    "zh": "{failed} 个任务没能开始",
+    "en": "{failed} {failed, plural, one {task} other {tasks}} failed to start"
   },
   "RoutinesSection.noRunsYet": {
     "zh": "还没有运行过。",
@@ -6629,12 +6629,20 @@ export const MESSAGES = {
     "en": "Switch to always awake"
   },
   "RoutinesView.scheduledPageContent": {
-    "zh": "定时页的内容",
-    "en": "Routines page content"
+    "zh": "自动化页的内容",
+    "en": "Automations page content"
   },
   "RoutinesView.newRoutine": {
-    "zh": "新建定时",
-    "en": "New routine"
+    "zh": "新建自动化",
+    "en": "New automation"
+  },
+  "RoutinesView.tabRecurring": {
+    "zh": "周期规则",
+    "en": "Recurring Rules"
+  },
+  "RoutinesView.tabQueue": {
+    "zh": "队列与记录",
+    "en": "Queue & History"
   },
   "RoutinesSection.blankHint": {
     "zh": "自己写要做的事和什么时候做",

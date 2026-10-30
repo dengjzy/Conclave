@@ -125,7 +125,7 @@ export function SchedulesPanel() {
   }
   return (
     <>
-      <AgentsPageHeader title={t('OverviewView.schedules')} description={tr('SchedulesPanel.runASpecifiedTaskOrConversationOnceStarts', { value1: UNATTENDED_LABEL[mode], value2: <SettingsLink /> })} />
+      <AgentsPageHeader title={t('RoutinesView.tabQueue')} description={tr('SchedulesPanel.runASpecifiedTaskOrConversationOnceStarts', { value1: UNATTENDED_LABEL[mode], value2: <SettingsLink /> })} />
       {awake?.mode === 'off' && open.length > 0 && (
         <p className="routines-notice" role="note">{tr('SchedulesPanel.keepComputerAwakeIsOffSchedulesWillNot', { value1: <button type="button" className="link-button" onClick={() => void setAwakeMode('auto')}>{t('SchedulesPanel.keepAwakeWhenSchedulesArePending')}</button> })}</p>
       )}

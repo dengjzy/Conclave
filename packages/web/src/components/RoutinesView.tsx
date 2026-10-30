@@ -4,7 +4,7 @@ import { RoutinesSection } from './RoutinesSection'
 import { SchedulesPanel } from './SchedulesPanel'
 import './agent-profiles.css'
 
-const TABS: ReadonlyArray<{ value: RoutinesTab; label: string }> = localized(() => ([{ value: 'routines', label: t('RoutinesEntry.scheduled') }, { value: 'schedules', label: t('OverviewView.schedules') }]))
+const TABS: ReadonlyArray<{ value: RoutinesTab; label: string }> = localized(() => ([{ value: 'routines', label: t('RoutinesView.tabRecurring') }, { value: 'schedules', label: t('RoutinesView.tabQueue') }]))
 
 // What runs later without anyone there: the routines that run again and again, and beside them the
 // reservations (预约) that run once, each on a tab of its own. The tabs sit above the page as the
