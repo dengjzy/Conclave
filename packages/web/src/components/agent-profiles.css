@@ -5,8 +5,11 @@
 .agents-tabs .button[aria-pressed="true"], .agents-tabs .button[aria-pressed="true"]:hover:not(:disabled) { background: var(--accent-bg); color: var(--accent); }
 .agents-page > * { width: 100%; max-width: var(--page-wide); margin-inline: auto; }
 .agents-page > .squad-page-body { max-width: var(--page-form); margin-left: max(0px, calc((100% - var(--page-wide)) / 2)); margin-right: auto; }
+.agents-page-header { align-items: center; }
 .agents-page-header > .tool-button:first-child { margin-left: -4px; }
 .agents-page-header-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.agents-page-header-actions .button { height: 32px; padding: 0 14px; font-size: 13px; font-weight: 500; gap: 6px; }
+.agents-page-header-actions .button svg { width: 14px; height: 14px; stroke-width: 2.2; }
 .agent-profile-card.squad-card { gap: 0; padding: 0; cursor: default; }
 .agent-profile-card-main { display: flex; flex: 1; flex-direction: column; gap: 12px; min-width: 0; width: 100%; padding: 16px; border: 0; border-radius: var(--radius-lg); background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .agent-profile-card-main:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }

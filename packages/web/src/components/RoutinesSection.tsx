@@ -187,7 +187,7 @@ export function RoutinesSection() {
       <AgentsPageHeader
         title={t('RoutinesEntry.scheduled')}
         description={tr('RoutinesView.repeatingTasksEachRunOpensANewConversation', { value1: UNATTENDED_LABEL[mode], value2: <SettingsLink /> })}
-        actions={<button type="button" className="button primary" onClick={create}><PlusIcon />{t('RoutinesView.newRoutine')}</button>}
+        actions={<button type="button" className="button primary" onClick={create}><PlusIcon /><span>{t('RoutinesView.newRoutine')}</span></button>}
       />
       {awake && awake.mode !== 'on' && scheduled && (
         <p className="routines-notice" role="note">{tr('RoutinesView.nothingRunsWhileTheComputerSleepsOnlyThe', { value1: <button type="button" className="link-button" onClick={() => void setAwakeMode('on')}>{t('RoutinesView.switchToAlwaysAwake')}</button> })}</p>
