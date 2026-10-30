@@ -12,7 +12,9 @@ export function AgentsPageHeader({ title, description, back, actions }: {
   return <header className="worktrees-header agents-page-header">
     {back && <button type="button" className="tool-button" aria-label={back.label} data-tooltip={back.label} onClick={back.onClick}><ArrowLeftIcon /></button>}
     <div className="worktrees-heading"><h2>{title}</h2>{description && <p className="muted">{description}</p>}</div>
-    {actions}
-    <button type="button" className="tool-button" aria-label={t('BackdropPicker.close')} data-tooltip={t('BackdropPicker.close')} onClick={openOverview}><CloseIcon /></button>
+    <div className="agents-page-header-actions">
+      {actions}
+      <button type="button" className="tool-button" aria-label={t('BackdropPicker.close')} data-tooltip={t('BackdropPicker.close')} onClick={openOverview}><CloseIcon /></button>
+    </div>
   </header>
 }

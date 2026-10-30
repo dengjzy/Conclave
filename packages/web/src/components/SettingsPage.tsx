@@ -566,7 +566,7 @@ const SECTIONS: readonly Section[] = localized(() => ([
     group: t('ChatFontPicker.other'),
     title: t('SupportSettings.title'),
     description: t('SupportSettings.description'),
-    keywords: [t('ProjectStar.title'), t('SupportSettings.share'), t('SupportSettings.copyShare'), t('SettingsPage.projectWebsite'), t('SupportSettings.feedback'), t('SupportSettings.community'), 'star', 'GitHub', 'share', 'feedback', 'support', 'community', 'issues'],
+    keywords: [t('ProjectStar.title'), t('SupportSettings.share'), t('SupportSettings.copyShare'), t('SettingsPage.projectWebsite'), t('SupportSettings.feedback'), 'star', 'GitHub', 'share', 'feedback', 'support', 'issues'],
     Icon: ChatIcon,
     Body: SupportSettings
   },

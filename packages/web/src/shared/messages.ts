@@ -192,7 +192,7 @@ export const MESSAGES = {
   "AgentProfiles.failed": {"zh": "失败", "en": "Failed"},
   "AgentProfiles.cancelled": {"zh": "已取消", "en": "Cancelled"},
   "SupportSettings.title": {"zh": "支持与反馈", "en": "Support & feedback"},
-  "SupportSettings.description": {"zh": "支持 Conclave、分享给朋友、查看项目地址、反馈问题与交流。", "en": "Support Conclave, share it with friends, visit the project, send feedback, and connect with the community."},
+  "SupportSettings.description": {"zh": "支持 Conclave、分享给朋友、查看项目地址与反馈问题。", "en": "Support Conclave, share it with friends, visit the project, and send feedback."},
   "SupportSettings.share": {"zh": "分享 Conclave", "en": "Share Conclave"},
   "SupportSettings.shareDescription": {"zh": "觉得好用？推荐给朋友，让更多人认识 Conclave。", "en": "Enjoying Conclave? Recommend it to friends and help more people discover it."},
   "SupportSettings.copyShare": {"zh": "复制分享文案", "en": "Copy share text"},

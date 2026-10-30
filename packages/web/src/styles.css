@@ -2386,8 +2386,15 @@ button.task-tag:hover {
   font-size: 13px;
   line-height: 1;
   white-space: nowrap;
+  flex-shrink: 0;
   cursor: pointer;
   transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.button svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
 }
 
 .button:hover:not(:disabled) {
@@ -10437,6 +10444,8 @@ button.squad-member-main { cursor: pointer; }
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .evidence-card-file {
@@ -10446,9 +10455,8 @@ button.squad-member-main { cursor: pointer; }
   color: var(--text);
   font-size: 12px;
   min-width: 0;
+  flex: 1;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .evidence-card-file svg {
@@ -10464,12 +10472,18 @@ button.squad-member-main { cursor: pointer; }
   color: var(--text);
   background: transparent;
   padding: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
 }
 
 .evidence-card-actions {
   margin-left: auto;
   display: flex;
   align-items: center;
+  flex-shrink: 0;
 }
 
 .evidence-card-conclusion {

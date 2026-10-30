@@ -50,8 +50,5 @@ export function SupportSettings() {
     <SettingsRow label={t('SupportSettings.feedback')} description={t('SupportSettings.feedbackDescription')} control={() => (
       <a className="button support-feedback-link" href={`${PROJECT_GITHUB_URL}/issues/new`} target="_blank" rel="noreferrer">{t('SupportSettings.openFeedback')}</a>
     )} />
-    <SettingsRow label={t('SupportSettings.community')} description={t('SupportSettings.communityDescription')} control={() => (
-      <span className="muted">{t('SupportSettings.comingSoon')}</span>
-    )} />
   </>
 }
