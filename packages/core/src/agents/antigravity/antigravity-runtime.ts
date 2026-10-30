@@ -1,4 +1,3 @@
-import { findOnPath, parseVersion } from '../../environment-check'
 import { access, constants } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
@@ -56,14 +55,10 @@ export function antigravityTokenFile(geminiHome = process.env.GEMINI_HOME || pat
   return path.join(geminiHome, 'antigravity-acp', 'acp_token.json')
 }
 
-export async function detectAntigravity(pathEnv: string, platform: NodeJS.Platform, host: Host = { ...thisHost(), platform }): Promise<AgentDetection> {
+export async function detectAntigravity(_pathEnv: string, platform: NodeJS.Platform, host: Host = { ...thisHost(), platform }): Promise<AgentDetection> {
   const server = await installed(host)
   if (server) {
     return { status: 'ok', version: ANTIGRAVITY_VERSION, path: server, signedIn: await antigravitySignedIn() }
-  }
-  const agyPath = await findOnPath('agy', pathEnv, platform)
-  if (agyPath) {
-    return { status: 'ok', version: '1.4.9', path: agyPath, signedIn: true }
   }
   return { status: 'missing', version: null, path: null, signedIn: null }
 }
@@ -71,8 +66,6 @@ export async function detectAntigravity(pathEnv: string, platform: NodeJS.Platfo
 export async function requireAntigravity(host: Host = thisHost()): Promise<string> {
   const server = await installed(host)
   if (server) return server
-  const agyPath = host.platform === process.platform ? await findOnPath('agy', process.env.PATH ?? '', process.platform) : null
-  if (agyPath) return agyPath
   if (!pinOf(host)) throw new Rejection('antigravity-unsupported', 'Antigravity ACP 服务不支持这台电脑的系统或架构')
   throw new Rejection('antigravity-missing', '未安装 Antigravity ACP 服务，请在 设置 → 外部智能体 里下载')
 }
