@@ -1,0 +1,4 @@
+.conversation-drafts, .conversation-draft-pane { display: flex; flex: 1; min-width: 0; min-height: 0; }
+.conversation-draft-pane[hidden] { display: none; }
+.discussion-readonly-note { margin: 0 0 16px; color: var(--text-muted); }
+.discussion-summary-choice { display: flex; align-items: center; gap: 8px; }

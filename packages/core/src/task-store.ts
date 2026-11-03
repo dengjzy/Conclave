@@ -364,7 +364,9 @@ export const MIGRATIONS = [
   // A started run stops holding its agent once the user carries its conversation on; a waiting
   // run names the run it waits behind.
   `ALTER TABLE scheduled_runs ADD COLUMN released_at INTEGER;
-   ALTER TABLE scheduled_runs ADD COLUMN held_by TEXT;`
+   ALTER TABLE scheduled_runs ADD COLUMN held_by TEXT;`,
+  // Keep the concluding chair turn for groups created before the summary became optional.
+  `ALTER TABLE discussions ADD COLUMN summarize INTEGER NOT NULL DEFAULT 1;`
 ]
 
 

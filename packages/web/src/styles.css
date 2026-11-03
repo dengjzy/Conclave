@@ -536,6 +536,11 @@ body.stacked-panel-resizing * {
 [data-collapsed='true'] .sidebar-collapse-icon { opacity: 1; }
 @media (hover: none) { .sidebar-collapse-icon { opacity: 1; } }
 .conversation-list ul { margin: 0; padding: 0 8px 12px; list-style: none; }
+.conversation-history-filter { padding: 0 12px 8px; }
+.conversation-history-filter .segmented { display: flex; }
+.conversation-history-filter .segmented button { flex: 1; min-width: 0; }
+.conversation-history-kind { display: inline-flex; vertical-align: -2px; margin-right: 4px; }
+.conversation-history-kind svg { width: 12px; height: 12px; }
 .conversation-group-title { display: flex; align-items: center; margin: 0; padding: 0 8px; font-size: 12px; font-weight: 600; color: var(--text-muted); }
 /* A group's heading folds it; the chevron sits where the rows' icons do. */
 .conversation-group-fold { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; padding: 4px 12px; border: 0; border-radius: var(--radius-sm); background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }

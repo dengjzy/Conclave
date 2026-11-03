@@ -2,7 +2,7 @@ import { AgentsView } from './components/AgentProfiles'
 import { t, useLocale } from './i18n'
 import { onBrowserShortcut } from './desktop-bridge'
 import { useEffect, useState } from 'react'
-import { closeMobileDetail, focusSplitPane, selectTask, setFileQuickOpen, setNewTaskOpen, setSettingsOpen, toggleBrowserPanel, toggleFilesPanel, toggleSplit, toggleTerminalPanel, useCore, useSplitPanes } from './core-store'
+import { closeMobileDetail, conversationDraftVisible, focusSplitPane, selectTask, setFileQuickOpen, setNewTaskOpen, setSettingsOpen, toggleBrowserPanel, toggleFilesPanel, toggleSplit, toggleTerminalPanel, useCore, useSplitPanes } from './core-store'
 import { ArrowLeftIcon, SidebarIcon } from './components/icons'
 import { NewTaskDialog } from './components/NewTaskDialog'
 import { SettingsPage } from './components/SettingsPage'
@@ -20,7 +20,7 @@ import { ConversationList } from './components/ConversationList'
 import { Sidebar } from './components/Sidebar'
 import { ConversationView } from './components/ConversationView'
 import { ConversationSplit } from './components/ConversationSplit'
-import { ConversationDraft } from './components/ConversationDraft'
+import { ConversationDrafts } from './components/ConversationDrafts'
 import { EnvironmentNotice } from './components/EnvironmentNotice'
 import { StatusBar } from './components/StatusBar'
 import { hasPrimaryModifier } from './shortcut-keys'
@@ -29,9 +29,7 @@ import { FileQuickOpen } from './components/FileQuickOpen'
 import { WorktreeManager } from './components/WorktreeManager'
 import { RoutinesView } from './components/RoutinesView'
 import { RoutinesEntry } from './components/RoutinesEntry'
-import { SidebarDiscussions } from './components/SidebarDiscussions'
 import { DiscussionView } from './components/DiscussionView'
-import { DiscussionDraft } from './components/DiscussionDraft'
 import { OverviewEntry } from './components/OverviewEntry'
 import { OverviewView } from './components/OverviewView'
 import { GuideView } from './components/GuideView'
@@ -68,10 +66,9 @@ export function App() {
   const selectedConversationId = useCore((s) => s.selectedConversationId)
   const splitPanes = useSplitPanes()
   const conversationDraft = useCore((s) => s.conversationDraft)
-  const conversationDraftFrom = useCore((s) => s.conversationDraftFrom)
   const selectedDiscussionId = useCore((s) => s.selectedDiscussionId)
   const discussionDraft = useCore((s) => s.discussionDraft)
-  const discussionDraftFrom = useCore((s) => s.discussionDraftFrom)
+  const showingDraft = useCore(conversationDraftVisible)
   const view = useCore((s) => s.view)
   const error = useCore((s) => s.error)
   const newTaskOpen = useCore((s) => s.newTaskOpen)
@@ -300,7 +297,6 @@ export function App() {
               <SquadsEntry />
               <EnvironmentNotice />
               <SidebarTasks />
-              <SidebarDiscussions />
               <ConversationList />
             </Sidebar>
             {overviewOpen ? (
@@ -313,14 +309,14 @@ export function App() {
               <RoutinesView />
             ) : section === 'squads' ? (
               <AgentsView />
+            ) : showingDraft ? (
+              <ConversationDrafts />
             ) : section === 'discussions' ? (
               selectedDiscussionId ? <DiscussionView key={selectedDiscussionId} id={selectedDiscussionId} /> :
-                discussionDraft ? <DiscussionDraft key={discussionDraftFrom?.discussion.id ?? 'blank'} from={discussionDraftFrom?.discussion ?? null} /> :
                 <section className="detail-empty"><div className="detail-empty-body">{t('App.chooseOrCreateAGroupChat')}</div></section>
             ) : section === 'conversations' ? (
               splitPanes && selectedConversationId ? <ConversationSplit panes={splitPanes} active={selectedConversationId} /> :
               selectedConversationId ? <ConversationView key={selectedConversationId} id={selectedConversationId} /> :
-                conversationDraft ? <ConversationDraft key={conversationDraftFrom?.key ?? 'blank'} /> :
                 <section className="detail-empty"><div className="detail-empty-body">{t('App.chooseOrCreateAConversation')}</div></section>
             ) : selectedId && view === 'chat' ? (
               <TaskChat key={selectedId} taskId={selectedId} />

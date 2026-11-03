@@ -105,10 +105,84 @@ describe('DiscussionService', () => {
   }
   const kinds = (posts: DiscussionPost[]) => posts.map((post) => `${post.round}:${post.kind}:${post.state}`)
 
+  it('finishes with only member answers when the concluding summary is disabled', async () => {
+    const discussion = await discussions.create(fields({ maxRounds: 1, summarize: false }))
+    await until(() => state(discussion.id) === 'done')
+    expect(discussions.get(discussion.id)).toMatchObject({ summarize: false, state: 'done', step: 'round', round: 1 })
+    expect(kinds(discussions.posts(discussion.id))).toEqual(['1:opening:done', '1:opening:done', '1:opening:done'])
+    for (const member of discussion.members) expect(prompts(discussion, member.name)).toHaveLength(1)
+
+    const spawns = daemon.spawns.length
+    discussions.close()
+    serve()
+    await conversations.reconcile((await daemon.request('list', {})).sessions)
+    await discussions.reconcile()
+    expect(discussions.get(discussion.id)).toMatchObject({ summarize: false, state: 'done', step: 'round' })
+    expect(discussions.posts(discussion.id)).toHaveLength(3)
+    expect(daemon.spawns).toHaveLength(spawns)
+  })
+
+  it('keeps summary disabled for follow-ups, another round and a new topic', async () => {
+    const discussion = await discussions.create(fields({ maxRounds: 1, summarize: false }))
+    await until(() => state(discussion.id) === 'done')
+    await discussions.post(discussion.id, 'Consider another angle.')
+    await until(() => state(discussion.id) === 'done' && discussions.get(discussion.id).round === 2)
+    await discussions.control(discussion.id, 'nextRound')
+    await until(() => state(discussion.id) === 'done' && discussions.get(discussion.id).round === 3)
+    await discussions.newTopic(discussion.id, 'Which queue?')
+    await until(() => state(discussion.id) === 'done' && discussions.get(discussion.id).round === 4)
+    expect(discussions.get(discussion.id).summarize).toBe(false)
+    expect(discussions.posts(discussion.id).some((post) => post.kind === 'summary')).toBe(false)
+    for (const member of discussion.members) expect(prompts(discussion, member.name)).toHaveLength(4)
+  })
+
+  it.each(['resume', 'conclude'] as const)('does not add a chair call when a summary-free group is asked to %s', async (action) => {
+    const discussion = await discussions.create(fields({ maxRounds: 3, summarize: false }))
+    await discussions.control(discussion.id, 'pause')
+    await until(() => state(discussion.id) === 'paused')
+    await discussions.control(discussion.id, action)
+    await until(() => state(discussion.id) === 'done')
+    expect(discussions.posts(discussion.id).some((post) => post.kind === 'summary')).toBe(false)
+    const expected = action === 'resume' ? 3 : 1
+    for (const member of discussion.members) expect(prompts(discussion, member.name)).toHaveLength(expected)
+  })
+
+  it('finishes without summary after a partial failure and still pauses if every member fails', async () => {
+    answer = (member) => member === 'Bob' ? null : 'A view'
+    const partial = await discussions.create(fields({ maxRounds: 1, summarize: false }))
+    await until(() => state(partial.id) === 'done')
+    expect(kinds(discussions.posts(partial.id))).toEqual(['1:opening:done', '1:opening:failed', '1:opening:done'])
+    answer = () => null
+    const failed = await discussions.create(fields({ maxRounds: 1, summarize: false }))
+    await until(() => state(failed.id) === 'paused')
+    expect(discussions.posts(failed.id).some((post) => post.kind === 'summary')).toBe(false)
+    expect(discussions.posts(failed.id).at(-1)).toMatchObject({ kind: 'notice', state: 'done' })
+  })
+
+  it('does not create a summary after a pending member is reconciled on reopen', async () => {
+    const reply = daemon.reply
+    daemon.reply = (sessionId, prompt) => {
+      if (conversations.listAll().find((each) => each.sessionId === sessionId)?.title.endsWith('Bob')) return
+      reply(sessionId, prompt)
+    }
+    const discussion = await discussions.create(fields({ maxRounds: 1, summarize: false }))
+    const bob = by(discussion, 'Bob')
+    await until(() => discussions.posts(discussion.id).filter((post) => post.state === 'done').length === 2)
+    daemon.sessions.delete(conversations.get(bob.conversationId).sessionId ?? '')
+    discussions.close()
+    serve()
+    await conversations.reconcile((await daemon.request('list', {})).sessions)
+    await discussions.reconcile()
+    await until(() => state(discussion.id) === 'done')
+    expect(discussions.posts(discussion.id).map((post) => post.kind)).toEqual(['opening', 'opening', 'opening'])
+    expect(discussions.posts(discussion.id).find((post) => post.memberId === bob.id)).toMatchObject({ state: 'failed', error: 'agent-lost' })
+  })
+
   it('runs independent openings, rebuttals that see only the others, then the chair sums up', async () => {
     const discussion = await discussions.create(fields())
     await until(() => state(discussion.id) === 'done')
     const posts = discussions.posts(discussion.id)
+    expect(discussion.summarize).toBe(true)
     expect(kinds(posts)).toEqual([
       '1:opening:done', '1:opening:done', '1:opening:done',
       '2:rebuttal:done', '2:rebuttal:done', '2:rebuttal:done',
@@ -333,6 +407,26 @@ describe('DiscussionService', () => {
     expect(prompts(discussion, 'Ann').at(-1)).toContain('speaker="成员 C" round="2"')
     // What Bob said before leaving still reaches Ann under his letter.
     expect(prompts(discussion, 'Ann').at(-1)).toContain('speaker="成员 B" round="2"')
+  })
+
+  it('allows the unused chair to leave a summary-free group and keeps a valid replacement', async () => {
+    const discussion = await discussions.create(fields({ maxRounds: 1, summarize: false }))
+    await until(() => state(discussion.id) === 'done')
+    const cid = by(discussion, 'Cid')
+    const ann = by(discussion, 'Ann')
+    const left = await discussions.removeMember(discussion.id, cid.id)
+    expect(left).toMatchObject({ summarize: false, chairId: ann.id })
+    expect(left.members.map((member) => member.name)).toEqual(['Ann', 'Bob'])
+    expect(left.formerMembers.map((member) => member.id)).toContain(cid.id)
+    await expect(discussions.removeMember(discussion.id, ann.id)).rejects.toMatchObject({ reason: 'discussion-member-too-few' })
+    discussions.close()
+    serve()
+    expect(discussions.get(discussion.id).chairId).toBe(ann.id)
+    await discussions.control(discussion.id, 'nextRound')
+    await until(() => state(discussion.id) === 'done')
+    const posts = discussions.posts(discussion.id)
+    expect(posts.filter((post) => post.round === 2).map((post) => post.memberId)).toEqual([ann.id, by(discussion, 'Bob').id])
+    expect(posts.some((post) => post.kind === 'summary')).toBe(false)
   })
 
   it('changes the projects after the first for every member, and leaves the first and a group without projects as they are', async () => {

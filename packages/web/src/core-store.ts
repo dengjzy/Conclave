@@ -96,6 +96,8 @@ export type CoreState = {
   selectedConversationId: string | null
   // The page a new conversation starts from while chats are the default (see ConversationDraft).
   conversationDraft: boolean
+  conversationDraftMode: 'single' | 'fanout' | 'debate'
+  conversationDraftKey: string
   // Group chats as core keeps them; empty on a core without them.
   agentProfiles: Record<string, AgentProfile>
   agentProfilesTab: 'profiles' | 'squads'
@@ -233,6 +235,8 @@ export const useCore = create<CoreState>()(() => ({
   section: 'tasks',
   selectedConversationId: null,
   conversationDraft: false,
+  conversationDraftMode: 'single',
+  conversationDraftKey: 'blank',
   conversationDraftProjects: null,
   conversationDraftIssue: null,
   conversationDraftFrom: null,
@@ -654,7 +658,7 @@ export function selectConversation(id: string | null): void {
   setSplitPanes(panesAfterSelect(savedPanes(), current, id))
   useCore.setState((s) => {
     const { [id ?? '']: _seen, ...unseen } = s.unseen
-    return { selectedConversationId: id, section: 'conversations', inspectorFile: s.section === 'conversations' && s.selectedConversationId === id ? s.inspectorFile : null, settingsOpen: false, worktreesOpen: false, routinesOpen: false, overviewOpen: false, inboxOpen: false, conversationDraft: false, unseen }
+    return { selectedConversationId: id, section: 'conversations', inspectorFile: s.section === 'conversations' && s.selectedConversationId === id ? s.inspectorFile : null, settingsOpen: false, worktreesOpen: false, routinesOpen: false, overviewOpen: false, inboxOpen: false, conversationDraft: false, discussionDraft: false, unseen }
   })
   if (id) markRoutineRunSeen(id)
 }
@@ -750,7 +754,32 @@ export type DraftIssue = { provider: string; instance: string; key: string; titl
 // `projects`: what the page starts with, as from a project's group; without, it starts with none.
 // `issue`: the inbox issue the conversation is opened to look into.
 export function openConversationDraft(projects?: readonly string[], issue: DraftIssue | null = null, from: CoreState['conversationDraftFrom'] = null): void {
-  useCore.setState({ selectedConversationId: null, section: 'conversations', settingsOpen: false, worktreesOpen: false, routinesOpen: false, overviewOpen: false, inboxOpen: false, conversationDraft: true, conversationDraftProjects: projects ? { paths: [...projects] } : null, conversationDraftIssue: issue, conversationDraftFrom: from, draftProfileId: null })
+  useCore.setState({ selectedConversationId: null, selectedDiscussionId: null, section: 'conversations', settingsOpen: false, worktreesOpen: false, routinesOpen: false, overviewOpen: false, inboxOpen: false, conversationDraft: true, discussionDraft: false, conversationDraftMode: 'single', conversationDraftKey: crypto.randomUUID(), discussionDraftFrom: null, conversationDraftProjects: projects ? { paths: [...projects] } : null, conversationDraftIssue: issue, conversationDraftFrom: from, draftProfileId: null })
+}
+
+export type ConversationDraftMode = CoreState['conversationDraftMode']
+
+export function conversationDraftVisible(state: Pick<CoreState, 'section' | 'conversationDraft' | 'discussionDraft' | 'selectedConversationId' | 'selectedDiscussionId' | 'settingsOpen' | 'overviewOpen' | 'inboxOpen' | 'worktreesOpen' | 'routinesOpen'>): boolean {
+  if (state.settingsOpen || state.overviewOpen || state.inboxOpen || state.worktreesOpen || state.routinesOpen) return false
+  return (state.section === 'conversations' && state.conversationDraft && !state.selectedConversationId)
+    || (state.section === 'discussions' && state.discussionDraft && !state.selectedDiscussionId)
+}
+
+// Switching the visible form leaves its mounted sibling drafts intact.
+export function switchConversationDraftMode(mode: ConversationDraftMode): void {
+  const group = mode !== 'single'
+  if (group && !useCore.getState().rpc?.features.includes('discussions')) return
+  useCore.setState({ conversationDraftMode: mode, section: group ? 'discussions' : 'conversations', conversationDraft: !group, discussionDraft: group, selectedConversationId: null, selectedDiscussionId: null, ...PAGES_CLOSED })
+}
+
+export function openNewConversationDraft(mode: ConversationDraftMode = 'single', projects?: readonly string[]): void {
+  const current = useCore.getState()
+  if (projects === undefined && conversationDraftVisible(current)) {
+    switchConversationDraftMode(mode)
+    return
+  }
+  openConversationDraft(projects)
+  switchConversationDraftMode(mode)
 }
 
 export function useSourceInvestigateSupported(): boolean {
@@ -772,12 +801,12 @@ export function useSquadsSupported(): boolean {
 }
 
 export function selectDiscussion(id: string | null): void {
-  useCore.setState({ selectedDiscussionId: id, section: 'discussions', discussionDraft: false, ...PAGES_CLOSED })
+  useCore.setState({ selectedDiscussionId: id, section: 'discussions', conversationDraft: false, discussionDraft: false, ...PAGES_CLOSED })
 }
 
 // from: a group whose members, projects and options the new one starts with.
 export function openDiscussionDraft(from?: Discussion): void {
-  useCore.setState({ selectedDiscussionId: null, section: 'discussions', discussionDraft: true, discussionDraftFrom: from ? { discussion: from } : null, ...PAGES_CLOSED })
+  useCore.setState({ selectedDiscussionId: null, selectedConversationId: null, section: 'discussions', conversationDraft: false, discussionDraft: true, conversationDraftMode: from && from.maxRounds > 1 ? 'debate' : 'fanout', conversationDraftKey: crypto.randomUUID(), discussionDraftFrom: from ? { discussion: from } : null, conversationDraftFrom: null, conversationDraftIssue: null, conversationDraftProjects: null, draftProfileId: null, ...PAGES_CLOSED })
 }
 
 export function closeDiscussionDraft(): void {
@@ -787,6 +816,10 @@ export function closeDiscussionDraft(): void {
 // Whether core runs group chats (discussions.*).
 export function useDiscussionsSupported(): boolean {
   return useCore((s) => s.rpc?.features.includes('discussions') ?? false)
+}
+
+export function useDiscussionSummarySupported(): boolean {
+  return useCore((state) => state.rpc?.features.includes('discussion-summary-choice') ?? false)
 }
 
 // A core that lets members join and leave a group chat midway, and one that changes its projects.

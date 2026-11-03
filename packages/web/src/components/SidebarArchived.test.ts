@@ -62,4 +62,26 @@ describe('archived in the sidebar', () => {
     useCore.setState({ discussions: { [id(3)]: discussion(3, '在用的群聊', null) } })
     expect(renderToStaticMarkup(createElement(SidebarDiscussions))).not.toContain('列表选项')
   })
+
+  it('shows both chat types in one recent history and keeps the selected group reachable', () => {
+    usePreferences.setState({ conversationGroup: 'none', conversationSort: 'recent' })
+    useCore.setState({ section: 'discussions', selectedDiscussionId: id(3) })
+    const html = renderToStaticMarkup(createElement(ConversationList))
+    expect(html).toContain('在用的会话')
+    expect(html).toContain('在用的群聊')
+    expect(html.indexOf('在用的群聊')).toBeLessThan(html.indexOf('在用的会话'))
+    expect(html).toContain(`data-discussion-id="${id(3)}"`)
+    expect(html).toMatch(/data-discussion-id="[^"]+"[^>]*aria-current="true"/)
+    expect(html).toContain('role="radiogroup"')
+  })
+
+  it('keeps a group member awaiting approval visible in combined history', () => {
+    const current = discussion(3, '等待审批的群聊', null)
+    const member = { id: id(10), conversationId: id(11), agent: 'codex' as const, model: 'gpt-6-astra', effort: null, name: 'Reviewer', role: '', status: 'awaiting' as const }
+    useCore.setState({ discussions: { [current.id]: { ...current, members: [member] } } })
+    const html = renderToStaticMarkup(createElement(ConversationList))
+    expect(html).toContain('等待审批的群聊')
+    expect(html).toContain('有成员在等你确认')
+    expect(html).toContain('data-tone="awaiting"')
+  })
 })

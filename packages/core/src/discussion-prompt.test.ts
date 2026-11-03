@@ -5,7 +5,7 @@ import { holdsPosition, openingPrompt, replyPrompt, roundPrompt, speakerName, su
 const ID = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
 
 const discussion = (anonymous: boolean): Discussion => ({
-  id: ID(1), title: 't', topic: 'Pick a cache', projectPaths: ['/repo'], chairId: ID(3), maxRounds: 3, anonymous,
+  id: ID(1), title: 't', topic: 'Pick a cache', projectPaths: ['/repo'], chairId: ID(3), maxRounds: 3, summarize: true, anonymous,
   state: 'running', step: 'round', round: 1, lastRound: 3, topicStart: 0, pinnedAt: null, archivedAt: null, formerMembers: [], createdAt: 0, updatedAt: 0,
   members: [
     { id: ID(2), conversationId: ID(12), agent: 'claude', model: 'opus', effort: null, name: 'Ann', role: 'skeptic', status: 'idle' },
@@ -19,6 +19,17 @@ const post = (memberId: string | null, text: string): DiscussionPost => ({
 })
 
 describe('discussion prompts', () => {
+  it('does not promise a concluding chair turn when summary is disabled', () => {
+    const group = { ...discussion(false), summarize: false }
+    const opening = openingPrompt(group, group.members[1]!, group.topic, [])
+    expect(opening).toContain('只展示各成员的回答，不安排额外的主持人总结')
+    expect(opening).not.toContain('你也是主持人')
+    expect(opening).not.toContain('，主持人')
+    expect(opening).toContain('这是只读讨论')
+    const next = topicPrompt(group, 'A new topic', [])
+    expect(next).toContain('不安排额外的主持人总结')
+    expect(next).not.toContain('最后由主持人总结')
+  })
   it('introduces the others by name, agent and model, or by code when anonymous', () => {
     const named = openingPrompt(discussion(false), discussion(false).members[0]!, 'Pick a cache', [])
     expect(named).toContain('- Bob（Codex），主持人')

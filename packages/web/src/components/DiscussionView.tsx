@@ -198,7 +198,7 @@ function Post({ post, discussion, topic, question }: { post: DiscussionPost; dis
     <article className="discussion-msg" data-kind={post.kind} data-state={post.state}>
       <MemberFace member={member} letter={post.memberId ? memberLetter(discussion, post.memberId) : null} />
       <div className="discussion-msg-body">
-        <PostHead post={post} member={member} chair={member !== undefined && member.id === discussion.chairId} left={member !== undefined && current === undefined} />
+        <PostHead post={post} member={member} chair={discussion.summarize !== false && member !== undefined && member.id === discussion.chairId} left={member !== undefined && current === undefined} />
         {summary ? (
           <div className="discussion-bubble discussion-summary">
             <div className="discussion-summary-head">{t('DiscussionView.discussionSummary')}</div>
@@ -366,16 +366,17 @@ export function DiscussionView({ id }: { id: string }) {
             : <button type="button" className="terminal-view-title conversation-title" title={t('ConversationView.clickToRename', { value1: discussion.title })} onClick={() => setRenaming(true)}>{discussion.title}</button>}
           <span className="muted">（{discussion.members.length}）</span>
           <span className="muted">{discussionProgress(discussion)}</span>
+          <span className="muted">{t('ConversationModes.readOnlyShort')}</span>
           {!projectsEditable && discussion.projectPaths.length > 0 && <span className="muted" title={discussion.projectPaths.join('\n')}>{projectNames(discussion.projectPaths)}</span>}
           {discussion.anonymous && <span className="muted">{t('DiscussionView.anonymousPeerReview')}</span>}
           {archived && <span className="archived-tag">{t('ConversationList.archived')}</span>}
         </div>
         <div className="toolbar">
           {ACTIONS.filter(({ action }) => !archived && checkDiscussionAction(discussion, action) === null).map(({ action, label, hint }) => (
-            <button key={action} type="button" className="button discussion-action" data-tooltip={hint} disabled={busy} onClick={() => void act(action)}>
+            <button key={action} type="button" className="button discussion-action" data-tooltip={discussion.summarize === false && action === 'conclude' ? t('ConversationModes.finishHint') : discussion.summarize === false && action === 'nextRound' ? t('ConversationModes.nextRoundHint') : hint} disabled={busy} onClick={() => void act(action)}>
               {action === 'resume' && <PlayIcon />}
               {action === 'stop' && <StopIcon />}
-              {label}
+              {action === 'conclude' && discussion.summarize === false ? t('ConversationModes.finish') : label}
             </button>
           ))}
           <button type="button" className="button discussion-action" data-tooltip={t('DiscussionView.startAnotherGroupChatWithTheseMembersProjects')} onClick={() => openDiscussionDraft(discussion)}>{t('DiscussionView.newGroupWithSameMembers')}</button>
@@ -393,7 +394,7 @@ export function DiscussionView({ id }: { id: string }) {
                 <MemberChip
                   key={member.id}
                   member={member}
-                  chair={member.id === chairId}
+                  chair={discussion.summarize !== false && member.id === chairId}
                   onMention={archived ? null : () => mention(member)}
                   leaveBlocker={blocked === null || blocked === 'full' ? null : LEAVE_BLOCKER[blocked]}
                   onLeave={membersEditable ? () => void leave(discussion, member) : null}
@@ -425,6 +426,7 @@ export function DiscussionView({ id }: { id: string }) {
               <ChatMarkdown text={discussion.topic} />
             </div>
             {posts ? <Rounds discussion={discussion} posts={posts} /> : <p className="muted">{tr('DiscussionView.loadingPosts', { value1: <Spinner /> })}</p>}
+            {discussion.state === 'done' && discussion.summarize === false && <p className="discussion-system">{t('ConversationModes.answersComplete')}</p>}
           </div>
           <div className="chat-dock">
             {archived && <ArchivedBar what={t('DiscussionView.groupChat_910')} onRestore={() => archiveDiscussion(id, false)} />}
@@ -466,7 +468,7 @@ export function DiscussionView({ id }: { id: string }) {
                           aria-checked={asTopic === topic}
                           aria-disabled={blocked || undefined}
                           disabled={busy}
-                          data-tooltip={blocked ? t('DiscussionView.membersAreStillSpeakingPauseOrWaitUntil') : hint}
+                          data-tooltip={blocked ? t('DiscussionView.membersAreStillSpeakingPauseOrWaitUntil') : topic && discussion.summarize === false ? t('ConversationModes.newTopicHint') : hint}
                           onClick={() => {
                             if (blocked) return
                             setAsTopic(topic)
