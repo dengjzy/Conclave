@@ -1,9 +1,12 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { runAgentSmokeTest } from './agent-smoke-test'
+import { AGENT_ADAPTERS } from './agents'
 import type { EnvironmentService } from './environment-check'
 import type { Environment } from '@conclave/protocol'
 
 describe('agent smoke test', () => {
+  afterEach(() => { vi.restoreAllMocks() })
+
   it('reports missing when CLI is not detected', async () => {
     const fakeEnv: Environment = {
       checks: [
@@ -30,6 +33,7 @@ describe('agent smoke test', () => {
   })
 
   it('reports ok when CLI is detected with valid version and signedIn', async () => {
+    vi.spyOn(AGENT_ADAPTERS.claude, 'signedIn').mockResolvedValue(true)
     const fakeEnv: Environment = {
       checks: [
         { tool: 'git', status: 'ok', version: '2.40.0', path: '/usr/bin/git', signedIn: null },
@@ -51,6 +55,7 @@ describe('agent smoke test', () => {
     expect(report.ok).toBe(true)
     expect(report.version).toBe('2.1.263')
     expect(report.checks.find((c) => c.id === 'cli')?.status).toBe('ok')
+    expect(report.checks.find((c) => c.id === 'auth')?.status).toBe('ok')
     expect(report.checks.find((c) => c.id === 'protocol')?.status).toBe('ok')
   })
 })
