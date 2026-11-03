@@ -21,6 +21,8 @@ export interface AcpDialect {
   // A runtime extension that must be present before a session is opened.
   initializeError?(result: unknown): string | null
   startNote?(options: ChatStageOptions): string | null
+  // An actionable explanation for a known startup rejection; null preserves the original error.
+  startupError?(message: string): string | null
   // Conclave's own MCP server reaches the agent on its command rather than in session/new: the agent
   // offers a server's tools as Conclave needs them only where its own config says so.
   readonly ownMcpOnCommand?: boolean

@@ -7,6 +7,9 @@ const REPORTING_INSTRUCTION = '工具或命令调用结束后（无论是执行�
 
 export const geminiDialect: AcpDialect = {
   name: 'Gemini CLI', idPrefix: 'gemini',
+  startupError: (message) => /This client is no longer supported for Gemini Code Assist for individuals/i.test(message)
+    ? 'Google 已停止个人账号（含 AI Pro/Ultra）通过 Google 登录使用 Gemini CLI。请迁移到 Antigravity 的 Gemini 模型；如需保留 Gemini CLI，请使用 Gemini API key 或企业 Code Assist。重新登录或升级 CLI 无法恢复个人账号访问，原凭据已保留。\nhttps://developers.google.com/gemini-code-assist/docs/deprecations/code-assist-individuals'
+    : null,
   modes: { ask: 'default', acceptEdits: 'autoEdit', plan: 'plan', bypass: 'yolo' },
   inputIncludesCache: true,
   modeUpdate: (text) => /^\[MODE_UPDATE\] (default|autoEdit|plan|yolo)$/.exec(text.trim())?.[1] ?? null,
