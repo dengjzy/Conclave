@@ -1,11 +1,11 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { ANTIGRAVITY_VERSION, antigravityInstallation, antigravityRuntimeDir, antigravitySignedIn, antigravityTokenFile, detectAntigravity, requireAntigravity } from './antigravity-runtime'
 
 const roots: string[] = []
-afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))) })
+afterEach(async () => { vi.unstubAllEnvs(); await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))) })
 async function home() {
   const root = await mkdtemp(path.join(tmpdir(), 'conclave-antigravity-'))
   roots.push(root)
@@ -39,6 +39,17 @@ describe('Antigravity runtime', () => {
     expect(await detectAntigravity('', 'darwin', host)).toMatchObject({ status: 'ok', version: ANTIGRAVITY_VERSION, path: server })
     expect(await requireAntigravity(host)).toBe(server)
     await expect(requireAntigravity({ ...host, arch: 'ia32' })).rejects.toThrow(/不支持/)
+  })
+
+  it('does not mistake the interactive agy CLI for an ACP server', async () => {
+    const root = await home()
+    const cli = path.join(root, process.platform === 'win32' ? 'agy.cmd' : 'agy')
+    await writeFile(cli, process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\nexit 0\n')
+    await chmod(cli, 0o755)
+    vi.stubEnv('PATH', root)
+    const host = { platform: process.platform, arch: process.arch, home: root }
+    expect(await detectAntigravity(root, process.platform, host)).toEqual({ status: 'missing', version: null, path: null, signedIn: null })
+    await expect(requireAntigravity(host)).rejects.toThrow(/未安装/)
   })
 
   it('reads a sign-in kept in its token file', async () => {
