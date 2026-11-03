@@ -9,8 +9,8 @@ export async function openAgentCall(call: AgentCall): Promise<void> {
   selectConversation(child.id)
 }
 
-type CallsSnapshot = { calls: readonly AgentCall[] | null; error: string | null }
-const EMPTY: CallsSnapshot = { calls: null, error: null }
+type CallsSnapshot = { calls: readonly AgentCall[] | null; error: string | null; dispatched: ReadonlyMap<string, number> }
+const EMPTY: CallsSnapshot = { calls: null, error: null, dispatched: new Map() }
 const EMPTY_FEED = { getSnapshot: () => EMPTY, subscribe: (_listener: () => void) => () => {} }
 const feeds = new WeakMap<RpcConnection, Map<string, ReturnType<typeof createCallsFeed>>>()
 
@@ -28,13 +28,18 @@ function createCallsFeed(rpc: RpcConnection, id: string) {
         const changes = new Map<string, AgentCall>()
         const off = rpc.on('agentCalls.changed', ({ call }) => {
           if (call.parentId !== id) return
+          const known = changes.has(call.id) || snapshot.calls?.some((item) => item.id === call.id)
           changes.set(call.id, call)
-          publish({ calls: [...(snapshot.calls ?? []).filter((item) => item.id !== call.id), call], error: null })
+          const dispatched = new Map(snapshot.dispatched)
+          if (call.state === 'queued' && !known) dispatched.set(call.id, Date.now())
+          // Keep the animation evidence bounded even in long-running conversations.
+          for (const [key, at] of dispatched) if (Date.now() - at > 5000) dispatched.delete(key)
+          publish({ calls: [...(snapshot.calls ?? []).filter((item) => item.id !== call.id), call], error: null, dispatched })
         })
         void rpc.call('agentCalls.list', { id }).then((calls) => {
-          if (current) publish({ calls: [...new Map([...calls, ...changes.values()].map((call) => [call.id, call])).values()], error: null })
+          if (current) publish({ ...snapshot, calls: [...new Map([...calls, ...changes.values()].map((call) => [call.id, call])).values()], error: null })
         }).catch((reason: unknown) => { if (current) publish({ ...snapshot, error: String(reason) }) })
-        stop = () => { current = false; off() }
+        stop = () => { current = false; off(); snapshot = { ...snapshot, dispatched: new Map() } }
       }
       return () => { listeners.delete(listener); if (listeners.size === 0) stop() }
     }
@@ -58,6 +63,12 @@ export function useAgentCalls(id: string | null): CallsSnapshot {
 
 export function isAgentCallResult(item: Pick<ChatItem, 'kind' | 'id'>): boolean {
   return item.kind === 'user' && /^u:agent-result:[0-9a-f-]{36}$/.test(item.id)
+}
+
+// Delivery IDs are stable across pagination and identify exactly one delegated conversation.
+export function agentCallForResult(item: Pick<ChatItem, 'kind' | 'id'>, calls: readonly AgentCall[] | null): AgentCall | undefined {
+  if (!isAgentCallResult(item)) return undefined
+  return calls?.find((call) => item.id === `u:agent-result:${call.id}`)
 }
 
 export function showAgentCalls(inspector: 'task' | 'conversation'): void {

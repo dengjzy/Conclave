@@ -18,7 +18,7 @@ import { TaskChat } from './TaskChat'
 
 vi.mock('../agent-calls', async (importOriginal) => ({
   ...await importOriginal<typeof import('../agent-calls')>(),
-  useAgentCalls: vi.fn(() => ({ calls: null, error: null }))
+  useAgentCalls: vi.fn(() => ({ calls: null, error: null, dispatched: new Map() }))
 }))
 
 vi.hoisted(() => {
@@ -50,7 +50,7 @@ beforeEach(() => {
   useCore.setState(useCore.getInitialState(), true)
   useChat.setState({}, true)
   connect()
-  vi.mocked(useAgentCalls).mockReturnValue({ calls: null, error: null })
+  vi.mocked(useAgentCalls).mockReturnValue({ calls: null, error: null, dispatched: new Map() })
 })
 
 describe('delegation surfaces', () => {
@@ -84,7 +84,7 @@ describe('delegation surfaces', () => {
   it('hides delegation tabs before the first record arrives while retaining the PR inspector', () => {
     useCore.setState({ conversationInspectorTab: 'delegation', taskInspectorTab: 'delegation' })
     for (const calls of [null, []]) {
-      vi.mocked(useAgentCalls).mockReturnValue({ calls, error: null })
+      vi.mocked(useAgentCalls).mockReturnValue({ calls, error: null, dispatched: new Map() })
       for (const html of [
         renderToStaticMarkup(createElement(ConversationInspector, { conversation: parent, widthRatio: 0.35, onWidthRatioChange() {} })),
         renderToStaticMarkup(createElement(TaskInspector, { task, widthRatio: 0.35, onWidthRatioChange() {} }))
@@ -110,7 +110,7 @@ describe('delegation surfaces', () => {
   })
 
   it('keeps existing history reachable in both inspectors even without git, todos or a helper', () => {
-    vi.mocked(useAgentCalls).mockReturnValue({ calls: [{ ...call, state: 'completed' }], error: null })
+    vi.mocked(useAgentCalls).mockReturnValue({ calls: [{ ...call, state: 'completed' }], error: null, dispatched: new Map() })
     useCore.setState({ conversationInspectorTab: 'delegation', taskInspectorTab: 'delegation' })
     const conversation = renderToStaticMarkup(createElement(ConversationInspector, { conversation: parent, widthRatio: 0.35, onWidthRatioChange() {} }))
     const taskPanel = renderToStaticMarkup(createElement(TaskInspector, { task, widthRatio: 0.35, onWidthRatioChange() {} }))
@@ -135,8 +135,11 @@ describe('delegation surfaces', () => {
     expect(isAgentCallResult({ kind: 'user', id })).toBe(true)
     expect(isAgentCallResult({ kind: 'assistant', id })).toBe(false)
     expect(isAgentCallResult({ kind: 'user', id: `u:${parent.id}` })).toBe(false)
-    const html = renderToStaticMarkup(createElement(ChatSurfaceContext.Provider, { value: conversationSurface(parent) }, createElement(AgentDelegationResult)))
+    vi.mocked(useAgentCalls).mockReturnValue({ calls: [call], error: null, dispatched: new Map() })
+    const item = { kind: 'user', id: `u:agent-result:${call.id}` } as const
+    const html = renderToStaticMarkup(createElement(ChatSurfaceContext.Provider, { value: conversationSurface(parent) }, createElement(AgentDelegationResult, { conversationId: parent.id, item })))
     expect(html).toContain('委派结果已返回')
     expect(html).toContain('委派记录')
+    expect(html).toContain('审查员 · 查看会话')
   })
 })

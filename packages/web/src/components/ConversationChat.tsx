@@ -395,7 +395,7 @@ function Item({ conversationId, item, completedAt, blockKey }: { conversationId:
   const compact = useContext(ChatVariant) === 'compact'
   switch (item.kind) {
     case 'user':
-      if (isAgentCallResult(item)) return <AgentDelegationResult />
+      if (isAgentCallResult(item)) return <AgentDelegationResult conversationId={conversationId} item={item} />
       return <UserMessage item={item} />
     case 'assistant':
       return <AssistantReply conversationId={conversationId} item={item} completedAt={completedAt} ending={ending} blockKey={blockKey} />
@@ -577,10 +577,10 @@ function ActivityBlock({ next, ...props }: Parameters<typeof Block>[0] & { next:
 }
 
 // `fresh` is a block that arrived while the chat was open: it enters with a motion.
-function Block({ conversationId, block, task, replies, fresh }: { conversationId: string; block: ChatBlock; task: boolean; replies: ReadonlyMap<string, number>; fresh?: boolean }) {
+function Block({ conversationId, block, task, replies, fresh, dispatched, returned }: { conversationId: string; block: ChatBlock; task: boolean; replies: ReadonlyMap<string, number>; fresh?: boolean; dispatched?: ReadonlyMap<string, number>; returned?: ReadonlyMap<string, number> }) {
   const compact = useContext(ChatVariant) === 'compact'
   const entering = fresh || undefined
-  if (block.kind === 'delegation') return <div className="chat-entry" data-entry-key={block.key}><ChatDelegationCard call={block.call} fresh={fresh} /></div>
+  if (block.kind === 'delegation') return <div className="chat-entry" data-entry-key={block.key}><ChatDelegationCard call={block.call} fresh={Boolean(fresh && Date.now() - (dispatched?.get(block.call.id) ?? 0) < 2000)} returned={Date.now() - (returned?.get(block.call.id) ?? 0) < 2000} /></div>
   if (compact && block.kind === 'changes') return null
   if (block.kind === 'browser') return <ChatCopyRegion text={block.tools.map(copyTextForItem).join('\n\n')}><div className="chat-entry" data-fresh={entering}><ChatBrowserRun tools={block.tools} /></div></ChatCopyRegion>
   if (block.kind === 'tools') return <ChatCopyRegion text={block.tools.map(copyTextForItem).join('\n\n')}><div className="chat-entry" data-fresh={entering}><ChatToolRun tools={block.tools} /></div></ChatCopyRegion>
@@ -690,7 +690,16 @@ export function ConversationChat({ conversation, surface, onHandoff, variant = '
   }, [stages, items, redoneAt, getLocale()])
   const foldTurns = usePreferences((s) => s.foldTurns)
   const delegationSupported = useAgentCallsSupported(conversation)
-  const { calls } = useAgentCalls(delegationSupported ? id : null)
+  const { calls, dispatched } = useAgentCalls(delegationSupported ? id : null)
+  const resultEvents = useRef<{ id: string; seen: Set<string> | null; returned: Map<string, number> }>({ id, seen: null, returned: new Map() })
+  if (resultEvents.current.id !== id) resultEvents.current = { id, seen: null, returned: new Map() }
+  const { seen: resultSeen, returned } = resultEvents.current
+  if (page) {
+    const ids = items.filter(isAgentCallResult).map((item) => item.id.slice('u:agent-result:'.length))
+    if (resultSeen && !olderLoaded.current) for (const callId of ids) if (!resultSeen.has(callId)) returned.set(callId, Date.now())
+    resultEvents.current.seen = new Set([...(resultSeen ?? []), ...ids])
+    for (const [callId, at] of returned) if (Date.now() - at > 5000) returned.delete(callId)
+  }
   const blocks = useMemo(() => {
     const grouped = chatBlocks(entries, { foldTurns: variant === 'compact' || foldTurns })
     return page && calls?.length ? withDelegations(grouped, calls, Boolean(page.before)) : grouped
@@ -969,7 +978,7 @@ export function ConversationChat({ conversation, surface, onHandoff, variant = '
           const head = sentAt !== null && (next ? userAt(next) === null : live !== null)
           return (
             <Fragment key={block.key}>
-              <ActivityBlock conversationId={id} block={block} next={next} task={Boolean(conversation.taskId)} replies={replies} fresh={entering} />
+              <ActivityBlock conversationId={id} block={block} next={next} task={Boolean(conversation.taskId)} replies={replies} fresh={entering} dispatched={dispatched} returned={returned} />
               {variant !== 'compact' && head && message && <div className="chat-entry" data-fresh={entering || undefined}><TurnHead at={message.at} stageId={message.stageId} messageKey={block.key} live={live} /></div>}
             </Fragment>
           )

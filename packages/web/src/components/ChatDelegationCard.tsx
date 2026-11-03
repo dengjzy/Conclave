@@ -34,7 +34,7 @@ function DelegationTime({ call }: { call: AgentCall }) {
   return <span className="chat-delegation-time" aria-live="off">{workedFor(Math.max(0, (open ? now : call.updatedAt) - call.createdAt))}</span>
 }
 
-export function ChatDelegationCard({ call, fresh = false }: { call: AgentCall; fresh?: boolean }) {
+export function ChatDelegationCard({ call, fresh = false, returned = false }: { call: AgentCall; fresh?: boolean; returned?: boolean }) {
   const surface = useChatSurface()
   const pane = useConversationPane()
   const panel = useId()
@@ -52,7 +52,7 @@ export function ChatDelegationCard({ call, fresh = false }: { call: AgentCall; f
     setCancelling(false)
   }
   return <ChatCopyRegion text={[call.profile.name, call.instruction, call.result, call.error].filter(Boolean).join('\n\n')}>
-    <article className="chat-delegation" data-state={call.state} data-returned={call.delivered || undefined} data-active={active || undefined} data-fresh={fresh || undefined} data-finished={finished || undefined} data-call-id={call.id} aria-label={t('AgentProfiles.cardLabel', { name: call.profile.name })}>
+    <article className="chat-delegation" data-state={call.state} data-returned={call.delivered || undefined} data-active={active || undefined} data-fresh={fresh || undefined} data-return-pulse={returned || undefined} data-finished={finished || undefined} data-call-id={call.id} aria-label={t('AgentProfiles.cardLabel', { name: call.profile.name })}>
       <header className="chat-delegation-header"><span className="chat-delegation-heading"><ForkIcon />{t('AgentProfiles.delegate')}</span><span className="chat-delegation-state" role="status">{active ? <Spinner label={status} /> : call.state === 'completed' ? <CheckIcon /> : call.state === 'awaiting' || call.state === 'failed' ? <WarningIcon /> : call.state === 'cancelled' ? <CloseIcon /> : <ClockIcon />}<span>{status}</span></span></header>
       <div className="chat-delegation-route">
         <div className="chat-delegation-origin"><span className="chat-delegation-avatar"><ChatIcon /></span><span>{t('AgentProfiles.mainConversation')}</span></div>
