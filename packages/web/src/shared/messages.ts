@@ -1,5 +1,6 @@
 // Application-owned text. Values and external content are passed separately.
 export const MESSAGES = {
+  "DiscussionDraft.modelUnavailable": {"zh": "{model} 不在当前模型列表中，请重新选择。", "en": "{model} is not in the current model list. Choose another model."},
   "PullRequestPanel.help": {"zh": "按需读取公开 GitHub PR；不使用插件登录或本机 gh，私有仓库不可用。", "en": "Load a public GitHub PR on demand. Plugin sign-in and local gh are not used; private repositories are unavailable."},
   "PullRequestPanel.url": {"zh": "PR 链接", "en": "PR URL"},
   "PullRequestPanel.loading": {"zh": "读取中…", "en": "Loading…"},

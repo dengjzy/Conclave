@@ -24,6 +24,27 @@ export function useAgentCatalog(agent: AgentKind | null, enabled: boolean, provi
   return key ? catalogs[key] : null
 }
 
+// Group creation needs the same catalog snapshot for its labels and submitted choices.
+export function useAgentCatalogs(agents: readonly AgentKind[]): Partial<Record<AgentKind, ChatCatalog | null>> {
+  const rpc = useCore((state) => state.rpc)
+  const [catalogs, setCatalogs] = useState<Partial<Record<AgentKind, ChatCatalog | null>>>({})
+  const unique = [...new Set(agents)].sort()
+  const key = unique.join(',')
+  useEffect(() => {
+    if (!rpc) return
+    let current = true
+    const pending = unique.filter((agent) => !(agent in catalogs))
+    void Promise.all(pending.map(async (agent) => {
+      const catalog = await rpc.call('conversations.chatCatalog', { agent }).catch(() => null)
+      return { agent, catalog }
+    })).then((loaded) => {
+      if (current && loaded.length) setCatalogs((known) => ({ ...known, ...Object.fromEntries(loaded.map(({ agent, catalog }) => [agent, catalog])) }))
+    })
+    return () => { current = false }
+  }, [rpc, key])
+  return catalogs
+}
+
 export type ResolvedModel = {
   defaultModel: ChatModel | undefined
   // The model it will run: the one picked, else the default.

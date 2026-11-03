@@ -355,6 +355,36 @@ describe('CodexAppServer options', () => {
     driver.apply({ dir: 'in', at, frame: { id: 'conclave-init', result: {} } })
     expect(driver.due()[1]).toMatchObject({ method: 'thread/start', params: { approvalPolicy: 'untrusted', sandbox: 'workspace-write', model: 'gpt-6-luna' } })
   })
+
+  it.each(['gpt-6-astra', 'gpt-6.1-terra'])('keeps an explicit discussion model when Codex opens with %s and its configured default is unavailable', (openedModel) => {
+    const driver = new CodexAppServer('stage-1', {
+      ...OPTIONS,
+      readOnly: true,
+      preferred: { permissionMode: 'readOnly', model: 'gpt-6-astra', effort: 'low' }
+    })
+    driver.due().forEach((frame) => driver.apply({ dir: 'out', at, frame }))
+    driver.apply({ dir: 'in', at, frame: { id: 'conclave-init', result: {} } })
+    const opening = driver.due()
+    expect(opening).toContainEqual(expect.objectContaining({
+      method: 'thread/start', params: expect.objectContaining({ model: 'gpt-6-astra', sandbox: 'read-only' })
+    }))
+    opening.forEach((frame) => driver.apply({ dir: 'out', at, frame }))
+    driver.apply({ dir: 'in', at, frame: { id: 'conclave-models', result: { data: [
+      { id: 'gpt-6-astra', displayName: 'GPT-6-Astra', isDefault: true, supportedReasoningEfforts: [{ reasoningEffort: 'low' }], defaultReasoningEffort: 'high' },
+      { id: 'gpt-6-luna', displayName: 'GPT-6-Luna', isDefault: false, defaultReasoningEffort: 'medium' }
+    ] } } })
+    driver.apply({ dir: 'in', at, frame: { id: 'conclave-config', result: { config: { model: 'gpt-6.1-terra' } } } })
+    driver.apply({ dir: 'in', at, frame: { id: 'conclave-thread', result: {
+      thread: { id: 'discussion-thread' }, model: openedModel, reasoningEffort: 'ultra'
+    } } })
+
+    expect(stateOf(driver)?.models.find((model) => model.isDefault)?.id).toBe('gpt-6-astra')
+    expect(driver.send('Reply OK without tools').wire).toMatchObject({
+      method: 'turn/start', params: {
+        threadId: 'discussion-thread', model: 'gpt-6-astra', effort: 'low', sandboxPolicy: { type: 'readOnly' }
+      }
+    })
+  })
 })
 
 describe('CodexAppServer commands', () => {

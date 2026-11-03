@@ -94,19 +94,31 @@ export class DiscussionService {
 
   private migrateMemberOptions(): void {
     try {
-      const members = this.db.prepare('SELECT dm.conversation_id, dm.agent, c.chat_options, c.workspace_read_only FROM discussion_members dm JOIN conversations c ON dm.conversation_id = c.id').all() as { conversation_id: string; agent: AgentKind; chat_options: string | null; workspace_read_only: number }[]
-      for (const member of members) {
-        const mode = agentDescriptor(member.agent).discussionMode
-        let options: Record<string, unknown> = {}
-        try { options = member.chat_options ? JSON.parse(member.chat_options) : {} } catch {}
-        const { allowBypass: _bypass, ...rest } = options
-        const cleaned = { ...rest, permissionMode: mode }
-        if (options.permissionMode !== mode || options.allowBypass || !member.workspace_read_only) {
-          this.db.prepare('UPDATE conversations SET chat_options = ?, workspace_read_only = 1 WHERE id = ?')
-            .run(JSON.stringify(cleaned), member.conversation_id)
-        }
-      }
+      const members = this.db.prepare('SELECT conversation_id, agent FROM discussion_members').all() as { conversation_id: string; agent: AgentKind }[]
+      for (const member of members) this.constrainMemberOptions(member.conversation_id, member.agent)
     } catch {}
+  }
+
+  private constrainMemberOptions(id: string, agent: AgentKind): void {
+    const row = this.db.prepare('SELECT chat_options, workspace_read_only FROM conversations WHERE id = ?').get(id)
+    if (!row) return
+    let options: Record<string, unknown> = {}
+    try {
+      const parsed: unknown = JSON.parse(String(row.chat_options ?? '{}'))
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) options = { ...parsed }
+    } catch {}
+    const mode = agentDescriptor(agent).discussionMode
+    const flattened = 'model' in options || 'effort' in options
+    const { model, effort, ...withoutLegacy } = options
+    // Recover choices written in the flattened shape by older permission repairs.
+    options = typeof model === 'string' && model.trim() && !(agent in options)
+      ? { ...withoutLegacy, [agent]: { model, ...(typeof effort === 'string' ? { effort } : {}) } }
+      : withoutLegacy
+    if (options.permissionMode === mode && !('allowBypass' in options) && row.workspace_read_only && !flattened) return
+    // The public chat options are flattened; only the stored shape retains every agent's choices.
+    const { allowBypass: _bypass, ...rest } = options
+    this.db.prepare('UPDATE conversations SET chat_options = ?, workspace_read_only = 1 WHERE id = ?')
+      .run(JSON.stringify({ ...rest, permissionMode: mode }), id)
   }
 
   close(): void { this.db.close() }
@@ -537,14 +549,8 @@ export class DiscussionService {
       if (agentDescriptor(member.agent).capabilities.readOnly === false) {
         throw new Rejection('discussion-member-read-only', `${agentDescriptor(member.agent).label} 不支持只读模式，无法继续讨论`)
       }
-      const mode = agentDescriptor(member.agent).discussionMode
+      this.constrainMemberOptions(member.conversationId, member.agent)
       const conversation = this.deps.conversations.get(member.conversationId)
-      if (conversation.chatOptions?.permissionMode !== mode || conversation.chatOptions?.allowBypass) {
-        const { allowBypass: _bypass, ...rest } = conversation.chatOptions ?? {}
-        const cleaned = { ...rest, permissionMode: mode }
-        this.db.prepare('UPDATE conversations SET chat_options = ? WHERE id = ?')
-          .run(JSON.stringify(cleaned), member.conversationId)
-      }
       if (!conversation.chat) await this.deps.conversations.continue(member.conversationId, false)
       await this.deps.conversations.send(member.conversationId, text, [], true, false, `${REF_PREFIX}${post.id}`)
     } catch (error) {

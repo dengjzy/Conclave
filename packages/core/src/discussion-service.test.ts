@@ -462,7 +462,8 @@ describe('DiscussionService', () => {
     const discussion = await discussions.create(fields())
     await until(() => state(discussion.id) === 'done')
     const ann = by(discussion, 'Ann')
-    store.setChatOptions(ann.conversationId, { permissionMode: 'ask', allowBypass: true })
+    const choices = { claude: { model: 'sonnet', effort: 'high' }, codex: { model: 'gpt-6-astra', effort: 'low' } }
+    store.setChatOptions(ann.conversationId, { permissionMode: 'ask', allowBypass: true, ...choices })
     store.setWorkspaceReadOnly(ann.conversationId, false)
 
     // Reopen discussion service (which triggers migrateMemberOptions)
@@ -472,7 +473,77 @@ describe('DiscussionService', () => {
     const options = store.chatOptions(ann.conversationId)
     expect(options.permissionMode).toBe('plan')
     expect(options.allowBypass).toBeUndefined()
+    expect(options).toMatchObject(choices)
     expect(conversations.get(ann.conversationId).workspaceReadOnly).toBe(true)
+  })
+
+  it.each(['mode', 'bypass'] as const)('preserves agent choices when repairing %s before the next round', async (drift) => {
+    const discussion = await discussions.create(fields())
+    await until(() => state(discussion.id) === 'done')
+    const ann = by(discussion, 'Ann')
+    await conversations.stop(ann.conversationId)
+    const choices = { claude: { model: 'sonnet', effort: 'high' }, codex: { model: 'gpt-6-astra', effort: 'low' } }
+    store.setChatOptions(ann.conversationId, { ...choices, permissionMode: drift === 'mode' ? 'ask' : 'plan', allowBypass: true })
+    store.setWorkspaceReadOnly(ann.conversationId, false)
+    const spawns = daemon.spawns.length
+
+    await discussions.control(discussion.id, 'nextRound')
+    await until(() => state(discussion.id) === 'done')
+
+    expect(store.chatOptions(ann.conversationId)).toMatchObject({ permissionMode: 'plan', ...choices })
+    expect(store.chatOptions(ann.conversationId).allowBypass).not.toBe(true)
+    expect(conversations.get(ann.conversationId).workspaceReadOnly).toBe(true)
+    expect(daemon.spawns.slice(spawns).some((spawn) =>
+      spawn.args.includes('--model') && spawn.args.includes('sonnet') && spawn.args.includes('--effort') && spawn.args.includes('high'))).toBe(true)
+  })
+
+  it('removes bypass drift from a live member without flattening its choices', async () => {
+    const discussion = await discussions.create(fields())
+    await until(() => state(discussion.id) === 'done')
+    const ann = by(discussion, 'Ann')
+    const choices = { claude: { model: 'sonnet', effort: 'high' }, codex: { model: 'gpt-6-astra', effort: 'low' } }
+    store.setChatOptions(ann.conversationId, { ...choices, allowBypass: true })
+
+    await discussions.control(discussion.id, 'nextRound')
+    await until(() => state(discussion.id) === 'done')
+
+    expect(store.chatOptions(ann.conversationId)).toEqual({ permissionMode: 'plan', ...choices })
+  })
+
+  it('recovers legacy flattened choices on reopen, preferring existing agent choices', async () => {
+    const discussion = await discussions.create(fields())
+    await until(() => state(discussion.id) === 'done')
+    const ann = by(discussion, 'Ann')
+    const bob = by(discussion, 'Bob')
+    const cid = by(discussion, 'Cid')
+    const db = new DatabaseSync(path.join(root, 'conclave.db'))
+    try {
+      const write = db.prepare('UPDATE conversations SET chat_options = ? WHERE id = ?')
+      write.run(JSON.stringify({ permissionMode: 'plan', model: 'sonnet', effort: 'high', codex: { model: 'gpt-6-astra', effort: 'low' } }), ann.conversationId)
+      write.run(JSON.stringify({ permissionMode: 'ask', model: 'haiku', effort: 'low', claude: { model: 'sonnet' } }), bob.conversationId)
+      write.run(JSON.stringify({ permissionMode: 'plan', model: null, effort: 'high' }), cid.conversationId)
+    } finally { db.close() }
+    discussions.close()
+    serve()
+
+    expect(store.chatOptions(ann.conversationId)).toEqual({ permissionMode: 'plan', claude: { model: 'sonnet', effort: 'high' }, codex: { model: 'gpt-6-astra', effort: 'low' } })
+    expect(store.chatOptions(bob.conversationId)).toEqual({ permissionMode: 'plan', claude: { model: 'sonnet' } })
+    expect(store.chatOptions(cid.conversationId)).toEqual({ permissionMode: 'plan' })
+  })
+
+  it.each(['null', '[]', '{broken'])('keeps migrating later members after malformed options %s', async (broken) => {
+    const discussion = await discussions.create(fields())
+    await until(() => state(discussion.id) === 'done')
+    const ann = by(discussion, 'Ann')
+    const bob = by(discussion, 'Bob')
+    store.setChatOptions(bob.conversationId, { permissionMode: 'ask', allowBypass: true, claude: { model: 'sonnet', effort: 'high' } })
+    const db = new DatabaseSync(path.join(root, 'conclave.db'))
+    try { db.prepare('UPDATE conversations SET chat_options = ? WHERE id = ?').run(broken, ann.conversationId) } finally { db.close() }
+    discussions.close()
+    serve()
+
+    expect(store.chatOptions(ann.conversationId)).toEqual({ permissionMode: 'plan' })
+    expect(store.chatOptions(bob.conversationId)).toEqual({ permissionMode: 'plan', claude: { model: 'sonnet', effort: 'high' } })
   })
 
   it.each([
