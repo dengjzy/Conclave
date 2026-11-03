@@ -20,7 +20,7 @@
     "dev:daemon": "pnpm --filter @conclave/daemon run dev",
     "dev:core": "pnpm --filter @conclave/core run dev",
     "dev:web": "pnpm --filter @conclave/web run dev",
-    "build": "pnpm --filter @conclave/web run build",
+    "build": "node scripts/build-plugins.mjs && pnpm --filter @conclave/web run build",
     "typecheck": "pnpm --filter @conclave/plugin-sdk build && pnpm -r run typecheck",
     "test": "pnpm --filter @conclave/plugin-sdk build && vitest run",
     "verify:plugin-sdk": "node scripts/verify-plugin-sdk.mjs",

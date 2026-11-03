@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { spawn, execSync } from 'node:child_process'
+import { spawn, execSync, execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { readFile, rm } from 'node:fs/promises'
 import net from 'node:net'
@@ -105,6 +105,13 @@ async function startServer(args) {
 
   if (process.env.CONCLAVE_PORT) targetPort = Number(process.env.CONCLAVE_PORT)
   else if (process.env.PORT) targetPort = Number(process.env.PORT)
+
+  // The source launcher bypasses core's package script, which normally builds this asset.
+  const dshRuntime = path.join(ROOT, 'packages/dsh-runtime/dist/runtime.tgz')
+  if (!existsSync(dshRuntime)) {
+    console.log('[conclave] 未检测到 DeepSeek Harness 运行时，正在构建...')
+    execFileSync(process.execPath, [path.join(ROOT, 'scripts/build-plugins.mjs')], { cwd: ROOT, stdio: 'inherit' })
+  }
 
   // 1. Ensure Web assets are built
   const webDist = path.join(ROOT, 'packages/web/dist/index.html')
