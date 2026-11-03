@@ -1,11 +1,23 @@
 .delegation-button.tool-button { display: inline-flex; width: auto; flex-shrink: 0; gap: 6px; padding: 0 8px; font: inherit; font-size: 12px; }
 .delegation-count { color: var(--status-running); font-variant-numeric: tabular-nums; }
-.delegation-dialog { width: min(480px, calc(100vw - 32px)); border-radius: var(--radius-lg); }
+.delegation-dialog { width: min(560px, calc(100vw - 32px)); border-radius: var(--radius-lg); }
 .delegation-dialog .modal-body { gap: 18px; padding: 24px; max-height: calc(100vh - 32px); overflow-y: auto; }
 .delegation-dialog .modal-header h2 { font-size: 16px; font-weight: 600; }
 .delegation-hint { margin: -6px 0 0; font-size: 12px; line-height: 1.6; }
 .delegation-field { display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
 .delegation-field textarea { resize: vertical; min-height: 64px; max-height: 200px; font: inherit; line-height: 1.6; }
+.delegation-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.delegation-options .chat-picker { width: 100%; }
+.delegation-handoff { font-size: 12px; line-height: 1.6; }
+.delegation-handoff strong { font-weight: 500; }
+.delegation-handoff ul { margin: 6px 0; padding-left: 18px; overflow-wrap: anywhere; }
+.delegation-handoff p { margin: 8px 0 0; }
+.delegation-save, .delegation-preview { font-size: 12px; line-height: 1.6; }
+.delegation-save summary, .delegation-preview summary { cursor: pointer; color: var(--text-muted); }
+.delegation-save[open] { display: grid; gap: 12px; }
+.delegation-save .button { justify-self: start; }
+.delegation-preview pre { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+@media (max-width: 480px) { .delegation-options { grid-template-columns: minmax(0, 1fr); } }
 .delegation-dialog .modal-footer { gap: 8px; justify-content: flex-end; }
 .delegation-history { margin-right: auto; font-size: 12px; }
 .delegation-panel { padding: 0 16px 24px; }

@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { type AgentProfile } from '@conclave/protocol'
 import { AgentProfileService, delegationSummary } from './agent-profile-service'
 import { AgentProfileStore } from './agent-profile-store'
@@ -57,7 +57,83 @@ describe('reusable agent roles and delegated work', () => {
   })
   afterEach(async () => {
     await profiles.close(); projects.close(); conversations.close(); tasks.close()
+    vi.restoreAllMocks()
     rmSync(root, { recursive: true, force: true })
+  })
+
+  it('delegates directly with a temporary snapshot without saving a role', async () => {
+    vi.spyOn(chats, 'chatCatalog').mockResolvedValue({ models: [
+      { id: 'sonnet', label: 'Sonnet', description: null, efforts: ['low', 'high'], isDefault: true }
+    ] })
+    const saved = profiles.list()
+    const call = await profiles.dispatch(parentId, undefined, 'Review the changed files', 'direct-review', { agent: 'claude', model: 'sonnet', effort: 'high' })
+    expect(call).toMatchObject({ temporary: true, readOnly: true, permissionMode: 'ask', profile: { agent: 'claude', model: 'sonnet', effort: 'high', capability: 'readOnly' } })
+    expect(profiles.list()).toEqual(saved)
+    await waitFor(() => store.call(call.id).state === 'running')
+    const child = chats.get(call.conversationId)
+    expect(child).toMatchObject({ parentConversationId: parentId, workspaceReadOnly: true, profile: { id: call.profile.id } })
+    expect(daemon.spawns.at(-1)?.args).toEqual(expect.arrayContaining(['--model', 'sonnet', '--effort', 'high']))
+    complete(child.sessionId!, 'Reviewed with evidence')
+    await waitFor(() => store.call(call.id).delivered)
+    expect(store.call(call.id)).toMatchObject({ state: 'completed', result: 'Reviewed with evidence', temporary: true })
+    expect(profiles.list()).toEqual(saved)
+  })
+
+  it('deduplicates direct requests by normalized target instead of random snapshot id', async () => {
+    await chats.send(parentId, 'Working')
+    const call = await profiles.dispatch(parentId, undefined, 'Review', 'direct-ref', { agent: 'claude' })
+    const retry = await profiles.dispatch(parentId, undefined, ' Review ', 'direct-ref', { agent: 'claude', model: null, effort: null, capability: 'readOnly' })
+    expect(retry.id).toBe(call.id)
+    expect(profiles.calls(parentId)).toHaveLength(1)
+    await expect(profiles.dispatch(parentId, undefined, 'Review', 'direct-ref', { agent: 'claude', capability: 'develop' })).rejects.toMatchObject({ reason: 'invalid-params' })
+    await expect(profiles.dispatch(parentId, undefined, 'Review', 'direct-ref', { agent: 'claude', model: 'sonnet' })).rejects.toMatchObject({ reason: 'invalid-params' })
+    await expect(profiles.dispatch(parentId, undefined, 'Another task', 'direct-ref', { agent: 'claude' })).rejects.toMatchObject({ reason: 'invalid-params' })
+    await expect(profiles.dispatch(parentId, reviewer.id, 'Review', 'direct-ref')).rejects.toMatchObject({ reason: 'invalid-params' })
+    await expect(profiles.dispatch(parentId, reviewer.id, 'Review', undefined, { agent: 'claude' })).rejects.toMatchObject({ reason: 'invalid-params' })
+  })
+
+  it('caps a direct developer to its parent permissions and cannot bypass role allowlists', async () => {
+    conversations.setWorkspaceReadOnly(parentId, true)
+    const call = await profiles.dispatch(parentId, undefined, 'Analyze', undefined, { agent: 'claude', capability: 'develop' })
+    expect(call).toMatchObject({ readOnly: true, permissionMode: 'ask' })
+    await waitFor(() => store.call(call.id).state === 'running')
+    await expect(profiles.dispatch(call.conversationId, undefined, 'Nested', undefined, { agent: 'claude' })).rejects.toMatchObject({ reason: 'agent-call-unavailable' })
+    conversations.setProfile(parentId, profiles.save({ name: 'Restricted direct calls', agent: 'claude', callableProfiles: [reviewer.id] }))
+    await expect(profiles.dispatch(parentId, undefined, 'Bypass role selection', undefined, { agent: 'claude' })).rejects.toMatchObject({ reason: 'agent-call-forbidden' })
+    expect(await profiles.dispatch(parentId, reviewer.id, 'Allowed saved role')).toMatchObject({ profile: { id: reviewer.id } })
+  })
+
+  it('uses approval-gated development without inheriting the parent bypass setting', async () => {
+    conversations.setChatOptions(parentId, { allowBypass: true, permissionMode: 'bypass' })
+    const call = await profiles.dispatch(parentId, undefined, 'Implement a change', undefined, { agent: 'claude', capability: 'develop' })
+    expect(call).toMatchObject({ readOnly: false, permissionMode: 'ask', temporary: true })
+    await waitFor(() => store.call(call.id).state === 'running')
+    expect(chats.get(call.conversationId).workspaceReadOnly).toBe(false)
+    expect(conversations.chatOptions(call.conversationId).allowBypass).toBe(false)
+    expect(conversations.chatOptions(call.conversationId).permissionMode).toBe('ask')
+  })
+
+  it('restores queued direct work and can cancel it without creating a reusable role', async () => {
+    await chats.send(parentId, 'Working')
+    const call = await profiles.dispatch(parentId, undefined, 'Review later', 'resume-direct', { agent: 'claude' })
+    await profiles.close()
+    store = new AgentProfileStore(path.join(root, 'conclave.db'))
+    profiles = new AgentProfileService(store, chats, { profile: () => {}, call: () => {} })
+    complete(chats.get(parentId).sessionId!, 'ready')
+    await profiles.reconcile()
+    await waitFor(() => store.call(call.id).state === 'running')
+    expect(store.call(call.id)).toMatchObject({ temporary: true, profile: { id: call.profile.id } })
+    await profiles.cancel(parentId, call.id)
+    expect(store.call(call.id).state).toBe('cancelled')
+    expect(chats.get(call.conversationId).sessionId).toBeNull()
+    expect(profiles.list().map((role) => role.id)).toEqual([reviewer.id])
+  })
+
+  it.each(['antigravity', 'gemini'] as const)('rejects unsupported read-only direct work for %s before queueing', async (agent) => {
+    await expect(profiles.dispatch(parentId, undefined, 'Read only', undefined, { agent })).rejects.toMatchObject({ reason: 'read-only-unsupported' })
+    conversations.setWorkspaceReadOnly(parentId, true)
+    await expect(profiles.dispatch(parentId, undefined, 'Cannot escalate', undefined, { agent, capability: 'develop' })).rejects.toMatchObject({ reason: 'read-only-unsupported' })
+    expect(profiles.calls(parentId)).toEqual([])
   })
   it('freezes role configuration, isolates history, hides the child and returns the result once', async () => {
     await chats.send(parentId, 'Implement a feature')

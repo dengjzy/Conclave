@@ -1,6 +1,6 @@
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { agentCallOpen, agentDescriptor, AgentCall, type AgentProfile, type AgentProfileFields, type ChatItem, type Conversation, isHelper } from '@conclave/protocol'
+import { agentCallOpen, agentDescriptor, AgentCall, AgentCallTarget, AgentProfile, type AgentProfileFields, type ChatItem, type Conversation, isHelper } from '@conclave/protocol'
 import type { ConversationService } from './conversation-service'
 import { AgentProfileStore } from './agent-profile-store'
 import { Rejection } from './rejection'
@@ -78,24 +78,35 @@ export class AgentProfileService {
       && (!parent.profile || parent.profile.callableProfiles.includes(profile.id)))
   }
   calls(id: string): AgentCall[] { this.chats.get(id); return this.store.calls(id) }
-  async dispatch(id: string, profileId: string, instruction: string, ref?: string): Promise<AgentCall> {
+  async dispatch(id: string, profileId: string | undefined, instruction: string, ref?: string, target?: AgentCallTarget): Promise<AgentCall> {
     return this.serially(async () => {
       const parent = this.chats.get(id)
       if (!this.canDelegate(parent)) throw new Rejection('agent-call-unavailable', '当前会话不能委派子任务')
+      if (Boolean(profileId) === Boolean(target)) throw new Rejection('invalid-params', '请选择已保存角色或直接执行工具')
+      // A direct target cannot bypass the calling role's allowlist.
+      if (target && parent.profile) throw new Rejection('agent-call-forbidden', '当前角色只能委派给允许调用的已保存角色')
+      const direct = target ? AgentCallTarget.parse(target) : null
       const existing = ref ? this.store.calls(id).find((call) => call.ref === ref) : null
       if (existing) {
-        if (existing.profile.id !== profileId || existing.instruction !== instruction.trim()) throw new Rejection('invalid-params', '委派引用已经用于其他工作')
+        const same = direct
+          ? existing.temporary && existing.profile.agent === direct.agent && existing.profile.model === direct.model
+            && existing.profile.effort === direct.effort && existing.profile.modelProvider === direct.modelProvider && existing.profile.capability === direct.capability
+          : !existing.temporary && existing.profile.id === profileId
+        if (!same || existing.instruction !== instruction.trim()) throw new Rejection('invalid-params', '委派引用已经用于其他工作')
         return existing
       }
-      const profile = this.available(id).find((each) => each.id === profileId)
+      const at = Date.now()
+      const profile = direct ? AgentProfile.parse({ ...direct, id: randomUUID(), name: agentDescriptor(direct.agent).label,
+        archivedAt: null, createdAt: at, updatedAt: at }) : this.available(id).find((each) => each.id === profileId)
       if (!profile) throw new Rejection('agent-call-forbidden', '此会话不能调用这个智能体')
       if (this.store.calls(id).filter(agentCallOpen).length >= 10) throw new Rejection('agent-call-limit', '请先等待已有委派完成')
       const readOnly = profile.capability === 'readOnly' || Boolean(parent.workspaceReadOnly || parent.planOnly)
         || ['plan', 'readOnly'].includes(parent.chatOptions?.permissionMode ?? '')
+      if (readOnly && agentDescriptor(profile.agent).capabilities.readOnly === false) throw new Rejection('read-only-unsupported', `${agentDescriptor(profile.agent).label} 不支持只读模式`)
       const permissionMode = readOnly ? agentDescriptor(profile.agent).readOnlyMode : 'ask'
       await this.chats.validateStartOptions(profile.agent, { permissionMode, model: profile.model, effort: profile.effort }, profile.modelProvider ?? undefined)
-      const at = Date.now()
       const call = AgentCall.parse({ id: randomUUID(), parentId: id, conversationId: randomUUID(), profile, instruction,
+        ...(direct ? { temporary: true } : {}),
         permissionMode, readOnly, ref: ref ?? null, state: 'queued', result: null, error: null, delivered: false, createdAt: at, updatedAt: at })
       this.announce(this.store.saveCall(call))
       this.tick()
