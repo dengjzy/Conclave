@@ -22,6 +22,26 @@ describe('TaskStore migrations', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
+  it('keeps summaries enabled for existing group chats when the preference is introduced', () => {
+    const raw = new DatabaseSync(file)
+    const upgrade = MIGRATIONS.findIndex((sql) => sql.includes('ADD COLUMN summarize'))
+    expect(upgrade).toBeGreaterThan(0)
+    applyLegacyMigrations(raw, MIGRATIONS.slice(0, upgrade))
+    raw.exec("INSERT INTO discussions (id,title,topic,chair_id,max_rounds,state,created_at,updated_at) VALUES ('group','Kept group','Topic','chair',1,'done',1,1)")
+    raw.close()
+    const store = new TaskStore(file)
+    store.close()
+    const migrated = new DatabaseSync(file)
+    try {
+      expect(migrated.prepare('SELECT title, summarize FROM discussions').get()).toMatchObject({ title: 'Kept group', summarize: 1 })
+      migrated.exec("UPDATE discussions SET summarize = 0 WHERE id = 'group'")
+    } finally { migrated.close() }
+    const reopened = new TaskStore(file)
+    reopened.close()
+    const kept = new DatabaseSync(file)
+    try { expect(kept.prepare('SELECT summarize FROM discussions').get()?.summarize).toBe(0) } finally { kept.close() }
+  })
+
   it('upgrades a version-1 database: the repo moves to its own table', () => {
     const raw = new DatabaseSync(file)
     applyLegacyMigrations(raw, MIGRATIONS.slice(0, 1))

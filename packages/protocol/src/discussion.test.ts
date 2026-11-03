@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_DISCUSSION_REQUIREMENTS, DiscussionCreate, MAX_DISCUSSION_REQUIREMENTS, checkAddDiscussionMember, checkDiscussionAction, checkEditDiscussionProjects, checkArchiveDiscussion, checkNewDiscussionTopic, checkRemoveDiscussionMember, currentTopic, memberLetter } from './discussion'
+import { DEFAULT_DISCUSSION_REQUIREMENTS, Discussion, DiscussionCreate, MAX_DISCUSSION_REQUIREMENTS, checkAddDiscussionMember, checkDiscussionAction, checkEditDiscussionProjects, checkArchiveDiscussion, checkNewDiscussionTopic, checkRemoveDiscussionMember, currentTopic, memberLetter } from './discussion'
 
 describe('discussion requirements', () => {
   const create = { topic: 'Compare caches', projectPaths: [], members: [{ agent: 'claude', name: 'Ann' }, { agent: 'codex', name: 'Bob' }], chair: 0 }
@@ -8,6 +8,14 @@ describe('discussion requirements', () => {
     expect(DiscussionCreate.parse(create).requirements).toBe(DEFAULT_DISCUSSION_REQUIREMENTS)
     expect(DiscussionCreate.parse({ ...create, requirements: '   ' }).requirements).toBe('')
     expect(DiscussionCreate.parse({ ...create, requirements: '  Use tables.  ' }).requirements).toBe('Use tables.')
+  })
+
+  it('keeps the legacy concluding turn by default and accepts an explicit opt-out', () => {
+    expect(DiscussionCreate.parse(create).summarize).toBe(true)
+    expect(DiscussionCreate.parse({ ...create, summarize: false }).summarize).toBe(false)
+    expect(DiscussionCreate.safeParse({ ...create, summarize: null }).success).toBe(false)
+    expect(Discussion.shape.summarize.parse(undefined)).toBe(true)
+    expect(Discussion.shape.summarize.parse(false)).toBe(false)
   })
 
   it('rejects oversized or malformed requirements before starting agents', () => {
@@ -48,7 +56,11 @@ describe('changing a group chat midway', () => {
     expect(checkRemoveDiscussionMember(three, 'a')).toBe('chair')
     expect(checkRemoveDiscussionMember(three, 'b')).toBe('busy')
     expect(checkRemoveDiscussionMember(three, 'c')).toBeNull()
+    expect(checkRemoveDiscussionMember({ ...three, summarize: false }, 'a')).toBeNull()
+    expect(checkRemoveDiscussionMember({ ...three, summarize: false }, 'b')).toBe('busy')
+    expect(checkRemoveDiscussionMember({ ...three, summarize: true }, 'a')).toBe('chair')
     expect(checkRemoveDiscussionMember(group([member('a', 0), member('c', 2)]), 'c')).toBe('too-few')
+    expect(checkRemoveDiscussionMember({ ...group([member('a', 0), member('c', 2)]), summarize: false }, 'a')).toBe('too-few')
   })
 
   it('changes projects only where there are some and everyone is idle', () => {

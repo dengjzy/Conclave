@@ -52,7 +52,7 @@ export function memberLetter(discussion: Pick<Discussion, 'members' | 'formerMem
 }
 
 // running: turns are out, or the next step is about to go; pausing: the user paused, and the turns
-// still out are let finish; paused: nothing out, more to come when resumed; done: summed up.
+// still out are let finish; paused: nothing out, more to come when resumed; done: finished.
 export const DiscussionState = z.enum(['running', 'pausing', 'paused', 'done'])
 export type DiscussionState = z.infer<typeof DiscussionState>
 
@@ -68,12 +68,14 @@ export const Discussion = z.object({
   formerMembers: z.array(DiscussionMember).default([]),
   chairId: z.string().uuid(),
   maxRounds: z.number().int().min(1).max(MAX_DISCUSSION_ROUNDS),
+  // Older groups and clients keep the chair's concluding turn.
+  summarize: z.boolean().default(true),
   // Whether members see each other as 成员 A, B… rather than by name, model and agent.
   anonymous: z.boolean(),
   state: DiscussionState.catch('paused'),
   // What the turns last sent out were: a round of the discussion, or the summary.
   step: z.enum(['round', 'summary']).nullable(),
-  // The round last sent out, 0 before the first; lastRound is the one the summary follows.
+  // The round last sent out, 0 before the first; lastRound is the final round before completion.
   round: z.number().int().nonnegative(),
   lastRound: z.number().int().nonnegative(),
   // The round before the one the topic now discussed opened: the user may move the group on to a new
@@ -124,12 +126,13 @@ export const DiscussionCreate = z.object({
   // Which of members sums up.
   chair: z.number().int().nonnegative(),
   maxRounds: z.number().int().min(1).max(MAX_DISCUSSION_ROUNDS).default(DEFAULT_DISCUSSION_ROUNDS),
+  summarize: z.boolean().default(true),
   anonymous: z.boolean().default(false)
 }).refine((fields) => fields.chair < fields.members.length, { message: 'the chair must be one of the members' })
 export type DiscussionCreate = z.input<typeof DiscussionCreate>
 
 // pause: no new round after the turns out now; resume: go on from where it paused; nextRound: one
-// more round, then the summary again; conclude: the summary once the turns out now are in; stop:
+// more round, then completion; conclude: finish once the turns out now are in; stop:
 // interrupt the turns out now, and pause.
 export const DiscussionAction = z.enum(['pause', 'resume', 'nextRound', 'conclude', 'stop'])
 export type DiscussionAction = z.infer<typeof DiscussionAction>
@@ -162,10 +165,10 @@ export function checkAddDiscussionMember(discussion: Pick<Discussion, 'members'>
   return discussion.members.length >= MAX_DISCUSSION_MEMBERS ? 'full' : null
 }
 
-// The chair stays, as it is to sum up; a member answering is let finish first.
-export function checkRemoveDiscussionMember(discussion: Pick<Discussion, 'members' | 'chairId'>, memberId: string): DiscussionMemberBlocker | null {
+// A summarizing chair stays; a member answering is let finish first.
+export function checkRemoveDiscussionMember(discussion: Pick<Discussion, 'members' | 'chairId'> & Partial<Pick<Discussion, 'summarize'>>, memberId: string): DiscussionMemberBlocker | null {
   if (discussion.members.length <= MIN_DISCUSSION_MEMBERS) return 'too-few'
-  if (memberId === discussion.chairId) return 'chair'
+  if (discussion.summarize !== false && memberId === discussion.chairId) return 'chair'
   return discussion.members.find((member) => member.id === memberId)?.status === 'idle' ? null : 'busy'
 }
 

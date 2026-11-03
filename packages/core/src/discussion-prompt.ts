@@ -34,11 +34,11 @@ export function speakerName(discussion: Members, memberId: string): string {
   return discussion.anonymous ? `成员 ${letter}` : member.name
 }
 
-function describe(discussion: Members, member: DiscussionMember): string {
+function describe(discussion: Members & Pick<Discussion, 'summarize'>, member: DiscussionMember): string {
   const name = speakerName(discussion, member.id)
   const model = discussion.anonymous ? '' : `（${agentDescriptor(member.agent).label}${member.model ? ` · ${member.model}` : ''}）`
   const role = member.role ? `：${member.role}` : ''
-  const chair = member.id === discussion.chairId ? '，主持人' : ''
+  const chair = discussion.summarize && member.id === discussion.chairId ? '，主持人' : ''
   return `- ${name}${model}${chair}${role}`
 }
 
@@ -65,14 +65,14 @@ export function openingPrompt(discussion: Discussion, member: DiscussionMember, 
     ? discussion.projectPaths.map((path, index) => `${index + 1}. ${path}`).join('\n')
     : '（没有关联项目）'
   return [
-    '你正在参加 Conclave 的一场圆桌讨论，和其他几位 AI 一起讨论用户给出的主题。讨论分几轮进行，最后由主持人总结。',
+    '你正在参加 Conclave 的一场圆桌讨论，和其他几位 AI 一起讨论用户给出的主题。' + (discussion.summarize ? '讨论分几轮进行，最后由主持人总结。' : '只展示各成员的回答，不安排额外的主持人总结。'),
     '',
     '## 主题',
     topic,
     '',
     '## 你',
     self + (member.role ? `\n你的立场或角度：${member.role}` : ''),
-    member.id === discussion.chairId ? '你也是主持人：讨论结束后会请你写总结。' : '',
+    discussion.summarize && member.id === discussion.chairId ? '你也是主持人：讨论结束后会请你写总结。' : '',
     '',
     '## 其他成员',
     ...others.map((each) => describe(discussion, each)),
@@ -115,7 +115,7 @@ export function topicPrompt(discussion: Discussion, topic: string, unseen: reado
   return [
     '## 新议题',
     ...projectsNow(discussion),
-    '用户换了一个议题。之前的讨论只作背景，不必再回应；新议题同样分几轮讨论，最后由主持人总结。',
+    '用户换了一个议题。之前的讨论只作背景，不必再回应；' + (discussion.summarize ? '新议题同样分几轮讨论，最后由主持人总结。' : '新议题只展示各成员的回答，不安排额外的主持人总结。'),
     '',
     topic,
     ...(unseen.length > 0 ? ['', '你上次发言以来的其他新内容（背景）：', '', ...since(discussion, unseen)] : []),

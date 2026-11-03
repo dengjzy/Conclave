@@ -32,7 +32,7 @@ const TURN_PREFIX = `turn:${REF_PREFIX}`
 const PLAN_DENIAL = '这是只读讨论，不执行计划。请不要提交计划，直接把你的看法作为文字回答写出来。'
 
 const DISCUSSION_SELECT = `SELECT id, title, topic, requirements, project_paths AS projectPaths, chair_id AS chairId, max_rounds AS maxRounds,
-  anonymous, state, step, round, last_round AS lastRound, topic_start AS topicStart, pinned_at AS pinnedAt, archived_at AS archivedAt, created_at AS createdAt, updated_at AS updatedAt
+  summarize, anonymous, state, step, round, last_round AS lastRound, topic_start AS topicStart, pinned_at AS pinnedAt, archived_at AS archivedAt, created_at AS createdAt, updated_at AS updatedAt
   FROM discussions`
 const MEMBER_SELECT = `SELECT id, discussion_id AS discussionId, conversation_id AS conversationId, agent, model, effort, name, role,
   position, removed_at AS removedAt FROM discussion_members`
@@ -73,7 +73,7 @@ function turnPostId(item: ChatItem): string | null {
 // approvals are a conversation's like any other. This only orchestrates: it sends each member a
 // message named after the post it is to become, and when that message's turn ends, takes the
 // turn's reply as the post. A round goes out to every member at once; once all of it is in, the
-// next round goes, or the chair's summary. Each discussion's steps run one after another.
+// next round goes, or the optional chair's summary. Each discussion's steps run one after another.
 export class DiscussionService {
   private readonly db: DatabaseSync
   private readonly chains = new Map<string, Promise<unknown>>()
@@ -154,9 +154,9 @@ export class DiscussionService {
     const title = parsed.title || titleOf(parsed.topic)
     const members = parsed.members.map((member) => ({ ...member, id: randomUUID(), conversationId: randomUUID() }))
     const chairId = members[parsed.chair]!.id
-    this.db.prepare(`INSERT INTO discussions (id, title, topic, requirements, project_paths, chair_id, max_rounds, anonymous, state, step, round, last_round, pinned_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running', NULL, 0, ?, NULL, ?, ?)`)
-      .run(id, title, parsed.topic, parsed.requirements, JSON.stringify(parsed.projectPaths), chairId, parsed.maxRounds, Number(parsed.anonymous), parsed.maxRounds, at, at)
+    this.db.prepare(`INSERT INTO discussions (id, title, topic, requirements, project_paths, chair_id, max_rounds, summarize, anonymous, state, step, round, last_round, pinned_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', NULL, 0, ?, NULL, ?, ?)`)
+      .run(id, title, parsed.topic, parsed.requirements, JSON.stringify(parsed.projectPaths), chairId, parsed.maxRounds, Number(parsed.summarize), Number(parsed.anonymous), parsed.maxRounds, at, at)
     const insert = this.db.prepare(`INSERT INTO discussion_members (id, discussion_id, position, conversation_id, agent, model, effort, name, role)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     members.forEach((member, position) => insert.run(member.id, id, position, member.conversationId, member.agent, member.model ?? null, member.effort ?? null, member.name, member.role))
@@ -317,6 +317,10 @@ export class DiscussionService {
       if (!member) throw new Rejection('discussion-member-not-found', `no member ${memberId}`)
       const blocked = checkRemoveDiscussionMember(discussion, memberId)
       if (blocked) throw new Rejection(`discussion-member-${blocked}`)
+      if (memberId === discussion.chairId) {
+        const replacement = discussion.members.find((each) => each.id !== memberId)
+        if (replacement) this.write(id, { chair_id: replacement.id })
+      }
       this.db.prepare('UPDATE discussion_members SET removed_at = ? WHERE id = ?').run(this.now(), memberId)
       await this.deps.conversations.delete(member.conversationId).catch((error: unknown) => {
         if (!(error instanceof Rejection && error.reason === 'conversation-not-found')) throw error
@@ -484,6 +488,10 @@ export class DiscussionService {
       return
     }
     if (discussion.step === 'summary') {
+      if (!discussion.summarize) {
+        this.write(id, { state: 'done', step: 'round' })
+        return
+      }
       const summed = posts.findLast((post) => post.kind === 'summary')
       if (summed?.state === 'done') {
         this.write(id, { state: 'done' })
@@ -528,8 +536,12 @@ export class DiscussionService {
   }
 
   private async dispatchSummary(id: string): Promise<void> {
-    this.write(id, { step: 'summary' })
     const discussion = this.get(id)
+    if (!discussion.summarize) {
+      this.write(id, { state: 'done', step: 'round' })
+      return
+    }
+    this.write(id, { step: 'summary' })
     const chair = discussion.members.find((member) => member.id === discussion.chairId) ?? discussion.members[0]!
     await this.ask(discussion, chair, 'summary', discussion.round, (unseen) => summaryPrompt(discussion, unseen))
   }
@@ -648,7 +660,7 @@ export class DiscussionService {
     const members = rows.filter((row) => row.removedAt === null).map(member)
     const formerMembers = rows.filter((row) => row.removedAt !== null).map((row) => ({ ...member(row), status: 'idle' }))
     return Discussion.parse({ ...row, requirements: row.requirements ?? DEFAULT_DISCUSSION_REQUIREMENTS,
-      projectPaths: JSON.parse(String(row.projectPaths)), anonymous: Boolean(row.anonymous), members, formerMembers })
+      projectPaths: JSON.parse(String(row.projectPaths)), summarize: Boolean(row.summarize), anonymous: Boolean(row.anonymous), members, formerMembers })
   }
 
   private write(id: string, values: Record<string, SQLInputValue>): void {
