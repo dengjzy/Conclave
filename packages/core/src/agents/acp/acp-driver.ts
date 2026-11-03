@@ -487,7 +487,7 @@ export class AcpDriver implements ChatDriver {
       }
       else if (!this.setup || String(frame.id).startsWith(this.id('initial-')) || OPENING.has(request.method)) {
         const detail = errorDetail(frame.error.data)
-        this.startError = `${request.method}: ${detail ?? frame.error.message}`
+        this.startError = `${request.method}: ${this.dialect.startupError?.(detail ?? frame.error.message) ?? detail ?? frame.error.message}`
         this.lost = RESTORING.has(request.method) && /not found|not resumable|unknown sessionid/i.test(detail ?? frame.error.message)
       }
       else this.items.notice('error', frame.error.message, at)
