@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import type { AgentProfile, Conversation } from '@conclave/protocol'
-import { showAgentCalls, useAgentCallsSupported } from '../agent-calls'
+import type { AgentProfile, ChatItem, Conversation } from '@conclave/protocol'
+import { agentCallForResult, openAgentCall, showAgentCalls, useAgentCalls, useAgentCallsSupported } from '../agent-calls'
 import { useOccludesBrowser } from '../browser-occlusion'
 import { useCore } from '../core-store'
 import { t } from '../i18n'
@@ -79,8 +79,10 @@ export function AgentDelegation({ conversation }: { conversation: Conversation }
   </>
 }
 
-export function AgentDelegationResult() {
+export function AgentDelegationResult({ conversationId, item }: { conversationId: string; item: Pick<ChatItem, 'kind' | 'id'> }) {
   const surface = useChatSurface()
   const pane = useConversationPane()
-  return <div className="delegation-delivery"><SquadIcon /><span>{t('AgentProfiles.resultReturned')}</span><button type="button" className="link-button" onClick={() => { pane?.focus(); showAgentCalls(surface.inspector) }}>{t('AgentProfiles.history')}</button></div>
+  const { calls } = useAgentCalls(conversationId)
+  const call = agentCallForResult(item, calls)
+  return <div className="delegation-delivery"><SquadIcon /><span>{t('AgentProfiles.resultReturned')}</span>{call && <button type="button" className="link-button" onClick={() => void openAgentCall(call)}>{call.profile.name} · {t('AgentProfiles.openConversation')}</button>}<button type="button" className="link-button" onClick={() => { pane?.focus(); showAgentCalls(surface.inspector) }}>{t('AgentProfiles.history')}</button></div>
 }
