@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { type AgentProfile } from '@conclave/protocol'
-import { AgentProfileService } from './agent-profile-service'
+import { AgentProfileService, delegationSummary } from './agent-profile-service'
 import { AgentProfileStore } from './agent-profile-store'
 import { TaskStore } from './task-store'
 import { ConversationStore } from './conversation-store'
@@ -79,6 +79,44 @@ describe('reusable agent roles and delegated work', () => {
     expect(chats.messages(parentId).filter((message) => message.text.includes('Found a missing timeout'))).toHaveLength(1)
     expect(await profiles.dispatch(parentId, reviewer.id, 'Review the changed files', 'review-1')).toMatchObject({ id: call.id })
   })
+  it('returns a member-written summary promptly while keeping the complete result', async () => {
+    const first = await profiles.dispatch(parentId, reviewer.id, 'Review one')
+    const second = await profiles.dispatch(parentId, reviewer.id, 'Review two')
+    await waitFor(() => store.call(first.id).state === 'running' && store.call(second.id).state === 'running')
+    const full = 'Detailed evidence and stack trace\n<conclave-summary>\n结论：发现问题\n改动：无\n验证：测试失败\n未解决：需要修复超时\n</conclave-summary>'
+    complete(chats.get(first.conversationId).sessionId!, full)
+    await waitFor(() => store.call(first.id).delivered)
+    expect(store.call(second.id).state).toBe('running')
+    expect(store.call(first.id).result).toBe(full)
+    const delivered = chats.messages(parentId).find((message) => message.text.includes(first.id))?.text ?? ''
+    expect(delivered).toContain('测试失败')
+    expect(delivered).toContain('需要修复超时')
+    expect(delivered).toContain('conclave_agent_status')
+    expect(delivered).not.toContain('Detailed evidence and stack trace')
+  })
+
+  it('falls back to the whole report when no complete, bounded summary is provided', () => {
+    const completeSummary = '<conclave-summary>\n结论：done\n改动：none\n验证：failed\n未解决：failure\n</conclave-summary>'
+    expect(delegationSummary(`Evidence\n${completeSummary}`)).toContain('验证：failed')
+    expect(delegationSummary('long report with failure at the end')).toBeNull()
+    expect(delegationSummary(completeSummary.replace('未解决：failure', '未解决：'))).toBeNull()
+    expect(delegationSummary(completeSummary.replace('结论：done', `结论：${'x'.repeat(4001)}`))).toBeNull()
+    expect(delegationSummary(`${completeSummary}\nA stopped background process`)).toBeNull()
+    expect(delegationSummary(`${completeSummary}\n\n（委派结束时，已停止成员留在后台的命令：pnpm preview）`)).toContain('已停止成员留在后台的命令：pnpm preview')
+  })
+
+  it('does not truncate an unstructured report or its failure at the end', async () => {
+    const call = await profiles.dispatch(parentId, reviewer.id, 'Review')
+    await waitFor(() => store.call(call.id).state === 'running')
+    const report = `${'evidence '.repeat(3000)}\nFAILED: remaining issue`
+    complete(chats.get(call.conversationId).sessionId!, report, true)
+    await waitFor(() => store.call(call.id).delivered)
+    const delivered = chats.messages(parentId).find((message) => message.text.includes(call.id))?.text ?? ''
+    expect(delivered).toContain('FAILED: remaining issue')
+    expect(delivered).toContain('\"state\":\"failed\"')
+    expect(store.call(call.id).result).toBe(report)
+  })
+
   it('limits role callers, refuses nested dispatch and caps a planning caller to read-only', async () => {
     const developer = profiles.save({ name: 'Developer', agent: 'claude', capability: 'develop' })
     conversations.setWorkspaceReadOnly(parentId, true)
@@ -183,10 +221,11 @@ describe('reusable agent roles and delegated work', () => {
     await waitFor(() => store.call(call.id).state === 'running')
     const child = chats.get(call.conversationId)
     background(child.sessionId!, 'bg-child', 'pnpm preview')
-    complete(child.sessionId!, 'The preview is up on port 4173')
+    complete(child.sessionId!, 'The preview is up on port 4173\n<conclave-summary>\n结论：预览已启动\n改动：无\n验证：预览运行\n未解决：无\n</conclave-summary>')
     await waitFor(() => store.call(call.id).delivered)
     expect(store.call(call.id).state).toBe('completed')
-    expect(store.call(call.id).result).toMatch(/^The preview is up on port 4173\n\n.*pnpm preview/)
+    expect(store.call(call.id).result).toContain('已停止成员留在后台的命令：pnpm preview')
+    expect(chats.messages(parentId).find((message) => message.text.includes(call.id))?.text).toContain('已停止成员留在后台的命令：pnpm preview')
     expect(chats.get(child.id).sessionId).toBeNull()
   })
 
