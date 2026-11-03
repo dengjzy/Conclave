@@ -1,6 +1,5 @@
 import { t, tr } from '../i18n'
 import { useHelper, useHelperSupported } from '../helper-conversations'
-import { useAgentCalls, useAgentCallsSupported } from '../agent-calls'
 import { useCallback, useState, type ReactElement } from 'react'
 import {
   agentDescriptor,
@@ -19,7 +18,7 @@ import {
   type Task,
   type TaskStatus
 } from '@conclave/protocol'
-import { openChatWhileStarting, perform, selectTask, setInspectorOpen, setSchedulesOpen, showTaskChanges, showView, updateTask, useChatOptionsSupported, useCore, useSchedulesSupported, useTaskCancelSupported, useTaskLaunchSupported, useTaskRedoInPlace, useWireLogShown, useWorktreesSupported, type TaskView } from '../core-store'
+import { openChatWhileStarting, perform, selectTask, setInspectorOpen, setSchedulesOpen, showTaskChanges, showView, updateTask, useChatOptionsSupported, useCore, useSchedulesSupported, useTaskCancelSupported, useTaskLaunchSupported, useTaskRedoInPlace, useWorktreesSupported, type TaskView } from '../core-store'
 import { resolveModel, useAgentCatalog } from '../agent-models'
 import { reasonText, STATUS_HINT, STATUS_LABEL } from '../labels'
 import { waitingOn } from '../task-waiting'
@@ -715,18 +714,10 @@ export function TaskSteps({ task, labelled = false }: { task: Task; labelled?: b
 // details have theirs under the title. Where to look and closing end the row in both panes, so
 // switching between them never moves those.
 export function TaskToolbar({ task, view }: { task: Task; view: TaskView }) {
-  const parent = useCore((state) => state.conversations[task.conversationId ?? ''])
-  const delegationSupported = useAgentCallsSupported(parent)
-  const { calls } = useAgentCalls(delegationSupported ? parent?.id ?? null : null)
-  const helperSupported = useHelperSupported(parent)
-  const helper = useHelper(helperSupported ? parent?.id ?? null : null)
-  const worktree = task.repos.some((repo) => repo.worktreePath !== null)
-  const wire = useWireLogShown()
-  const todosShown = useTodosShown()
   return (
     <div className="toolbar">
       {view === 'chat' && <TaskSteps task={task} />}
-      {task.conversationId && (calls?.length || helper || worktree || wire || todosShown) ? <InspectorToggle view={view} conversationId={task.conversationId} /> : null}
+      {task.conversationId && <InspectorToggle view={view} conversationId={task.conversationId} />}
       {task.conversationId && <ViewToggle view={view} />}
       <MoreMenu task={task} />
       <span className="toolbar-separator" aria-hidden="true" />

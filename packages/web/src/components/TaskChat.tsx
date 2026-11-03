@@ -141,7 +141,7 @@ export function TaskChat({ taskId }: { taskId: string }) {
     return null
   }
   const worktree = task.repos.some((repo) => repo.worktreePath !== null)
-  const showInspector = inspectorOpen && (delegationSupported || helperSupported || worktree || runs.length > 0 || plans.length > 0 || wire || todosShown)
+  const showInspector = inspectorOpen && (conversationId !== null || delegationSupported || helperSupported || worktree || runs.length > 0 || plans.length > 0 || wire || todosShown)
 
   return (
     <section className="detail terminal-view" aria-label={t('TaskChat.chat', { value1: task.title })}>
