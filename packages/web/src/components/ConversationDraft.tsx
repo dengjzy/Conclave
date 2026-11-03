@@ -27,6 +27,7 @@ import { composerDraft, EMPTY_DRAFT, saveComposerDraft } from '../composer-draft
 import { inboxKey, rememberInvestigationProjects } from '../source-inboxes'
 import { catalogKey, providerFor } from '../model-provider-choice'
 import { ProviderPicker } from './ProviderPicker'
+import { ConversationModePicker } from './ConversationCreateMenu'
 
 // A new conversation while chats are the default: the agent and projects are picked on the page,
 // and the first message creates the conversation and starts the agent, so none is left empty.
@@ -186,7 +187,7 @@ export function ConversationDraft() {
   return (
     <section className="detail terminal-view conversation-view" aria-label={t('ConversationDraft.newConversation')}>
       <header className="detail-header conversation-header">
-        <span className="terminal-view-title">{issue ? t('ConversationDraft.investigateIssue') : t('ConversationDraft.newConversation')}</span>
+        {issue ? <span className="terminal-view-title">{t('ConversationDraft.investigateIssue')}</span> : <ConversationModePicker mode="single" disabled={busy} />}
         <div className="toolbar">
           <button type="button" className="tool-button" aria-label={t('BackdropPicker.close')} data-tooltip={t('BackdropPicker.close')} onClick={closeConversationDraft}><CloseIcon /></button>
         </div>

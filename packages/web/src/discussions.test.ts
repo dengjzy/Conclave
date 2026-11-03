@@ -50,5 +50,6 @@ describe('group chat helpers', () => {
     // A new topic's rounds count from where it began.
     expect(discussionProgress({ state: 'running', step: 'round', round: 4, lastRound: 5, topicStart: 2 })).toBe('第 2 / 3 轮')
     expect(discussionProgress({ state: 'done', step: 'summary', round: 2, lastRound: 2, topicStart: 0 })).toBe('已总结')
+    expect(discussionProgress({ state: 'done', step: 'round', round: 1, lastRound: 1, topicStart: 0, summarize: false })).toBe('已完成')
   })
 })

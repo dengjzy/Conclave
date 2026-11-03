@@ -1,24 +1,27 @@
-import { getLocale, localized, t, tr } from '../i18n'
-import { isHelper } from '@conclave/protocol'
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { AGENT_KINDS, type AgentKind, type Conversation } from '@conclave/protocol'
-import { openBeside, selectConversation, useCore, useSplitPanes } from '../core-store'
+import { localized, t, tr } from '../i18n'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import type { Conversation } from '@conclave/protocol'
+import { openBeside, selectConversation, useCore, useDiscussionsSupported, useSplitPanes } from '../core-store'
+import { arrangeHistory, conversationHistory, historyGroupOf, historyKey, historyMatches, shownHistoryRows, sortHistory, type ConversationHistoryEntry, type ConversationHistoryFilter } from '../conversation-history'
 import { canSplit } from '../conversation-split'
 import { endConversationDrag, startConversationDrag } from '../conversation-drag'
 import { hasPrimaryModifier } from '../shortcut-keys'
 import { conversationState, timeAgo } from '../conversation-state'
 import { agentLabel } from '../labels'
 import { CONVERSATION_DENSITIES, CONVERSATION_GROUPS, CONVERSATION_SORTS, setPreference, usePreferences, type Preferences } from '../preferences'
-import { beginHandoff, ConversationContextMenu, newConversation, renameConversation } from './ConversationActions'
+import { beginHandoff, ConversationContextMenu, renameConversation } from './ConversationActions'
 import { ConversationStatus } from './ConversationStatus'
 import { ConversationPeek, useConversationPeek } from './ConversationPeek'
 import { conversationActivity } from '../work-activity'
 import { ContextMenu, MenuCheckboxItem, menuPoint, MenuRadioItem, MenuSubmenu, type MenuPoint } from './ContextMenu'
-import { AgentIcon, ChatIcon, ChevronDownIcon, PlusIcon, SlidersIcon } from './icons'
-import { primaryProjectName, projectName, projectNames } from './ProjectPicker'
+import { AgentIcon, ChatIcon, ChevronDownIcon, SlidersIcon } from './icons'
+import { projectName, projectNames } from './ProjectPicker'
 import { SidebarCollapseButton } from './SidebarCollapseButton'
 import { SidebarSearchField, SidebarSearchToggle } from './SidebarSearch'
 import { TitleEditor } from './TitleEditor'
+import { DiscussionHistoryRow } from './SidebarDiscussions'
+import { ConversationCreateMenu } from './ConversationCreateMenu'
+import { Segmented } from './SettingsControls'
 
 type GroupBy = Preferences['conversationGroup']
 type SortBy = Preferences['conversationSort']
@@ -27,12 +30,6 @@ type Density = Preferences['conversationDensity']
 const GROUP_LABEL: Record<GroupBy, string> = localized(() => ({ none: t('ConversationList.noGrouping'), project: t('ChatMentionMenu.project'), agent: t('ConversationList.agent'), status: t('ConversationList.runStatus') }))
 const SORT_LABEL: Record<SortBy, string> = localized(() => ({ recent: t('ConversationList.recentActivity'), created: t('ConversationList.created'), title: t('ConversationList.title') }))
 const DENSITY_LABEL: Record<Density, string> = localized(() => ({ comfortable: t('ConversationList.comfortable'), compact: t('ConversationList.compact') }))
-
-const COMPARE: Record<SortBy, (a: Conversation, b: Conversation) => number> = {
-  recent: (a, b) => b.updatedAt - a.updatedAt,
-  created: (a, b) => b.createdAt - a.createdAt,
-  title: (a, b) => a.title.localeCompare(b.title, getLocale())
-}
 
 // A group shows its first few rows, and a few more each time it is asked; the open conversation
 // stays in sight wherever it falls.
@@ -45,42 +42,7 @@ export function shownRows(items: Conversation[], selected: string | null, limit 
 // projects go by name, with conversations that have no project last. A conversation belongs to its
 // primary project, where its agent works; the others only lend it folders.
 export function groupOf(conversation: Conversation, by: Exclude<GroupBy, 'none'>): { label: string; rank: number } {
-  switch (by) {
-    case 'project':
-      return { label: primaryProjectName(conversation.projectPaths), rank: conversation.projectPaths.length > 0 ? 0 : 1 }
-    case 'agent':
-      return { label: agentLabel(conversation.agent), rank: AGENT_KINDS.indexOf(conversation.agent) }
-    case 'status':
-      return conversation.sessionId ? { label: t('ConversationList.running'), rank: 0 } : { label: t('ConversationList.stopped'), rank: 1 }
-  }
-}
-
-// `project`: the primary project a project's group stands for, where its ＋ starts a conversation.
-// `agent`: the agent an agent's group stands for, whose mark its heading carries for its rows.
-type Group = { key: string; label: string | null; rank: number; items: Conversation[]; project?: string; agent?: AgentKind }
-
-// Pinned conversations come first, in a group of their own, whatever the grouping.
-function arrange(conversations: Conversation[], by: GroupBy, sort: SortBy): Group[] {
-  const sorted = [...conversations].sort(COMPARE[sort])
-  const pinned = sorted.filter((conversation) => conversation.pinnedAt != null)
-  const rest = sorted.filter((conversation) => conversation.pinnedAt == null)
-  const top: Group[] = pinned.length > 0 ? [{ key: 'pinned', label: t('ConversationList.pinned'), rank: -1, items: pinned }] : []
-  if (by === 'none') return rest.length > 0 ? [...top, { key: 'all', label: null, rank: 0, items: rest }] : top
-  const groups = new Map<string, Group>()
-  for (const conversation of rest) {
-    const { label, rank } = groupOf(conversation, by)
-    const project = by === 'project' ? conversation.projectPaths[0] : undefined
-    const group = groups.get(label) ?? { key: `group:${label}`, label, rank, items: [], ...(project ? { project } : {}), ...(by === 'agent' ? { agent: conversation.agent } : {}) }
-    group.items.push(conversation)
-    groups.set(label, group)
-  }
-  return [...top, ...[...groups.values()].sort((a, b) => a.rank - b.rank || (a.label ?? '').localeCompare(b.label ?? '', getLocale()))]
-}
-
-// By title or project name, ignoring case. Message text is searched by core.
-function matches(conversation: Conversation, query: string): boolean {
-  const needle = query.toLowerCase()
-  return [conversation.title, ...conversation.projectPaths.map(projectName)].some((text) => text.toLowerCase().includes(needle))
+  return historyGroupOf({ kind: 'single', value: conversation }, by)
 }
 
 const SEARCH_DELAY_MS = 200
@@ -158,10 +120,11 @@ function useMinute(): number {
   return now
 }
 
-function ViewMenu({ at, trigger, archived, onClose }: { at: MenuPoint; trigger: HTMLElement | null; archived: number; onClose: () => void }) {
+function ViewMenu({ at, trigger, archived, archivedGroups, onClose }: { at: MenuPoint; trigger: HTMLElement | null; archived: number; archivedGroups: number; onClose: () => void }) {
   const groupBy = usePreferences((p) => p.conversationGroup)
   const sortBy = usePreferences((p) => p.conversationSort)
   const showArchived = usePreferences((p) => p.showArchivedConversations)
+  const showArchivedGroups = usePreferences((p) => p.showArchivedDiscussions)
   const density = usePreferences((p) => p.conversationDensity)
   const [open, setOpen] = useState<'group' | 'sort' | 'density' | null>(null)
   const closeSubmenu = () => setOpen(null)
@@ -212,6 +175,7 @@ function ViewMenu({ at, trigger, archived, onClose }: { at: MenuPoint; trigger: 
           <MenuCheckboxItem label={t('ConversationList.showArchived', { archived: archived })} checked={showArchived} onSelect={() => setPreference('showArchivedConversations', !showArchived)} />
         </>
       )}
+      {archivedGroups > 0 && <MenuCheckboxItem label={t('SidebarDiscussions.showArchived', { value1: archivedGroups })} checked={showArchivedGroups} onSelect={() => setPreference('showArchivedDiscussions', !showArchivedGroups)} />}
     </ContextMenu>
   )
 }
@@ -220,7 +184,12 @@ export function ConversationList() {
   const now = useMinute()
   const [collapsed, setCollapsed] = useState(false)
   const conversations = useCore((s) => s.conversations)
+  const discussions = useCore((s) => s.discussions)
+  const groupsSupported = useDiscussionsSupported()
+  const [historyFilter, setHistoryFilter] = useState<ConversationHistoryFilter>('all')
+  const filterId = useId()
   const selected = useCore((s) => s.selectedConversationId)
+  const selectedDiscussion = useCore((s) => s.selectedDiscussionId)
   const panes = useSplitPanes()
   // Opening beside the conversation in front: there has to be one, and another to put next to it.
   const splitWith = (conversation: Conversation): 'right' | 'other' | null => {
@@ -231,14 +200,13 @@ export function ConversationList() {
   const section = useCore((s) => s.section)
   const groupBy = usePreferences((p) => p.conversationGroup)
   const sortBy = usePreferences((p) => p.conversationSort)
-  // A task's conversation is reached from its task; a routine's from the routine's history; a group
-  // chat member's from the group chat.
-  const free = Object.values(conversations).filter((conversation) => !isHelper(conversation) && !conversation.taskId && !conversation.routineId && !conversation.discussionId && !conversation.squadRunId && !conversation.parentConversationId)
+  const free = conversationHistory(conversations, groupsSupported ? discussions : {}, historyFilter)
   // Archived ones are out of the list unless asked for in the view menu, then in a group of their
   // own at the end; a search finds them either way.
-  const all = free.filter((conversation) => conversation.archivedAt == null)
-  const archivedAll = free.filter((conversation) => conversation.archivedAt != null).sort(COMPARE[sortBy])
+  const all = free.filter((entry) => entry.value.archivedAt == null)
+  const archivedAll = sortHistory(free.filter((entry) => entry.value.archivedAt != null), sortBy)
   const showArchived = usePreferences((p) => p.showArchivedConversations)
+  const showArchivedGroups = usePreferences((p) => p.showArchivedDiscussions)
   const [archivedOpen, setArchivedOpen] = useState(true)
   // Null while the search box is closed. Groups left empty by a search drop out.
   const [query, setQuery] = useState<string | null>(null)
@@ -248,10 +216,12 @@ export function ConversationList() {
   // Null until core has answered this query.
   const snippets = messageHits.query === needle ? messageHits.snippets : null
   const visible = searching
-    ? all.filter((conversation) => matches(conversation, needle) || snippets?.has(conversation.id))
+    ? all.filter((entry) => historyMatches(entry, needle) || (entry.kind === 'single' && snippets?.has(entry.value.id)))
     : all
-  const groups = arrange(visible, groupBy, sortBy)
-  const archived = searching ? archivedAll.filter((conversation) => matches(conversation, needle) || snippets?.has(conversation.id)) : showArchived ? archivedAll : []
+  const groups = arrangeHistory(visible, groupBy, sortBy)
+  const archived = archivedAll.filter((entry) => searching
+    ? historyMatches(entry, needle) || (entry.kind === 'single' && snippets?.has(entry.value.id))
+    : entry.kind === 'single' ? showArchived : showArchivedGroups)
   // A search opens every group, so nothing it found is folded away.
   const folded = usePreferences((p) => p.foldedConversationGroups)
   const foldKey = (key: string) => `${groupBy}:${key}`
@@ -275,9 +245,10 @@ export function ConversationList() {
   const density = usePreferences((p) => p.conversationDensity)
   const { peek, rowProps } = useConversationPeek()
   const peeked = peek && !menu && !renamingId ? conversations[peek.id] : undefined
+  const selectedHistory = section === 'discussions' && selectedDiscussion ? `group:${selectedDiscussion}` : selected ? `single:${selected}` : null
 
   // heading: what the group the row is listed under is named after (its primary project, its agent).
-  const row = (conversation: Conversation, heading: GroupBy = 'none') => {
+  const conversationRow = (conversation: Conversation, heading: GroupBy = 'none') => {
     const snippet = searching ? snippets?.get(conversation.id) : undefined
     return <li key={conversation.id}>
       {renamingId === conversation.id
@@ -313,6 +284,9 @@ export function ConversationList() {
         </button>}
     </li>
   }
+  const row = (entry: ConversationHistoryEntry, heading: GroupBy = 'none') => entry.kind === 'single'
+    ? conversationRow(entry.value, heading)
+    : <DiscussionHistoryRow key={historyKey(entry)} discussion={entry.value} now={now} underProject={heading === 'project'} />
 
   return (
     <nav className="conversation-list" data-collapsed={collapsed} data-density={density} aria-label={t('ConversationList.conversations')}>
@@ -341,16 +315,20 @@ export function ConversationList() {
         >
           <SlidersIcon />
         </button>
-        <button type="button" className="icon-button task-list-add sidebar-add" aria-label={t('ConversationList.newConversation')} onClick={() => newConversation()}><PlusIcon /></button>
+        <ConversationCreateMenu />
       </header>
+      {groupsSupported && !collapsed && <div className="conversation-history-filter">
+        <span className="visually-hidden" id={filterId}>{t('ConversationHistory.filter')}</span>
+        <Segmented labelId={filterId} value={historyFilter} options={[{ value: 'all', label: t('ConversationHistory.all') }, { value: 'single', label: t('ConversationHistory.single') }, { value: 'group', label: t('ConversationHistory.group') }]} onChange={setHistoryFilter} />
+      </div>}
       {query !== null && !collapsed && (
         <SidebarSearchField label={t('ConversationList.searchConversations')} placeholder={t('ConversationList.titleProjectNameOrChatContent')} query={query} onChange={setQuery} />
       )}
       <div id="sidebar-conversations" className="sidebar-section-content" hidden={collapsed}>
-      {free.length === 0 ? <p className="task-list-empty">{t('ConversationList.noConversationsYetClickAtTheTopRight')}</p> :
+      {free.length === 0 ? <p className="task-list-empty">{t('ConversationHistory.empty')}</p> :
         visible.length === 0 && archived.length === 0 ? snippets && <p className="task-list-empty">{tr('ConversationList.noConversationsMatch', { needle: needle })}</p> :
         groups.map((group) => group.label === null
-          ? <ul key={group.key}>{group.items.map((conversation) => row(conversation))}</ul>
+          ? <ul key={group.key}>{group.items.map((entry) => row(entry))}</ul>
           : <section key={group.key} className="conversation-group" aria-label={group.label}>
             <h3 className="conversation-group-title">
               <button type="button" className="conversation-group-fold" aria-expanded={!isFolded(group.key)} onClick={() => toggleFold(group.key)}>
@@ -360,21 +338,13 @@ export function ConversationList() {
                 <span className="count">{group.items.length}</span>
               </button>
               {group.project && (
-                <button
-                  type="button"
-                  className="icon-button conversation-group-new sidebar-add"
-                  aria-label={t('ConversationList.newConversationIn', { value1: group.label })}
-                  title={t('ConversationList.newConversationIn', { value1: group.label })}
-                  onClick={() => group.project && newConversation([group.project])}
-                >
-                  <PlusIcon />
-                </button>
+                <ConversationCreateMenu projects={[group.project]} className="icon-button conversation-group-new sidebar-add" label={t('ConversationList.newConversationIn', { value1: group.label })} />
               )}
             </h3>
             {!isFolded(group.key) && <ul>
-              {shownRows(group.items, selected, limitOf(group.key)).map((conversation) => row(conversation, group.key === 'pinned' ? 'none' : groupBy))}
+              {shownHistoryRows(group.items, selectedHistory, limitOf(group.key)).map((entry) => row(entry, group.key === 'pinned' ? 'none' : groupBy))}
               {!searching && group.items.length > GROUP_LIMIT && (() => {
-                const hidden = group.items.length - shownRows(group.items, selected, limitOf(group.key)).length
+                const hidden = group.items.length - shownHistoryRows(group.items, selectedHistory, limitOf(group.key)).length
                 const more = limitOf(group.key) > GROUP_LIMIT
                 return (
                   <li className="conversation-group-more-row">
@@ -400,12 +370,12 @@ export function ConversationList() {
           <h3 className="conversation-group-title">
             <button type="button" className="conversation-group-fold" aria-expanded={searching || archivedOpen} onClick={() => setArchivedOpen(!archivedOpen)}>{tr('ConversationList.archived_718', { value1: <ChevronDownIcon />, value2: <span className="count">{archived.length}</span> })}</button>
           </h3>
-          {(searching || archivedOpen) && <ul>{archived.map((conversation) => row(conversation))}</ul>}
+          {(searching || archivedOpen) && <ul>{archived.map((entry) => row(entry))}</ul>}
         </section>
       )}
       </div>
       {peek && peeked && <ConversationPeek conversation={peeked} row={peek.row} />}
-      {viewAt && <ViewMenu at={viewAt} trigger={viewButton.current} archived={archivedAll.length} onClose={closeView} />}
+      {viewAt && <ViewMenu at={viewAt} trigger={viewButton.current} archived={archivedAll.filter((entry) => entry.kind === 'single').length} archivedGroups={archivedAll.filter((entry) => entry.kind === 'group').length} onClose={closeView} />}
       {menu && menuConversation && (
         <ConversationContextMenu
           conversation={menuConversation}

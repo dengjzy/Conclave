@@ -10,6 +10,8 @@ import { AgentIcon, ArchiveIcon, ChevronDownIcon, GroupChatIcon, PencilIcon, Pin
 import { SidebarCollapseButton } from './SidebarCollapseButton'
 import { TitleEditor } from './TitleEditor'
 import { askConfirm } from '../confirm-dialog'
+import { timeAgo } from '../conversation-state'
+import { projectNames } from './ProjectPicker'
 
 export async function removeDiscussion(discussion: Discussion): Promise<void> {
   const confirmed = await askConfirm({
@@ -48,6 +50,39 @@ export function DiscussionMarks({ discussion }: { discussion: Discussion }) {
       ))}
     </span>
   )
+}
+
+// Used by the combined history while the group's member conversations stay inside the group.
+export function DiscussionHistoryRow({ discussion, now, underProject = false }: { discussion: Discussion; now: number; underProject?: boolean }) {
+  const selected = useCore((state) => state.section === 'discussions' && state.selectedDiscussionId === discussion.id)
+  const archivable = useDiscussionArchiveSupported()
+  const [menu, setMenu] = useState<MenuPoint | null>(null)
+  const [renaming, setRenaming] = useState(false)
+  const close = useCallback(() => setMenu(null), [])
+  const pick = (action: () => void) => () => { close(); action() }
+  return <li>
+    {renaming ? <div className="task-row conversation-row" data-renaming>
+      <DiscussionDot discussion={discussion} />
+      <TitleEditor title={discussion.title} label={t('DiscussionView.groupChatTitle')} onSave={(title) => void renameDiscussion(discussion.id, title)} onDone={() => setRenaming(false)} />
+    </div> : <button type="button" className="task-row conversation-row" data-discussion-id={discussion.id} data-menu-open={menu !== null || undefined} aria-current={selected}
+      onClick={() => selectDiscussion(discussion.id)} onContextMenu={(event) => { event.preventDefault(); setMenu(menuPoint(event)) }}>
+      <DiscussionDot discussion={discussion} />
+      <span className="task-row-title" title={discussion.title}>{discussion.title}</span>
+      <span className="conversation-age">{timeAgo(discussion.updatedAt, now)}</span>
+      <span className="task-row-meta"><span className="conversation-history-kind"><GroupChatIcon /></span>{t('ConversationHistory.group')} · <DiscussionMarks discussion={discussion} />{!underProject && discussion.projectPaths.length > 0 && <>{projectNames(discussion.projectPaths)} · </>}{discussionProgress(discussion)}</span>
+    </button>}
+    {menu && <ContextMenu at={menu} label={t('SidebarDiscussions.actionsForGroupChat', { value1: discussion.title })} onClose={close}>
+      <MenuItem label={discussion.pinnedAt !== null ? t('ConversationActions.unpin') : t('ConversationActions.pin')} icon={<PinIcon />} onSelect={pick(() => void setDiscussionPinned(discussion.id, discussion.pinnedAt === null))} />
+      <MenuItem label={t('ConversationActions.rename')} icon={<PencilIcon />} onSelect={pick(() => setRenaming(true))} />
+      <MenuItem label={t('SidebarDiscussions.newGroupChatWithTheSameMembers')} icon={<GroupChatIcon />} onSelect={pick(() => openDiscussionDraft(discussion))} />
+      {archivable && (discussion.archivedAt !== null
+        ? <MenuItem label={t('ArchivedBar.unarchive')} icon={<ArchiveIcon />} onSelect={pick(() => void archiveDiscussion(discussion.id, false))} />
+        : <MenuItem label={t('ConversationActions.archive')} icon={<ArchiveIcon />} hint={checkArchiveDiscussion(discussion) ? t('SidebarDiscussions.waitUntilMembersFinishOrPauseFirst') : null}
+          disabled={checkArchiveDiscussion(discussion) !== null} onSelect={pick(() => void archiveDiscussion(discussion.id, true))} />)}
+      <div className="menu-separator" role="separator" />
+      <MenuItem label={t('SidebarDiscussions.deleteGroupChat')} icon={<TrashIcon />} danger onSelect={pick(() => void removeDiscussion(discussion))} />
+    </ContextMenu>}
+  </li>
 }
 
 // The sidebar's group chats, a section of their own: their members' conversations stay out of the

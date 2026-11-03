@@ -1,9 +1,9 @@
 import { localized, t, tr } from '../i18n'
-import { useState } from 'react'
-import { DEFAULT_DISCUSSION_REQUIREMENTS, DEFAULT_DISCUSSION_ROUNDS, MAX_DISCUSSION_MEMBERS, MAX_DISCUSSION_ROUNDS, MIN_DISCUSSION_MEMBERS, type AgentKind, type ChatCatalog, type Discussion } from '@conclave/protocol'
+import { useId, useState } from 'react'
+import { agentDescriptor, DEFAULT_DISCUSSION_REQUIREMENTS, DEFAULT_DISCUSSION_ROUNDS, MAX_DISCUSSION_MEMBERS, MAX_DISCUSSION_ROUNDS, MIN_DISCUSSION_MEMBERS, type AgentKind, type ChatCatalog, type Discussion } from '@conclave/protocol'
 import { resolveModel, useAgentCatalogs } from '../agent-models'
 import { discussionModelChoice, discussionModelReady, discussionModelUnavailable } from '../discussion-model'
-import { closeDiscussionDraft, selectDiscussion, useDiscussionRequirementsSupported } from '../core-store'
+import { closeDiscussionDraft, selectDiscussion, useDiscussionRequirementsSupported, useDiscussionSummarySupported } from '../core-store'
 import { createDiscussion, defaultMemberName, loadDiscussionPosts } from '../discussions'
 import { useInstalledAgents } from '../installed-agents'
 import { agentLabel } from '../labels'
@@ -12,18 +12,21 @@ import { ChatModelPicker, ChatPicker } from './ChatPicker'
 import { AgentIcon, CloseIcon } from './icons'
 import { ProjectPicker } from './ProjectPicker'
 import { DiscussionRequirements } from './DiscussionRequirements'
+import { ConversationModePicker } from './ConversationCreateMenu'
 
 // A member as picked: name is null while it follows the agent and model.
 type Draft = { key: string; agent: AgentKind; model?: string; effort?: string; name: string | null; role: string }
 
 const ROLE_HINTS = localized(() => ([t('DiscussionDraft.supporter'), t('DiscussionDraft.opponent'), t('DiscussionDraft.focusOnSecurityAndRisk'), t('DiscussionDraft.focusOnPerformanceAndCost'), t('DiscussionDraft.critic')]))
 
-function MemberRow({ member, catalog, index, agents, chair, busy, removable, onChange, onRemove, onChair }: {
+function MemberRow({ member, catalog, index, agents, chair, chairGroup, summarize, busy, removable, onChange, onRemove, onChair }: {
   member: Draft
   catalog: ChatCatalog | null | undefined
   index: number
   agents: readonly AgentKind[]
   chair: boolean
+  chairGroup: string
+  summarize: boolean
   busy: boolean
   removable: boolean
   onChange: (next: Draft) => void
@@ -33,6 +36,8 @@ function MemberRow({ member, catalog, index, agents, chair, busy, removable, onC
   const { effort } = resolveModel(catalog, { model: member.model, effort: member.effort })
   const choice = discussionModelChoice(catalog, member)
   const unavailable = discussionModelUnavailable(catalog, member)
+  const readOnlyUnsupported = agentDescriptor(member.agent).capabilities.readOnly === false
+  const choices = agents.includes(member.agent) ? agents : [member.agent, ...agents]
   const shownName = member.name ?? defaultMemberName(member.agent, choice.model ?? null)
   return (
     <li className="discussion-draft-member">
@@ -42,7 +47,7 @@ function MemberRow({ member, catalog, index, agents, chair, busy, removable, onC
         value={member.agent}
         placeholder="Agent"
         disabled={busy}
-        options={agents.map((agent) => ({ value: agent, label: agentLabel(agent), icon: <AgentIcon agent={agent} /> }))}
+        options={choices.map((agent) => ({ value: agent, label: agentLabel(agent), icon: <AgentIcon agent={agent} />, disabled: agentDescriptor(agent).capabilities.readOnly === false }))}
         onChange={(value) => {
           const agent = agents.find((each) => each === value)
           if (agent) onChange({ ...member, agent, model: undefined, effort: undefined })
@@ -64,6 +69,7 @@ function MemberRow({ member, catalog, index, agents, chair, busy, removable, onC
         />
       )}
       {unavailable && <span className="chat-options-note muted">{t('DiscussionDraft.modelUnavailable', { model: choice.model ?? '' })}</span>}
+      {readOnlyUnsupported && <span className="chat-options-note muted" role="alert">{t('ConversationModes.readOnlyUnsupported')}</span>}
       <input
         className="discussion-draft-name"
         aria-label={t('DiscussionDraft.memberSNameUsedToMentionThem', { value1: index + 1 })}
@@ -82,7 +88,7 @@ function MemberRow({ member, catalog, index, agents, chair, busy, removable, onC
         disabled={busy}
         onChange={(event) => onChange({ ...member, role: event.target.value })}
       />
-      <label className="discussion-draft-chair" data-tooltip={t('DiscussionDraft.theChairSummarizesWhenTheDiscussionEnds')}>{tr('DiscussionDraft.chair', { value1: <input type="radio" name="discussion-chair" checked={chair} disabled={busy} onChange={onChair} /> })}</label>
+      {summarize ? <label className="discussion-draft-chair" data-tooltip={t('DiscussionDraft.theChairSummarizesWhenTheDiscussionEnds')}>{tr('DiscussionDraft.chair', { value1: <input type="radio" name={chairGroup} checked={chair} disabled={busy} onChange={onChair} /> })}</label> : <span />}
       <button type="button" className="icon-button" aria-label={t('DiscussionDraft.removeMember', { value1: index + 1 })} data-tooltip={t('ChatQuoteCards.remove')} disabled={busy || !removable} onClick={onRemove}>
         <CloseIcon />
       </button>
@@ -92,13 +98,16 @@ function MemberRow({ member, catalog, index, agents, chair, busy, removable, onC
 
 // A new group chat: a topic, the projects its members may read, and who discusses it. One begun from
 // another group starts with its members, projects and options, for a topic of its own.
-export function DiscussionDraft({ from }: { from: Discussion | null }) {
-  const installed = useInstalledAgents()
-  const [mode, setMode] = useState<'fanout' | 'debate'>('fanout')
+export function DiscussionDraft({ from, mode = 'fanout', initialProjects }: { from: Discussion | null; mode?: 'fanout' | 'debate'; initialProjects?: readonly string[] }) {
+  const installed = useInstalledAgents().filter((agent) => agentDescriptor(agent).capabilities.readOnly !== false)
+  const chairGroup = useId()
   const [topic, setTopic] = useState('')
   const requirementsSupported = useDiscussionRequirementsSupported()
+  const summarySupported = useDiscussionSummarySupported()
+  const [summarize, setSummarize] = useState(from?.summarize ?? true)
+  const summaryEnabled = summarySupported ? summarize : true
   const [requirements, setRequirements] = useState(() => from?.requirements ?? DEFAULT_DISCUSSION_REQUIREMENTS)
-  const [projectPaths, setProjectPaths] = useState<string[]>(() => from?.projectPaths ?? [])
+  const [projectPaths, setProjectPaths] = useState<string[]>(() => [...(from?.projectPaths ?? initialProjects ?? [])])
   const [members, setMembers] = useState<Draft[]>(() => {
     if (from) {
       return from.members.map((member) => ({
@@ -120,7 +129,7 @@ export function DiscussionDraft({ from }: { from: Discussion | null }) {
     ]
   })
   const [chair, setChair] = useState(() => Math.max(0, from?.members.findIndex((member) => member.id === from.chairId) ?? 0))
-  const [rounds, setRounds] = useState(from?.maxRounds ?? 1)
+  const [rounds, setRounds] = useState(from?.maxRounds ?? (mode === 'fanout' ? 1 : DEFAULT_DISCUSSION_ROUNDS))
   const [anonymous, setAnonymous] = useState(from?.anonymous ?? false)
   const [busy, setBusy] = useState(false)
   const catalogs = useAgentCatalogs(members.map((member) => member.agent))
@@ -128,7 +137,7 @@ export function DiscussionDraft({ from }: { from: Discussion | null }) {
   // Names in use more than once would make @ ambiguous.
   const names = members.map((member, index) => (member.name ?? defaultMemberName(member.agent, choices[index]?.model ?? null)).trim())
   const clash = names.find((name, index) => names.indexOf(name) !== index)
-  const canStart = !busy && topic.trim() !== '' && members.length >= MIN_DISCUSSION_MEMBERS && !clash && names.every(Boolean) && members.every((member) => discussionModelReady(catalogs[member.agent], member))
+  const canStart = !busy && topic.trim() !== '' && members.length >= MIN_DISCUSSION_MEMBERS && !clash && names.every(Boolean) && members.every((member) => agentDescriptor(member.agent).capabilities.readOnly !== false && discussionModelReady(catalogs[member.agent], member))
 
   const update = (index: number, next: Draft) => setMembers(members.map((each, at) => (at === index ? next : each)))
   const add = () => setMembers([...members, { key: crypto.randomUUID(), agent: installed[members.length % Math.max(installed.length, 1)] ?? 'claude', name: null, role: '' }])
@@ -163,7 +172,8 @@ export function DiscussionDraft({ from }: { from: Discussion | null }) {
         role: member.role.trim()
       })),
       chair,
-      maxRounds: rounds,
+      maxRounds: mode === 'fanout' ? 1 : rounds,
+      ...(summarySupported ? { summarize: summaryEnabled } : {}),
       anonymous
     })
     setBusy(false)
@@ -175,41 +185,19 @@ export function DiscussionDraft({ from }: { from: Discussion | null }) {
   return (
     <section className="detail terminal-view discussion-view" aria-label={mode === 'fanout' ? '并发提问' : t('DiscussionDraft.newGroupChat')}>
       <header className="detail-header conversation-header">
-        <span className="terminal-view-title">{mode === 'fanout' ? '并发提问' : '多轮讨论'}</span>
+        <ConversationModePicker mode={mode} disabled={busy} />
         <div className="toolbar">
           <button type="button" className="tool-button" aria-label={t('BackdropPicker.close')} data-tooltip={t('BackdropPicker.close')} onClick={closeDiscussionDraft}><CloseIcon /></button>
         </div>
       </header>
       <div className="discussion-draft">
-        <div className="discussion-draft-mode-tabs" role="tablist">
-          <button
-            type="button"
-            className={`discussion-mode-tab ${mode === 'fanout' ? 'active' : ''}`}
-            onClick={() => {
-              setMode('fanout')
-              setRounds(1)
-            }}
-          >
-            并发提问
-          </button>
-          <button
-            type="button"
-            className={`discussion-mode-tab ${mode === 'debate' ? 'active' : ''}`}
-            onClick={() => {
-              setMode('debate')
-              if (rounds < 2) setRounds(DEFAULT_DISCUSSION_ROUNDS)
-            }}
-          >
-            多轮讨论
-          </button>
-        </div>
-
         {from && <p className="discussion-draft-from">{tr('DiscussionDraft.reuseMembersProjectsAndSettingsFromEachMember', { value1: from.title })}</p>}
         <p className="muted">
           {mode === 'fanout'
             ? '选中的 Agent 将同时接收并回答相同问题，便于对比回答。'
             : '选中的 Agent 共同参与多轮讨论，可互相审阅与补充。'}
         </p>
+        <p className="discussion-readonly-note">{t('ConversationModes.readOnly')}</p>
 
         {mode === 'fanout' && (
           <div className="fanout-agent-chips">
@@ -273,6 +261,8 @@ export function DiscussionDraft({ from }: { from: Discussion | null }) {
                 index={index}
                 agents={installed}
                 chair={chair === index}
+                chairGroup={chairGroup}
+                summarize={summaryEnabled}
                 busy={busy}
                 removable={members.length > MIN_DISCUSSION_MEMBERS}
                 onChange={(next) => update(index, next)}
@@ -287,7 +277,7 @@ export function DiscussionDraft({ from }: { from: Discussion | null }) {
           {clash && <p className="discussion-draft-error">{tr('DiscussionDraft.twoMembersAreNamedRenameOneSoThey', { clash: clash })}</p>}
         </div>
         <div className="discussion-draft-options">
-          <span className="discussion-draft-rounds">{tr('DiscussionDraft.upToSummarizeEarlyWhenPositionsRemainUnchanged', { value1: <ChatPicker
+          {mode === 'debate' && <span className="discussion-draft-rounds">{tr(summaryEnabled ? 'DiscussionDraft.upToSummarizeEarlyWhenPositionsRemainUnchanged' : 'ConversationModes.upTo', { value1: <ChatPicker
               label={t('DiscussionDraft.maximumRounds')}
               value={String(rounds)}
               placeholder={t('DiscussionDraft.rounds', { rounds: rounds })}
@@ -295,7 +285,9 @@ export function DiscussionDraft({ from }: { from: Discussion | null }) {
               disabled={busy}
               options={Array.from({ length: MAX_DISCUSSION_ROUNDS }, (_, index) => ({ value: String(index + 1), label: t('DiscussionDraft.rounds_823', { value1: index + 1 }) }))}
               onChange={(value) => setRounds(Number(value))}
-            /> })}</span>
+            /> })}</span>}
+          <label className="discussion-summary-choice"><input type="checkbox" checked={summaryEnabled} disabled={busy || !summarySupported} onChange={(event) => setSummarize(event.target.checked)} />{t('ConversationModes.summarize')}</label>
+          {!summarySupported && <span className="muted">{t('ConversationModes.summaryUnavailable')}</span>}
           <label data-tooltip={t('DiscussionDraft.useMemberABWithoutRevealingAgentOr')}>{tr('DiscussionDraft.anonymousPeerReview', { value1: <input type="checkbox" checked={anonymous} disabled={busy} onChange={(event) => setAnonymous(event.target.checked)} /> })}</label>
           <span className="chat-dock-spacer" />
           <button type="button" className="button primary" disabled={!canStart} onClick={() => void start()}>

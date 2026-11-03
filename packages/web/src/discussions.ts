@@ -99,8 +99,8 @@ export const MEMBER_STATUS_LABEL: Record<DiscussionMemberStatus, string> = local
 
 // Where the discussion stands, in a few words for its header and its row.
 // Rounds count from the topic now discussed.
-export function discussionProgress(discussion: Pick<Discussion, 'state' | 'step' | 'round' | 'lastRound' | 'topicStart'>): string {
-  if (discussion.state === 'done') return DISCUSSION_STATE_LABEL.done
+export function discussionProgress(discussion: Pick<Discussion, 'state' | 'step' | 'round' | 'lastRound' | 'topicStart'> & { summarize?: boolean }): string {
+  if (discussion.state === 'done') return discussion.summarize === false ? t('ConversationModes.completed') : DISCUSSION_STATE_LABEL.done
   const { round, lastRound, topicStart } = discussion
   const where = discussion.step === 'summary' ? t('DiscussionView.summary') : round > topicStart ? t('discussions.round', { value1: round - topicStart, value2: Math.max(round, lastRound) - topicStart }) : t('SquadWorkPanel.preparing')
   return discussion.state === 'running' ? where : `${where} · ${DISCUSSION_STATE_LABEL[discussion.state]}`
