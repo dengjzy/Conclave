@@ -1,4 +1,3 @@
-import { useAgentCalls, useAgentCallsSupported } from '../agent-calls'
 import { t, tr } from '../i18n'
 import { RouteBadge } from './RouteBadge'
 import { useHelper, useHelperSupported } from '../helper-conversations'
@@ -38,10 +37,6 @@ function ForkOrigin({ id }: { id: string }) {
 // Whether the conversation has anything for the inspector to show, and what its button says.
 export function useConversationPanel(conversation: Conversation | undefined) {
   const id = conversation?.id ?? ''
-  const delegationSupported = useAgentCallsSupported(conversation)
-  const { calls } = useAgentCalls(delegationSupported ? id : null)
-  const helperSupported = useHelperSupported(conversation)
-  const helper = useHelper(helperSupported ? id : null)
   const plans = usePlans(id)
   const wire = useWireLogShown()
   const todosShown = useTodosShown()
@@ -49,8 +44,8 @@ export function useConversationPanel(conversation: Conversation | undefined) {
   // A managed workspace is Conclave's own scratch folder: nothing of the user's to compare, but the
   // inspector still shows the agent's plans.
   const inspectable = (conversation?.projectPaths.length ?? 0) > 0
-  const hasPanel = Boolean(calls?.length || helper || inspectable || plans.length > 0 || wire || todosShown)
-  const hint = todoLeft > 0 ? t('ConversationView.inspectorToDos', { todoLeft: todoLeft }) : inspectable ? t('ConversationView.viewChanges') : plans.length > 0 ? t('ConversationView.viewPlan') : wire ? t('ConversationView.viewRawData') : t('chatTools.listToDos')
+  const hasPanel = Boolean(conversation)
+  const hint = todoLeft > 0 ? t('ConversationView.inspectorToDos', { todoLeft: todoLeft }) : inspectable ? t('ConversationView.viewChanges') : plans.length > 0 ? t('ConversationView.viewPlan') : wire ? t('ConversationView.viewRawData') : todosShown ? t('chatTools.listToDos') : t('ConversationView.inspector')
   return { hasPanel, wire, todoLeft, hint }
 }
 

@@ -1,3 +1,4 @@
+import { PullRequestPanel } from './PullRequestPanel'
 import { AgentCalls } from './AgentCalls'
 import { useAgentCalls, useAgentCallsSupported } from '../agent-calls'
 import { t, tr } from '../i18n'
@@ -90,7 +91,7 @@ export function TaskInspector({ task, widthRatio, onWidthRatioChange, plans = []
   const worktree = task.repos.some((repo) => repo.worktreePath !== null)
   const todosShown = useTodosShown() && task.conversationId !== null
   const todos = useConversationTodos(todosShown ? task.conversationId : null)
-  const tabs: InspectorTab[] = [...(helper ? ['helper' as const] : []), ...(calls?.length ? ['delegation' as const] : []),...(squadRuns.length ? ['squad' as const] : []),...(worktree ? GIT_TABS : []), ...(plans.length > 0 ? ['plan' as const] : []), ...(todosShown ? ['todos' as const] : []), ...(wire && task.conversationId ? ['wire' as const] : [])]
+  const tabs: InspectorTab[] = [...(helper ? ['helper' as const] : []), ...(calls?.length ? ['delegation' as const] : []),...(squadRuns.length ? ['squad' as const] : []),...(worktree ? GIT_TABS : []), ...(plans.length > 0 ? ['plan' as const] : []), ...(todosShown ? ['todos' as const] : []), ...(wire && task.conversationId ? ['wire' as const] : []), ...(task.conversationId ? ['pull-request' as const] : [])]
   const tab = tabs.includes(wanted) ? wanted : (tabs[0] ?? 'changes')
   const [refreshCount, setRefreshCount] = useState(0)
   const [gitMaximized, setGitMaximized] = useState(false)
@@ -117,7 +118,9 @@ export function TaskInspector({ task, widthRatio, onWidthRatioChange, plans = []
       onClose={() => setInspectorOpen(false)}
     >
       <DiffCommentConversation.Provider value={task.conversationId}>
-        {tab === 'helper' && parent ? (
+        {tab === 'pull-request' && task.conversationId ? (
+          <PullRequestPanel key={task.id} conversationId={task.conversationId} initialUrl={task.source?.provider === 'github' && /\/pull\/[1-9][0-9]*\/?$/.test(task.source.url) ? task.source.url : ''} />
+        ) : tab === 'helper' && parent ? (
           <HelperPanel key={parent.id} parent={parent} />
         ) : tab === 'delegation' && parent ? (
           <AgentCalls key={parent.id} conversation={parent} />

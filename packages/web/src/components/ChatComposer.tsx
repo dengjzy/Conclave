@@ -24,7 +24,7 @@ import { ChevronDownIcon, ClockIcon, CloseIcon, EnterIcon, PencilIcon, StopIcon 
 import { SchedulePicker } from './SchedulePicker'
 import { createSchedule } from '../schedules'
 import { ChatMessageRelay } from './chat-message-relay'
-import { composerDraft, EMPTY_DRAFT, saveComposerDraft } from '../composer-drafts'
+import { composerDraft, EMPTY_DRAFT, saveComposerDraft, subscribeDraftAppend } from '../composer-drafts'
 import { useOccludesBrowser } from '../browser-occlusion'
 import { sendWayKeys, sendWays, type SendWay } from '../chat-send-ways'
 import { sendToNewConversation, useReuseConversationSupported } from './ConversationActions'
@@ -278,6 +278,7 @@ export function ChatComposer({ conversation, state, compact = false }: { convers
   const mentionsSupported = useFileMentionsSupported()
   const attached = useComposerImages(draft.images)
   useEffect(() => saveComposerDraft(id, { ...value, images: attached.images }), [id, value, attached.images])
+  useEffect(() => subscribeDraftAppend(id, (text) => setValue((current) => ({ ...current, text: current.text + (current.text ? '\n\n' : '') + text }))), [id, setValue])
   // A message left here for the user, as a fork leaves the message it stopped before.
   useEffect(() => {
     const draft = takeDraft(id)

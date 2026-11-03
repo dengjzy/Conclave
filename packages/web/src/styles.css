@@ -10761,3 +10761,15 @@ button.squad-member-main { cursor: pointer; }
 .agent-smoke-pill[data-status="skipped"] .agent-smoke-dot {
   background: #6b7280;
 }
+
+.pull-request-panel { padding: 12px; overflow-wrap: anywhere; }
+.pull-request-panel p { margin: 8px 0; }
+.pull-request-panel ul { padding-left: 22px; }
+.pull-request-panel .mono { word-break: break-all; }
+.pull-request-input { display: flex; gap: 6px; margin: 6px 0; }
+.pull-request-input input { flex: 1; min-width: 0; }
+.pull-request-choice { display: block; margin-top: 14px; font-weight: 600; }
+@media (max-width: 768px) {
+  .inspector-panel:has(.pull-request-panel) { flex-basis: 100% !important; }
+  .terminal-body:has(> .inspector-panel .pull-request-panel) > .chat-view { display: none; }
+}

@@ -56,3 +56,18 @@ export function saveComposerDraft(conversationId: string | null, value: Composer
   }
   persist()
 }
+
+// Append without replacing the user's current input, whether its composer is mounted or not.
+const appenders = new Map<string, Set<(text: string) => void>>()
+export function subscribeDraftAppend(id: string, append: (text: string) => void): () => void {
+  const listeners = appenders.get(id) ?? new Set()
+  listeners.add(append)
+  appenders.set(id, listeners)
+  return () => { listeners.delete(append); if (listeners.size === 0) appenders.delete(id) }
+}
+export function appendDraft(id: string, text: string): void {
+  const listeners = appenders.get(id)
+  if (listeners?.size) { listeners.forEach((listener) => listener(text)); return }
+  const current = composerDraft(id)
+  saveComposerDraft(id, { ...current, text: current.text + (current.text ? '\n\n' : '') + text })
+}

@@ -13,6 +13,8 @@ import { TaskInspector } from './TaskInspector'
 import { TaskToolbar } from './TaskActions'
 import { ChatDelegationCard } from './ChatDelegationCard'
 import { ConversationView } from './ConversationView'
+import { ConversationSplit } from './ConversationSplit'
+import { TaskChat } from './TaskChat'
 
 vi.mock('../agent-calls', async (importOriginal) => ({
   ...await importOriginal<typeof import('../agent-calls')>(),
@@ -79,7 +81,7 @@ describe('delegation surfaces', () => {
     expect(renderButton()).toBe('')
   })
 
-  it('hides delegation tabs and empty inspector entries before the first record arrives', () => {
+  it('hides delegation tabs before the first record arrives while retaining the PR inspector', () => {
     useCore.setState({ conversationInspectorTab: 'delegation', taskInspectorTab: 'delegation' })
     for (const calls of [null, []]) {
       vi.mocked(useAgentCalls).mockReturnValue({ calls, error: null })
@@ -90,10 +92,21 @@ describe('delegation surfaces', () => {
         expect(html).not.toContain('>委派')
         expect(html).not.toContain('委派记录')
       }
-      expect(renderToStaticMarkup(createElement(TaskToolbar, { task, view: 'chat' }))).not.toContain('aria-label="检查器"')
-      expect(renderToStaticMarkup(createElement(ConversationView, { id: parent.id }))).not.toContain('aria-label="检查器"')
+      expect(renderToStaticMarkup(createElement(TaskToolbar, { task, view: 'chat' }))).toContain('aria-label="检查器"')
+      expect(renderToStaticMarkup(createElement(ConversationView, { id: parent.id }))).toContain('aria-label="检查器"')
     }
     expect(renderButton()).toContain('委派子任务')
+  })
+
+  it('opens the PR panel in task, conversation and split views without other inspector content', () => {
+    connect([])
+    const other = { ...parent, id: '22222222-2222-4222-8222-222222222222' }
+    useCore.setState({ conversations: { [parent.id]: parent, [other.id]: other }, inspectorOpen: true, conversationInspectorOpen: true, taskInspectorTab: 'pull-request', conversationInspectorTab: 'pull-request' })
+    for (const html of [
+      renderToStaticMarkup(createElement(ConversationView, { id: parent.id })),
+      renderToStaticMarkup(createElement(ConversationSplit, { panes: [parent.id, other.id], active: parent.id })),
+      renderToStaticMarkup(createElement(TaskChat, { taskId: task.id }))
+    ]) expect(html).toContain('PR 链接')
   })
 
   it('keeps existing history reachable in both inspectors even without git, todos or a helper', () => {
