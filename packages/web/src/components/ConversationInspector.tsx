@@ -1,3 +1,4 @@
+import { PullRequestPanel } from './PullRequestPanel'
 import { AgentCalls } from './AgentCalls'
 import { useAgentCalls, useAgentCallsSupported } from '../agent-calls'
 import { t } from '../i18n'
@@ -83,7 +84,7 @@ export function ConversationInspector({ conversation, widthRatio, onWidthRatioCh
   const plans = usePlans(conversation.id)
   const todosShown = useTodosShown()
   const todos = useConversationTodos(todosShown ? conversation.id : null)
-  const tabs: InspectorTab[] = [...(helper ? ['helper' as const] : []), ...(calls?.length ? ['delegation' as const] : []),...(conversation.projectPaths.length > 0 ? GIT_TABS : []), ...(plans.length > 0 ? ['plan' as const] : []), ...(todosShown ? ['todos' as const] : []), ...(wire ? ['wire' as const] : [])]
+  const tabs: InspectorTab[] = [...(helper ? ['helper' as const] : []), ...(calls?.length ? ['delegation' as const] : []),...(conversation.projectPaths.length > 0 ? GIT_TABS : []), ...(plans.length > 0 ? ['plan' as const] : []), ...(todosShown ? ['todos' as const] : []), ...(wire ? ['wire' as const] : []), 'pull-request']
   const tab = tabs.includes(wanted) ? wanted : (tabs[0] ?? 'changes')
   const [refreshCount, setRefreshCount] = useState(0)
   const [gitMaximized, setGitMaximized] = useState(false)
@@ -110,7 +111,9 @@ export function ConversationInspector({ conversation, widthRatio, onWidthRatioCh
       onClose={() => setConversationInspectorOpen(false)}
     >
       <DiffCommentConversation.Provider value={conversation.id}>
-        {tab === 'helper' ? (
+        {tab === 'pull-request' ? (
+          <PullRequestPanel key={conversation.id} conversationId={conversation.id} />
+        ) : tab === 'helper' ? (
           <HelperPanel key={conversation.id} parent={conversation} />
         ) : tab === 'delegation' && conversation ? (
           <AgentCalls key={conversation.id} conversation={conversation} />
