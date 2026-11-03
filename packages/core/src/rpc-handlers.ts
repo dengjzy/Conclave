@@ -212,7 +212,7 @@ export function createRpcHandlers(
     'agentProfiles.archive': ({ id, archived }) => profileService().archive(id, archived),
     'agentProfiles.available': ({ id }) => profileService().available(id),
     'agentCalls.list': ({ id }) => profileService().calls(id),
-    'agentCalls.dispatch': ({ id, profileId, instruction, ref }) => profileService().dispatch(id, profileId, instruction, ref),
+    'agentCalls.dispatch': ({ id, profileId, target, instruction, ref }) => profileService().dispatch(id, profileId, instruction, ref, target),
     'agentCalls.cancel': ({ id, callId }) => profileService().cancel(id, callId),
     'squads.list': () => squadService().list(),
     'squads.create': (fields) => squadService().create(fields),
@@ -245,7 +245,7 @@ export function createRpcHandlers(
       }, conversationId ? conversations.quickProvider(conversationId) : undefined)
       return { message: cleanCommitMessage(answer.text), model: answer.model }
     },
-    'system.hello': () => ({ protocolVersion: PROTOCOL_VERSION, serverVersion: packageJson.version, features: CORE_FEATURES.filter((feature) => (feature !== 'agent-profiles' || Boolean(profiles)) && (feature !== 'project-star' || Boolean(projectStar)) && (feature !== 'bookmarks' || Boolean(bookmarks)) && (feature !== 'squads' || Boolean(squads)) && (!['plugins', 'plugin-recommendations'].includes(feature) || Boolean(plugins)) && (!['skills-library', 'skills-search', 'skills-activation'].includes(feature) || Boolean(skills)) && (feature !== 'mcp-servers' || Boolean(mcpServers)) && (feature !== 'small-model-stats' || Boolean(smallModels)) && (feature !== 'model-providers' || Boolean(modelProviders)) && (feature !== 'agent-accounts' || Boolean(accounts))) }),
+    'system.hello': () => ({ protocolVersion: PROTOCOL_VERSION, serverVersion: packageJson.version, features: CORE_FEATURES.filter((feature) => (!['agent-profiles', 'direct-agent-calls'].includes(feature) || Boolean(profiles)) && (feature !== 'project-star' || Boolean(projectStar)) && (feature !== 'bookmarks' || Boolean(bookmarks)) && (feature !== 'squads' || Boolean(squads)) && (!['plugins', 'plugin-recommendations'].includes(feature) || Boolean(plugins)) && (!['skills-library', 'skills-search', 'skills-activation'].includes(feature) || Boolean(skills)) && (feature !== 'mcp-servers' || Boolean(mcpServers)) && (feature !== 'small-model-stats' || Boolean(smallModels)) && (feature !== 'model-providers' || Boolean(modelProviders)) && (feature !== 'agent-accounts' || Boolean(accounts))) }),
     'files.resolve': ({ conversationId, roots, path }) => files.resolve(fileScope(conversationId, roots), path),
     'files.read': ({ conversationId, roots, path }) => files.read(fileScope(conversationId, roots), path),
     'files.list': ({ conversationId, roots, path }) => files.list(fileScope(conversationId, roots), path),

@@ -22,9 +22,13 @@ export const AgentProfile = AgentProfileFields.extend({
 })
 export type AgentProfile = z.infer<typeof AgentProfile>
 
+export const AgentCallTarget = AgentProfileFields.pick({ agent: true, model: true, effort: true, modelProvider: true, capability: true })
+export type AgentCallTarget = z.input<typeof AgentCallTarget>
+
 export const AgentCall = z.object({
   id: z.string().uuid(), parentId: z.string().uuid(), conversationId: z.string().uuid(),
   profile: AgentProfile, instruction: z.string().trim().min(1).max(20000),
+  temporary: z.boolean().optional(),
   ref: z.string().nullable().default(null),
   permissionMode: z.string(), readOnly: z.boolean(),
   state: z.enum(['queued', 'starting', 'running', 'awaiting', 'completed', 'failed', 'cancelled']),

@@ -1,7 +1,8 @@
 import { localized, t, tr } from '../i18n'
 import { useState } from 'react'
-import { DEFAULT_DISCUSSION_REQUIREMENTS, DEFAULT_DISCUSSION_ROUNDS, MAX_DISCUSSION_MEMBERS, MAX_DISCUSSION_ROUNDS, MIN_DISCUSSION_MEMBERS, type AgentKind, type Discussion } from '@conclave/protocol'
-import { resolveModel, useAgentCatalog } from '../agent-models'
+import { DEFAULT_DISCUSSION_REQUIREMENTS, DEFAULT_DISCUSSION_ROUNDS, MAX_DISCUSSION_MEMBERS, MAX_DISCUSSION_ROUNDS, MIN_DISCUSSION_MEMBERS, type AgentKind, type ChatCatalog, type Discussion } from '@conclave/protocol'
+import { resolveModel, useAgentCatalogs } from '../agent-models'
+import { discussionModelChoice, discussionModelReady, discussionModelUnavailable } from '../discussion-model'
 import { closeDiscussionDraft, selectDiscussion, useDiscussionRequirementsSupported } from '../core-store'
 import { createDiscussion, defaultMemberName, loadDiscussionPosts } from '../discussions'
 import { useInstalledAgents } from '../installed-agents'
@@ -17,8 +18,9 @@ type Draft = { key: string; agent: AgentKind; model?: string; effort?: string; n
 
 const ROLE_HINTS = localized(() => ([t('DiscussionDraft.supporter'), t('DiscussionDraft.opponent'), t('DiscussionDraft.focusOnSecurityAndRisk'), t('DiscussionDraft.focusOnPerformanceAndCost'), t('DiscussionDraft.critic')]))
 
-function MemberRow({ member, index, agents, chair, busy, removable, onChange, onRemove, onChair }: {
+function MemberRow({ member, catalog, index, agents, chair, busy, removable, onChange, onRemove, onChair }: {
   member: Draft
+  catalog: ChatCatalog | null | undefined
   index: number
   agents: readonly AgentKind[]
   chair: boolean
@@ -28,9 +30,10 @@ function MemberRow({ member, index, agents, chair, busy, removable, onChange, on
   onRemove: () => void
   onChair: () => void
 }) {
-  const catalog = useAgentCatalog(member.agent, true)
-  const { model, effort } = resolveModel(catalog, { model: member.model, effort: member.effort })
-  const shownName = member.name ?? defaultMemberName(member.agent, member.model ?? null)
+  const { effort } = resolveModel(catalog, { model: member.model, effort: member.effort })
+  const choice = discussionModelChoice(catalog, member)
+  const unavailable = discussionModelUnavailable(catalog, member)
+  const shownName = member.name ?? defaultMemberName(member.agent, choice.model ?? null)
   return (
     <li className="discussion-draft-member">
       <span className="discussion-draft-index">{String.fromCharCode(65 + index)}</span>
@@ -45,12 +48,12 @@ function MemberRow({ member, index, agents, chair, busy, removable, onChange, on
           if (agent) onChange({ ...member, agent, model: undefined, effort: undefined })
         }}
       />
-      {!catalog && <span className="chat-options-note muted">{catalog === undefined ? t('AgentModelPicker.loadingModels') : t('ChatPicker.defaultModel')}</span>}
-      {catalog && (
+      {!catalog?.models.length && <span className="chat-options-note muted">{catalog === undefined ? t('AgentModelPicker.loadingModels') : choice.model ?? t('ChatPicker.defaultModel')}</span>}
+      {Boolean(catalog?.models.length) && catalog && (
         <ChatModelPicker
           align="start"
-          models={catalog.models.map((each) => ({ value: each.id, label: each.label, description: each.description, efforts: each.efforts.map((one) => ({ value: one, label: effortLabel(one) })) }))}
-          model={model?.id ?? null}
+          models={[...catalog.models.map((each) => ({ value: each.id, label: each.label, description: each.description, efforts: each.efforts.map((one) => ({ value: one, label: effortLabel(one) })) })), ...(unavailable && choice.model ? [{ value: choice.model, label: choice.model, efforts: [], disabled: true }] : [])]}
+          model={choice.model ?? null}
           effort={effort ?? null}
           disabled={busy}
           onModel={(value) => {
@@ -60,6 +63,7 @@ function MemberRow({ member, index, agents, chair, busy, removable, onChange, on
           onEffort={(value) => onChange({ ...member, effort: value })}
         />
       )}
+      {unavailable && <span className="chat-options-note muted">{t('DiscussionDraft.modelUnavailable', { model: choice.model ?? '' })}</span>}
       <input
         className="discussion-draft-name"
         aria-label={t('DiscussionDraft.memberSNameUsedToMentionThem', { value1: index + 1 })}
@@ -119,10 +123,12 @@ export function DiscussionDraft({ from }: { from: Discussion | null }) {
   const [rounds, setRounds] = useState(from?.maxRounds ?? 1)
   const [anonymous, setAnonymous] = useState(from?.anonymous ?? false)
   const [busy, setBusy] = useState(false)
+  const catalogs = useAgentCatalogs(members.map((member) => member.agent))
+  const choices = members.map((member) => discussionModelChoice(catalogs[member.agent], member))
   // Names in use more than once would make @ ambiguous.
-  const names = members.map((member) => (member.name ?? defaultMemberName(member.agent, member.model ?? null)).trim())
+  const names = members.map((member, index) => (member.name ?? defaultMemberName(member.agent, choices[index]?.model ?? null)).trim())
   const clash = names.find((name, index) => names.indexOf(name) !== index)
-  const canStart = !busy && topic.trim() !== '' && members.length >= MIN_DISCUSSION_MEMBERS && !clash && names.every(Boolean)
+  const canStart = !busy && topic.trim() !== '' && members.length >= MIN_DISCUSSION_MEMBERS && !clash && names.every(Boolean) && members.every((member) => discussionModelReady(catalogs[member.agent], member))
 
   const update = (index: number, next: Draft) => setMembers(members.map((each, at) => (at === index ? next : each)))
   const add = () => setMembers([...members, { key: crypto.randomUUID(), agent: installed[members.length % Math.max(installed.length, 1)] ?? 'claude', name: null, role: '' }])
@@ -152,8 +158,7 @@ export function DiscussionDraft({ from }: { from: Discussion | null }) {
       projectPaths,
       members: members.map((member, index) => ({
         agent: member.agent,
-        ...(member.model ? { model: member.model } : {}),
-        ...(member.effort ? { effort: member.effort } : {}),
+        ...choices[index],
         name: names[index] ?? agentLabel(member.agent),
         role: member.role.trim()
       })),
@@ -264,6 +269,7 @@ export function DiscussionDraft({ from }: { from: Discussion | null }) {
               <MemberRow
                 key={member.key}
                 member={member}
+                catalog={catalogs[member.agent]}
                 index={index}
                 agents={installed}
                 chair={chair === index}

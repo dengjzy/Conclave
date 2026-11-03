@@ -2,11 +2,11 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StateCreator } from 'zustand'
-import { AgentCall, createRpcClient, Task, type Conversation, type RpcConnection } from '@conclave/protocol'
+import { AgentCall, AgentProfile, createRpcClient, Task, type Conversation, type RpcConnection } from '@conclave/protocol'
 import { isAgentCallResult, showAgentCalls, useAgentCalls } from '../agent-calls'
 import { useCore } from '../core-store'
 import { useChat } from '../chat-state'
-import { AgentDelegation, AgentDelegationResult } from './AgentDelegation'
+import { AgentDelegation, AgentDelegationResult, DelegationDialog } from './AgentDelegation'
 import { ChatSurfaceContext, conversationSurface } from './chat-surface'
 import { ConversationInspector } from './ConversationInspector'
 import { TaskInspector } from './TaskInspector'
@@ -73,7 +73,7 @@ describe('delegation surfaces', () => {
 
   it('offers a dialog trigger for parent chats, but never for delegated or special-purpose chats or old cores', () => {
     expect(renderButton()).toContain('aria-haspopup="dialog"')
-    expect(renderButton({ ...parent, taskId: task.id })).toContain('委派子任务')
+    expect(renderButton({ ...parent, taskId: task.id })).toContain('委派任务')
     for (const patch of [{ parentConversationId: parent.id }, { helperOf: parent.id }, { discussionId: parent.id }, { squadRunId: parent.id }, { routineId: parent.id }]) {
       expect(renderButton({ ...parent, ...patch })).toBe('')
     }
@@ -95,7 +95,26 @@ describe('delegation surfaces', () => {
       expect(renderToStaticMarkup(createElement(TaskToolbar, { task, view: 'chat' }))).toContain('aria-label="检查器"')
       expect(renderToStaticMarkup(createElement(ConversationView, { id: parent.id }))).toContain('aria-label="检查器"')
     }
-    expect(renderButton()).toContain('委派子任务')
+    expect(renderButton()).toContain('委派任务')
+  })
+
+  it('offers direct tool selection on new cores and shows the exact handoff boundaries', () => {
+    connect(['agent-profiles', 'direct-agent-calls'])
+    useCore.setState({ environment: { searchPath: [], checkedAt: 0, checks: [{ tool: 'codex', status: 'ok', version: '1', path: '/bin/codex', signedIn: true }] } })
+    const html = renderToStaticMarkup(createElement(DelegationDialog, { conversation: parent, onClose() {}, onHistory() {} }))
+    for (const text of ['委派任务', '直接选择工具', '执行工具：Codex', '只读分析', '任务描述', '补充说明', '/w', '不会自动继承聊天历史或图片', '不会另建工作树', '保存当前配置为角色']) expect(html).toContain(text)
+    expect(html).not.toContain('尚未检测到可用的执行工具')
+  })
+
+  it('uses the saved-role path for older cores and restricted parent roles', () => {
+    const render = (conversation = parent) => renderToStaticMarkup(createElement(DelegationDialog, { conversation, onClose() {}, onHistory() {} }))
+    expect(render()).toContain('已保存角色')
+    expect(render()).not.toContain('直接选择工具')
+    connect(['agent-profiles', 'direct-agent-calls'])
+    const profile = AgentProfile.parse({ id: parent.id, name: 'Coordinator', agent: 'claude', archivedAt: null, createdAt: 0, updatedAt: 0 })
+    const html = render({ ...parent, profile })
+    expect(html).toContain('当前角色限制了调用范围')
+    expect(html).not.toContain('直接选择工具')
   })
 
   it('opens the PR panel in task, conversation and split views without other inspector content', () => {

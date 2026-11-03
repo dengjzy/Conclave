@@ -2,6 +2,7 @@ import { t, tr } from '../i18n'
 import { useCallback, useState } from 'react'
 import { checkAddDiscussionMember, MAX_DISCUSSION_MEMBERS, type AgentKind, type Discussion } from '@conclave/protocol'
 import { resolveModel, useAgentCatalog } from '../agent-models'
+import { discussionModelChoice, discussionModelReady, discussionModelUnavailable } from '../discussion-model'
 import { addDiscussionMember, defaultMemberName } from '../discussions'
 import { useInstalledAgents } from '../installed-agents'
 import { agentLabel } from '../labels'
@@ -27,14 +28,17 @@ function MemberForm({ discussion, onDone }: { discussion: Discussion; onDone: ()
   const [busy, setBusy] = useState(false)
   const catalog = useAgentCatalog(agent, true)
   const resolved = resolveModel(catalog, { model, effort })
+  const choice = discussionModelChoice(catalog, { model, effort })
+  const unavailable = discussionModelUnavailable(catalog, { model, effort })
+  const modelReady = discussionModelReady(catalog, { model, effort })
   const names = discussion.members.map((member) => member.name)
-  const shownName = name ?? freeName(defaultMemberName(agent, model ?? null), names)
+  const shownName = name ?? freeName(defaultMemberName(agent, choice.model ?? null), names)
   const taken = names.some((each) => each.toLowerCase() === shownName.trim().toLowerCase())
   const add = async () => {
-    if (busy || taken || !shownName.trim()) return
+    if (busy || taken || !shownName.trim() || !modelReady) return
     setBusy(true)
     const added = await addDiscussionMember(discussion.id, {
-      agent, name: shownName.trim(), role: role.trim(), ...(model ? { model } : {}), ...(resolved.effort ? { effort: resolved.effort } : {})
+      agent, name: shownName.trim(), role: role.trim(), ...choice
     })
     setBusy(false)
     if (added) onDone()
@@ -60,15 +64,16 @@ function MemberForm({ discussion, onDone }: { discussion: Discussion; onDone: ()
           <ChatModelPicker
             align="start"
             placement="below"
-            models={catalog.models.map((each) => ({ value: each.id, label: each.label, description: each.description, efforts: each.efforts.map((one) => ({ value: one, label: effortLabel(one) })) }))}
-            model={resolved.model?.id ?? null}
+            models={[...catalog.models.map((each) => ({ value: each.id, label: each.label, description: each.description, efforts: each.efforts.map((one) => ({ value: one, label: effortLabel(one) })) })), ...(unavailable && choice.model ? [{ value: choice.model, label: choice.model, efforts: [], disabled: true }] : [])]}
+            model={choice.model ?? null}
             effort={resolved.effort ?? null}
             disabled={busy}
             onModel={setModel}
             onEffort={setEffort}
           />
-        ) : null}
+        ) : <span className="chat-options-note muted">{catalog === undefined ? t('AgentModelPicker.loadingModels') : choice.model ?? t('ChatPicker.defaultModel')}</span>}
       </div>
+      {unavailable && <p className="discussion-draft-error">{t('DiscussionDraft.modelUnavailable', { model: choice.model ?? '' })}</p>}
       <label className="discussion-member-form-field">
         <span>{t('DiscussionDraft.nameForMentions')}</span>
         <input className="input" value={shownName} maxLength={60} disabled={busy} onChange={(event) => setName(event.target.value)} />
@@ -80,7 +85,7 @@ function MemberForm({ discussion, onDone }: { discussion: Discussion; onDone: ()
       {taken && <p className="discussion-draft-error">{tr('DiscussionMemberForm.aMemberNamedAlreadyExistsChooseAnotherName', { value1: shownName.trim() })}</p>}
       <div className="note-form-actions">
         <button type="button" className="button ghost" disabled={busy} onClick={onDone}>{t('ChatCommandSettings.cancel')}</button>
-        <button type="submit" className="button primary" disabled={busy || taken || !shownName.trim()}>{t('DiscussionMemberForm.join')}</button>
+        <button type="submit" className="button primary" disabled={busy || taken || !shownName.trim() || !modelReady}>{t('DiscussionMemberForm.join')}</button>
       </div>
     </form>
   )
