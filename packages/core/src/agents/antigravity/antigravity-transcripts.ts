@@ -33,15 +33,37 @@ export function parseAntigravityWorkspace(raw: string | null | undefined): strin
   return null
 }
 
-function readSummariesMetadata(dbPath: string): Map<string, { cwd: string | null }> {
-  const map = new Map<string, { cwd: string | null }>()
+interface AntigravitySessionMetadata {
+  cwd: string | null
+  title: string | null
+  isSubagent: boolean
+}
+
+function cleanPromptForTitle(text: string): string {
+  let cleaned = text.trim()
+  cleaned = cleaned.replace(/^#+\s*/, '')
+  cleaned = cleaned.replace(/^\d+[\.\)]\s*/, '')
+  cleaned = cleaned.replace(/^\[([^\]]+)\]\([^\)]+\)/, '$1')
+  cleaned = cleaned.replace(/^https?:\/\/\S+\s+/, '')
+  return cleaned.trim() || text.trim()
+}
+
+function readSummariesMetadata(dbPath: string): Map<string, AntigravitySessionMetadata> {
+  const map = new Map<string, AntigravitySessionMetadata>()
   try {
     const db = new DatabaseSync(dbPath, { readOnly: true })
-    const rows = db.prepare('SELECT conversation_id, workspace_uris FROM conversation_summaries').all() as Array<{ conversation_id: string; workspace_uris: string | null }>
+    const rows = db.prepare('SELECT * FROM conversation_summaries').all() as Array<Record<string, unknown>>
     for (const row of rows) {
       if (typeof row.conversation_id === 'string') {
+        const parentId = typeof row.parent_conversation_id === 'string' ? row.parent_conversation_id.trim() : ''
+        const depth = typeof row.nesting_depth === 'number' ? row.nesting_depth : 0
+        const isSubagent = Boolean(parentId || depth > 0)
+        const workspace = typeof row.workspace_uris === 'string' ? row.workspace_uris : null
+        const title = typeof row.title === 'string' ? row.title.trim() : null
         map.set(row.conversation_id, {
-          cwd: parseAntigravityWorkspace(row.workspace_uris)
+          cwd: parseAntigravityWorkspace(workspace),
+          title: title || null,
+          isSubagent
         })
       }
     }
@@ -50,11 +72,11 @@ function readSummariesMetadata(dbPath: string): Map<string, { cwd: string | null
   return map
 }
 
-async function summarizeAntigravitySession(brainDir: string, sessionId: string, mtimeMs: number, meta?: { cwd: string | null }): Promise<TranscriptSummary | null> {
+async function summarizeAntigravitySession(brainDir: string, sessionId: string, mtimeMs: number, meta?: AntigravitySessionMetadata): Promise<TranscriptSummary | null> {
   const file = path.join(brainDir, sessionId, '.system_generated', 'logs', 'transcript.jsonl')
   if (!(await stat(file).catch(() => null))?.isFile()) return null
 
-  let title = 'Antigravity 会话'
+  let title = meta?.title || 'Antigravity 会话'
   let firstPrompt = ''
   let startedAt = mtimeMs
 
@@ -66,7 +88,9 @@ async function summarizeAntigravitySession(brainDir: string, sessionId: string, 
       const requestMatch = /<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/.exec(content)
       if (requestMatch?.[1]) content = requestMatch[1].trim()
       firstPrompt = content
-      title = titleOf(content)
+      if (!meta?.title) {
+        title = titleOf(cleanPromptForTitle(content))
+      }
       if (typeof raw.created_at === 'string') startedAt = timeOf(raw.created_at) ?? startedAt
       return false
     }
@@ -77,7 +101,7 @@ async function summarizeAntigravitySession(brainDir: string, sessionId: string, 
     sessionId,
     cwd: meta?.cwd ?? homedir(),
     title,
-    named: false,
+    named: Boolean(meta?.title),
     firstPrompt,
     startedAt,
     modifiedAt: mtimeMs,
@@ -129,6 +153,7 @@ export function antigravityTranscripts(root: () => string = antigravityBrainRoot
         const info = await stat(path.join(dir, d.name)).catch(() => null)
         if (!info) return null
         const meta = metadata.get(d.name)
+        if (meta?.isSubagent) return null
         return cache.get({ file: path.join(dir, d.name), mtimeMs: info.mtimeMs, size: 0 }, () => summarizeAntigravitySession(dir, d.name, info.mtimeMs, meta))
       }))
       return summaries.flatMap((s) => (s ? [s] : []))
