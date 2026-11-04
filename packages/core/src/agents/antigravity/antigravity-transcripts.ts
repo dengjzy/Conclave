@@ -1,6 +1,8 @@
 import { readdir, rm, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
+import { fileURLToPath } from 'node:url'
 import { parseLine, readHead, readLines, SummaryCache, timeOf, titleOf, type Transcript, type TranscriptEntry, type TranscriptMessage, type TranscriptSource, type TranscriptSummary } from '../../agent-transcripts'
 
 const UUID_DIR = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -9,7 +11,46 @@ export function antigravityBrainRoot(): string {
   return path.join(homedir(), '.gemini', 'antigravity', 'brain')
 }
 
-async function summarizeAntigravitySession(brainDir: string, sessionId: string, mtimeMs: number): Promise<TranscriptSummary | null> {
+export function antigravitySummariesDb(brainRoot = antigravityBrainRoot()): string {
+  return path.join(path.dirname(brainRoot), 'conversation_summaries.db')
+}
+
+export function parseAntigravityWorkspace(raw: string | null | undefined): string | null {
+  if (!raw?.trim()) return null
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    const first = Array.isArray(parsed) ? parsed[0] : parsed
+    if (typeof first === 'string' && first.startsWith('file:')) {
+      return fileURLToPath(first)
+    }
+  } catch {
+    if (raw.startsWith('file:')) {
+      try {
+        return fileURLToPath(raw)
+      } catch {}
+    }
+  }
+  return null
+}
+
+function readSummariesMetadata(dbPath: string): Map<string, { cwd: string | null }> {
+  const map = new Map<string, { cwd: string | null }>()
+  try {
+    const db = new DatabaseSync(dbPath, { readOnly: true })
+    const rows = db.prepare('SELECT conversation_id, workspace_uris FROM conversation_summaries').all() as Array<{ conversation_id: string; workspace_uris: string | null }>
+    for (const row of rows) {
+      if (typeof row.conversation_id === 'string') {
+        map.set(row.conversation_id, {
+          cwd: parseAntigravityWorkspace(row.workspace_uris)
+        })
+      }
+    }
+    db.close()
+  } catch {}
+  return map
+}
+
+async function summarizeAntigravitySession(brainDir: string, sessionId: string, mtimeMs: number, meta?: { cwd: string | null }): Promise<TranscriptSummary | null> {
   const file = path.join(brainDir, sessionId, '.system_generated', 'logs', 'transcript.jsonl')
   if (!(await stat(file).catch(() => null))?.isFile()) return null
 
@@ -34,7 +75,7 @@ async function summarizeAntigravitySession(brainDir: string, sessionId: string, 
 
   return {
     sessionId,
-    cwd: homedir(),
+    cwd: meta?.cwd ?? homedir(),
     title,
     named: false,
     firstPrompt,
@@ -58,13 +99,13 @@ function antigravityTranscript(lines: string[]): Transcript {
       let text = raw.content
       const match = /<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/.exec(text)
       if (match?.[1]) text = match[1].trim()
-      const id = `agy:u:${raw.step_index ?? crypto.randomUUID()}`
+      const id = 'agy:u:' + String(raw.step_index ?? crypto.randomUUID())
       entries.push({ at, item: { id, kind: 'user', text, images: [] } })
       messages.push({ at, role: 'user', text, ref: id })
     } else if (raw.type === 'PLANNER_RESPONSE') {
-      const id = `agy:a:${raw.step_index ?? crypto.randomUUID()}`
+      const id = 'agy:a:' + String(raw.step_index ?? crypto.randomUUID())
       if (typeof raw.thinking === 'string' && raw.thinking.trim()) {
-        entries.push({ at, item: { id: `think:${id}`, kind: 'reasoning', text: raw.thinking, streaming: false } })
+        entries.push({ at, item: { id: 'think:' + id, kind: 'reasoning', text: raw.thinking, streaming: false } })
       }
       if (typeof raw.content === 'string' && raw.content.trim()) {
         entries.push({ at, item: { id, kind: 'assistant', text: raw.content, streaming: false } })
@@ -76,17 +117,19 @@ function antigravityTranscript(lines: string[]): Transcript {
   return { entries, messages }
 }
 
-export function antigravityTranscripts(root: () => string = antigravityBrainRoot): TranscriptSource {
+export function antigravityTranscripts(root: () => string = antigravityBrainRoot, summariesDb: () => string = () => antigravitySummariesDb(root())): TranscriptSource {
   const cache = new SummaryCache()
   return {
     scan: async () => {
       const dir = root()
       const entries = await readdir(dir, { withFileTypes: true }).catch(() => [])
       const dirs = entries.filter((e) => (e.isDirectory() || e.isSymbolicLink()) && UUID_DIR.test(e.name))
+      const metadata = readSummariesMetadata(summariesDb())
       const summaries = await Promise.all(dirs.map(async (d) => {
         const info = await stat(path.join(dir, d.name)).catch(() => null)
         if (!info) return null
-        return cache.get({ file: path.join(dir, d.name), mtimeMs: info.mtimeMs, size: 0 }, () => summarizeAntigravitySession(dir, d.name, info.mtimeMs))
+        const meta = metadata.get(d.name)
+        return cache.get({ file: path.join(dir, d.name), mtimeMs: info.mtimeMs, size: 0 }, () => summarizeAntigravitySession(dir, d.name, info.mtimeMs, meta))
       }))
       return summaries.flatMap((s) => (s ? [s] : []))
     },
