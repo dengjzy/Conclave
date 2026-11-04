@@ -142,14 +142,30 @@ export function antigravityTranscripts(root: () => string = antigravityBrainRoot
       return antigravityTranscript(lines)
     },
     delete: async (file) => {
-      // file is ~/.gemini/antigravity/brain/<uuid>/.system_generated/logs/transcript.jsonl
-      // or directory
       const brainDir = root()
       const parts = path.relative(brainDir, file).split(path.sep)
       const sessionId = parts[0]
-      if (sessionId && UUID_DIR.test(sessionId)) {
-        await rm(path.join(brainDir, sessionId), { recursive: true, force: true }).catch(() => {})
-      }
+      if (!sessionId || !UUID_DIR.test(sessionId)) return
+
+      // Remove brain directory
+      await rm(path.join(brainDir, sessionId), { recursive: true, force: true }).catch(() => {})
+
+      // Remove individual conversation SQLite database if present
+      const conversationsDir = path.join(path.dirname(brainDir), 'conversations')
+      await rm(path.join(conversationsDir, `${sessionId}.db`), { force: true }).catch(() => {})
+      await rm(path.join(conversationsDir, `${sessionId}.db-wal`), { force: true }).catch(() => {})
+      await rm(path.join(conversationsDir, `${sessionId}.db-shm`), { force: true }).catch(() => {})
+
+      // Clean up summaries and search index
+      try {
+        const dbPath = summariesDb()
+        const db = new DatabaseSync(dbPath)
+        db.prepare('DELETE FROM conversation_summaries WHERE conversation_id = ?').run(sessionId)
+        try {
+          db.prepare('DELETE FROM conversations_fts WHERE conversation_id = ?').run(sessionId)
+        } catch {}
+        db.close()
+      } catch {}
     }
   }
 }
