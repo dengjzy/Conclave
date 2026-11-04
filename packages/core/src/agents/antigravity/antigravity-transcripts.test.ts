@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -70,5 +70,51 @@ describe('antigravityTranscripts', () => {
     expect(parseAntigravityWorkspace('["file:///home/user/workspace/%E5%B7%A5%E4%BD%9C%E5%8F%B0"]')).toBe('/home/user/workspace/工作台')
     expect(parseAntigravityWorkspace('')).toBeNull()
     expect(parseAntigravityWorkspace('[]')).toBeNull()
+  })
+
+  it('cleans up brain directory, individual conversation db and summaries db rows on delete', async () => {
+    const sessionId = '33333333-3333-3333-3333-333333333333'
+    createSession(sessionId, 'Session to delete')
+
+    // Create individual conversation sqlite db in ~/.gemini/antigravity/conversations/
+    const convDir = path.join(tempDir, 'conversations')
+    mkdirSync(convDir, { recursive: true })
+    const singleDbPath = path.join(convDir, `${sessionId}.db`)
+    writeFileSync(singleDbPath, 'dummy sqlite db content')
+
+    // Populate conversation_summaries.db
+    const db = new DatabaseSync(dbFile)
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS conversation_summaries (
+        conversation_id TEXT PRIMARY KEY,
+        workspace_uris TEXT,
+        project_id TEXT,
+        title TEXT
+      );
+      CREATE TABLE IF NOT EXISTS conversations_fts (
+        conversation_id TEXT,
+        title TEXT
+      );
+    `)
+    db.prepare('INSERT INTO conversation_summaries (conversation_id, workspace_uris, project_id, title) VALUES (?, ?, ?, ?)')
+      .run(sessionId, '[]', 'p1', 'To Delete')
+    db.prepare('INSERT INTO conversations_fts (conversation_id, title) VALUES (?, ?)')
+      .run(sessionId, 'To Delete')
+    db.close()
+
+    const transcripts = antigravityTranscripts(() => brainDir, () => dbFile)
+    const transcriptFile = path.join(brainDir, sessionId, '.system_generated', 'logs', 'transcript.jsonl')
+    await transcripts.delete?.(transcriptFile)
+
+    // Verify brain dir deleted
+    expect(existsSync(path.join(brainDir, sessionId))).toBe(false)
+    // Verify individual db deleted
+    expect(existsSync(singleDbPath)).toBe(false)
+
+    // Verify row removed from summaries db
+    const checkDb = new DatabaseSync(dbFile, { readOnly: true })
+    const row = checkDb.prepare('SELECT count(*) as count FROM conversation_summaries WHERE conversation_id = ?').get(sessionId) as { count: number }
+    expect(row.count).toBe(0)
+    checkDb.close()
   })
 })
