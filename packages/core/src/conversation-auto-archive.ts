@@ -15,7 +15,8 @@ export class ConversationAutoArchive {
     private readonly days: () => number | null,
     private readonly idleSince: (before: number) => string[],
     private readonly archive: (id: string) => Promise<unknown>,
-    private readonly now: () => number = Date.now
+    private readonly now: () => number = Date.now,
+    private readonly maintenance?: (retentionMs: number) => void
   ) {}
 
   start(): void {
@@ -38,15 +39,22 @@ export class ConversationAutoArchive {
 
   private async run(): Promise<number> {
     const days = this.days()
-    if (days === null) return 0
     let archived = 0
-    for (const id of this.idleSince(this.now() - days * DAY_MS)) {
-      try {
-        await this.archive(id)
-        archived++
-      } catch {
-        // Busy, launching or gone since the query: the next sweep looks again.
+    if (days !== null) {
+      for (const id of this.idleSince(this.now() - days * DAY_MS)) {
+        try {
+          await this.archive(id)
+          archived++
+        } catch {
+          // Busy, launching or gone since the query: the next sweep looks again.
+        }
       }
+    }
+    const retentionDays = days ?? 60
+    try {
+      this.maintenance?.(retentionDays * DAY_MS)
+    } catch (error) {
+      console.error('[conclave-core] database maintenance failed:', error)
     }
     return archived
   }

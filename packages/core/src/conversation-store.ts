@@ -398,4 +398,42 @@ export class ConversationStore {
   removeSessionImport(agent: AgentKind, sessionId: string): void {
     this.db.prepare('DELETE FROM session_imports WHERE agent = ? AND provider_session_id = ?').run(agent, sessionId)
   }
+
+  pruneArchivedMessages(archivedBefore: number, maxChars = 4000): number {
+    const rows = this.db.prepare(`
+      SELECT m.sequence, m.text FROM conversation_messages m
+      JOIN conversations c ON c.id = m.conversation_id
+      WHERE c.archived_at IS NOT NULL AND c.archived_at <= ?
+      AND length(m.text) > ?
+    `).all(archivedBefore, maxChars) as Array<{ sequence: number; text: string }>
+
+    if (!rows.length) return 0
+
+    const update = this.db.prepare('UPDATE conversation_messages SET text = ? WHERE sequence = ?')
+    let pruned = 0
+    for (const row of rows) {
+      const truncated = row.text.slice(0, maxChars) + '\n\n[超期归档输出已精简]'
+      update.run(truncated, row.sequence)
+      pruned++
+    }
+    return pruned
+  }
+
+  pruneFinishedRoutines(settledBefore: number): number {
+    try {
+      const result = this.db.prepare(`
+        DELETE FROM scheduled_runs
+        WHERE routine_id IS NOT NULL AND finished_at IS NOT NULL AND finished_at <= ?
+      `).run(settledBefore)
+      return Number(result.changes)
+    } catch {
+      return 0
+    }
+  }
+
+  optimizeDatabase(): void {
+    try {
+      this.db.exec('PRAGMA optimize')
+    } catch {}
+  }
 }

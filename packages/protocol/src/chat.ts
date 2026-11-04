@@ -59,8 +59,8 @@ export const ChatSettings = z.object({
 export type ChatSettings = z.infer<typeof ChatSettings>
 
 // The idle spans a client offers for auto-archiving, and the one it starts on.
-export const AUTO_ARCHIVE_DAYS = [7, 14, 30, 60, 90] as const
-export const DEFAULT_AUTO_ARCHIVE_DAYS = 30
+export const AUTO_ARCHIVE_DAYS = [14, 30, 60, 90, 180] as const
+export const DEFAULT_AUTO_ARCHIVE_DAYS = 60
 
 // interrupted: the user stopped the turn while the call ran.
 export const ChatToolStatus = z.enum(['running', 'done', 'failed', 'denied', 'interrupted'])

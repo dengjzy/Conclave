@@ -422,7 +422,14 @@ usage.onManualRefresh(() => void announcements.refresh())
 const autoArchive = new ConversationAutoArchive(
   () => chatSettings.current().autoArchiveDays,
   (before) => conversationsStore.idleSince(before),
-  (id) => conversations.setArchived(id, true)
+  (id) => conversations.setArchived(id, true),
+  Date.now,
+  (retentionMs) => {
+    const cutoff = Date.now() - retentionMs
+    conversationsStore.pruneArchivedMessages(cutoff)
+    conversationsStore.pruneFinishedRoutines(cutoff)
+    conversationsStore.optimizeDatabase()
+  }
 )
 // Before the daemon connects: a chat stage it still runs is taken back with these settings.
 const skills = new SkillsLibrary(paths.skills, (repos) => server?.broadcast('skills.changed', { repos: [...repos] }), { legacySkills: () => knowledgeBaseSkills(chatSettings.current().knowledgeBase ?? null) })
