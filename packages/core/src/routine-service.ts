@@ -147,7 +147,10 @@ export class RoutineService {
     const usage = this.deps.usage.list()
     // One that says it is signed out has no quota to run on, however long the others wait.
     const signedOut = (agent: AgentKind) => usage.some((reading) => reading.agent === agent && reading.status === 'signed-out')
-    const agents = AGENT_KINDS.filter((agent) => agentDescriptor(agent).capabilities.unattended && adapterOf(agent).usage !== undefined && !signedOut(agent))
+    const agents = AGENT_KINDS.filter((agent) => {
+      const adapter = adapterOf(agent)
+      return agentDescriptor(agent).capabilities.unattended && adapter.usage !== undefined && adapter.usageKind !== 'balance' && !signedOut(agent)
+    })
     return rankAgents(usage, agents, this.now())[0] ?? 'claude'
   }
 

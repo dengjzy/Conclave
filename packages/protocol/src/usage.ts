@@ -21,8 +21,20 @@ export const UsageWindow = z.object({
 })
 export type UsageWindow = z.infer<typeof UsageWindow>
 
+// Money held by one provider account; it has no percentage cap or reset window.
+export const UsageBalance = z.object({
+  id: z.string(),
+  name: z.string(),
+  currency: z.enum(['CNY', 'USD']),
+  total: z.number().finite(),
+  granted: z.number().finite(),
+  toppedUp: z.number().finite(),
+  available: z.boolean()
+})
+export type UsageBalance = z.infer<typeof UsageBalance>
+
 // ok: fresh numbers · signed-out: no local credentials for this agent
-// error: the last refresh failed; `windows` keeps the previous numbers, now stale
+// error: the last refresh failed; windows and balances keep the previous numbers, now stale
 export const UsageStatus = z.enum(['ok', 'signed-out', 'error'])
 export type UsageStatus = z.infer<typeof UsageStatus>
 
@@ -80,6 +92,7 @@ export const AgentUsage = z.object({
   account: z.string().optional(),
   status: UsageStatus,
   windows: z.array(UsageWindow),
+  balances: z.array(UsageBalance).optional(),
   plan: z.string().nullable(),
   // Stable code the UI can localize, e.g. 'auth-expired'.
   error: z.string().nullable(),

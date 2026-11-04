@@ -22,7 +22,7 @@ export const dsh: AgentDescriptor = {
     signIn: '在 DSH 中配置模型服务商，或在 Conclave 的服务商设置中添加 API Key',
     outdated: { status: '需要 DSH 0.2.1-rc.2', hint: '，请安装 0.2.1-rc.2' }
   },
-  usageWhere: '在所用模型服务商处查看',
+  usageWhere: 'DeepSeek 官方余额可在底部状态栏查看；其他服务商请到对应平台查看',
   translations: { en: {
     modes: {
       ask: { label: 'Default', description: 'Edit and run commands in project sandboxes; ask before widening permissions' },
@@ -37,6 +37,6 @@ export const dsh: AgentDescriptor = {
       signIn: 'Configure a model provider in DSH, or add an API key in Conclave provider settings',
       outdated: { status: 'Requires DSH 0.2.1-rc.2', hint: '; install 0.2.1-rc.2' }
     },
-    usageWhere: 'Check with your model provider'
+    usageWhere: 'DeepSeek API balances appear in the status bar; check other providers on their own platforms'
   } }
 }

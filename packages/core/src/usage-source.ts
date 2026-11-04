@@ -1,5 +1,6 @@
-import type { ResetCreditOutcome, ResetCredits, UsageWindow } from '@conclave/protocol'
+import type { ResetCreditOutcome, ResetCredits, UsageBalance, UsageWindow } from '@conclave/protocol'
 import { ProxyAgent } from 'undici'
+import type { ResolvedModelProvider } from './model-providers'
 
 export function getProxyDispatcher(): ProxyAgent | undefined {
   const proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.ALL_PROXY || 'http://127.0.0.1:7897'
@@ -12,10 +13,10 @@ export function getProxyDispatcher(): ProxyAgent | undefined {
 
 export type UsageReading =
   | { signedIn: false }
-  | { signedIn: true; windows: UsageWindow[]; plan: string | null; resetCredits?: ResetCredits | null }
+  | { signedIn: true; windows: UsageWindow[]; balances?: UsageBalance[]; plan: string | null; resetCredits?: ResetCredits | null }
 
 // home: an account's own folder (AccountSupport); without one, the user's.
-export type UsageSource = (home?: string) => Promise<UsageReading>
+export type UsageSource = (home?: string, providers?: readonly ResolvedModelProvider[]) => Promise<UsageReading>
 
 // Spends one usage reset, the one `creditId` names if given, under an id the service uses to spend
 // it at most once.
@@ -37,7 +38,7 @@ export function mergeUsageReports(earlier: UsageReport | null, later: UsageRepor
   }
 }
 
-export type UsageFailure = 'auth-expired' | 'request-failed'
+export type UsageFailure = 'auth-expired' | 'api-key-rejected' | 'request-failed'
 
 export class UsageFetchError extends Error {
   constructor(

@@ -312,6 +312,11 @@ describe('RoutineService', () => {
     // One signed out cannot run it, ahead of one used up or not.
     usage = [signedOut('claude'), exhausted('codex', clock + HOUR), signedOut('zcode'), signedOut('gemini')]
     expect(routines.pickAgent(auto)).toBe('codex')
+    // A provider's prepaid money says nothing about the agent's subscription windows.
+    usage.push({ agent: 'dsh', status: 'ok', plan: null, error: null, updatedAt: clock, resetCredits: null, windows: [], balances: [
+      { id: 'deepseek:CNY', name: 'DeepSeek', currency: 'CNY', total: 100, granted: 0, toppedUp: 100, available: true }
+    ] })
+    expect(routines.pickAgent(auto)).toBe('codex')
   })
 
   it("spends quota about to go unused first for an 'auto' routine", () => {

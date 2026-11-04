@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import type { AgentUsage, ResetCreditOutcome, UsageWindow } from '@conclave/protocol'
+import type { AgentUsage, ResetCreditOutcome, UsageBalance, UsageWindow } from '@conclave/protocol'
 import { readableUsage, UsageService } from './usage-service'
 import { UsageFetchError, type UsageReading } from './usage-source'
 
 const window: UsageWindow = { kind: 'session', model: null, usedPercent: 40, windowMinutes: 300, resetsAt: null }
+const balance: UsageBalance = { id: 'deepseek', name: 'DeepSeek', currency: 'CNY', total: 12.5, granted: 2.5, toppedUp: 10, available: true }
 
 function setup(claude: () => Promise<UsageReading>) {
   let now = 1_000_000
@@ -68,6 +69,55 @@ describe('UsageService', () => {
     })
     const [claude] = await service.refresh()
     expect(claude).toMatchObject({ status: 'error', error: 'request-failed', windows: [] })
+  })
+})
+
+describe('UsageService balances', () => {
+  it('refreshes monetary balances with their reading time without inventing windows', async () => {
+    let total = balance.total
+    const { service, events, advance } = setup(async () => ({ signedIn: true, windows: [], balances: [{ ...balance, total }], plan: null }))
+    await service.refresh()
+    expect(events.find((entry) => entry.agent === 'claude')).toMatchObject({ status: 'ok', windows: [], balances: [balance], updatedAt: 1_000_000 })
+    total = 11
+    advance(30_000)
+    const [reading] = await service.refresh()
+    expect(reading).toMatchObject({ status: 'ok', windows: [], balances: [{ ...balance, total: 11 }], updatedAt: 1_030_000 })
+  })
+
+  it('preserves balances and their reading time after a failed refresh', async () => {
+    let fail = false
+    const { service, advance } = setup(async () => {
+      if (fail) throw new UsageFetchError('request-failed', 'offline')
+      return { signedIn: true, windows: [], balances: [balance], plan: null }
+    })
+    await service.refresh()
+    fail = true
+    advance(30_000)
+    const [reading] = await service.refresh()
+    expect(reading).toMatchObject({ status: 'error', error: 'request-failed', balances: [balance], updatedAt: 1_000_000 })
+  })
+
+  it.each([
+    { signedIn: false },
+    { signedIn: true, windows: [], plan: null }
+  ] satisfies UsageReading[])('drops old balances when the next reading is %o', async (next) => {
+    let reading: UsageReading = { signedIn: true, windows: [], balances: [balance], plan: null }
+    const { service, advance } = setup(async () => reading)
+    await service.refresh()
+    reading = next
+    advance(30_000)
+    const [updated] = await service.refresh()
+    expect(updated).not.toHaveProperty('balances')
+    expect(updated?.updatedAt).toBe(1_030_000)
+  })
+
+  it('retains balances when an agent reports updated windows', async () => {
+    const { service, events } = setup(async () => ({ signedIn: true, windows: [], balances: [balance], plan: null }))
+    await service.refresh()
+    events.length = 0
+    service.report('claude', 'default', { at: 1_004_000, windows: [window] })
+    expect(events).toEqual([expect.objectContaining({ status: 'ok', windows: [window], balances: [balance], updatedAt: 1_004_000 })])
+    expect(service.list().find((entry) => entry.agent === 'claude')?.balances).toEqual([balance])
   })
 })
 

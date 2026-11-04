@@ -1,7 +1,7 @@
 import { quotaVerdict, usageLevel, type AgentUsage } from '@conclave/protocol'
 import { t } from '../i18n'
 import { usePreferences } from '../preferences'
-import { percentText, resetText, shownPercent, useNow, windowLabel } from '../usage-format'
+import { formatBalance, percentText, resetText, shownPercent, useNow, windowLabel } from '../usage-format'
 
 export function SettingsQuotaReadout({ usage }: { usage: AgentUsage | undefined }) {
   const display = usePreferences((s) => s.usageDisplay)
@@ -27,9 +27,16 @@ export function SettingsQuotaReadout({ usage }: { usage: AgentUsage | undefined 
           </div>
         )
       })}
-      {usage.status === 'error' ? <span className="settings-quota-note" data-problem>{usage.error === 'auth-expired' ? t('SettingsPage.quotaAuthExpired') : t('SettingsPage.quotaRefreshFailed')}</span>
+      {usage.balances?.map((balance) => (
+        <div className="settings-quota-balance" key={`${balance.id}-${balance.currency}`}>
+          <span>{balance.name}</span>
+          <span className="settings-quota-value">{t('UsageBar.balanceRemaining', { value1: formatBalance(balance.total, balance.currency) })}</span>
+          {!balance.available && <span className="settings-quota-note" data-problem>{t('UsageBar.balanceUnavailable')}</span>}
+        </div>
+      ))}
+      {usage.status === 'error' ? <span className="settings-quota-note" data-problem>{usage.error === 'api-key-rejected' ? t('UsageBar.apiKeyRejected') : usage.error === 'auth-expired' ? t('SettingsPage.quotaAuthExpired') : t('SettingsPage.quotaRefreshFailed')}</span>
         : stale ? <span className="settings-quota-note">{t('AgentQuota.mayBeOutdated')}</span>
-          : windows.length === 0 ? <span className="settings-quota-note">{t('AgentAccounts.noUsage')}</span> : null}
+          : windows.length === 0 && !usage.balances?.length ? <span className="settings-quota-note">{t('AgentAccounts.noUsage')}</span> : null}
     </div>
   )
 }

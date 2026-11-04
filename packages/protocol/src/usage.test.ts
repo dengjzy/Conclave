@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { LEGACY_USAGE_WINDOW_KINDS, QUOTA_STALE_MS, quotaVerdict, tightestWindow, usageLevel, usageReadable, type AgentUsage, type UsageWindow } from './usage'
+import { AgentUsage, LEGACY_USAGE_WINDOW_KINDS, QUOTA_STALE_MS, UsageBalance, quotaVerdict, tightestWindow, usageLevel, usageReadable, type UsageWindow } from './usage'
 
 const window = (usedPercent: number, extra: Partial<UsageWindow> = {}): UsageWindow => ({
   kind: 'weekly',
@@ -11,6 +11,7 @@ const window = (usedPercent: number, extra: Partial<UsageWindow> = {}): UsageWin
 })
 
 const NOW = 1_790_000_000_000
+const balance: UsageBalance = { id: 'deepseek', name: 'DeepSeek', currency: 'CNY', total: 12.5, granted: 2.5, toppedUp: 10, available: true }
 
 const usage = (windows: UsageWindow[], extra: Partial<AgentUsage> = {}): AgentUsage => ({
   agent: 'claude',
@@ -21,6 +22,27 @@ const usage = (windows: UsageWindow[], extra: Partial<AgentUsage> = {}): AgentUs
   updatedAt: NOW,
   resetCredits: null,
   ...extra
+})
+
+describe('AgentUsage balances', () => {
+  it('accepts older readings without balances and adds balances without changing windows', () => {
+    const legacy = usage([window(20)])
+    expect(AgentUsage.parse(legacy)).toEqual(legacy)
+    const reading = usage([], { balances: [balance] })
+    expect(AgentUsage.parse(reading)).toEqual(reading)
+    expect(AgentUsage.omit({ balances: true }).parse(reading)).toEqual(usage([]))
+    expect(usageReadable(new Set(LEGACY_USAGE_WINDOW_KINDS), reading)).toBe(true)
+  })
+
+  it('keeps negative balances reported by a provider', () => {
+    expect(UsageBalance.parse({ ...balance, total: -0.25, toppedUp: -2.75 })).toMatchObject({ total: -0.25, toppedUp: -2.75 })
+  })
+
+  it.each(['total', 'granted', 'toppedUp'] as const)('rejects non-finite %s amounts', (field) => {
+    for (const amount of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      expect(UsageBalance.safeParse({ ...balance, [field]: amount }).success).toBe(false)
+    }
+  })
 })
 
 describe('usageLevel', () => {
@@ -48,6 +70,12 @@ describe('quotaVerdict', () => {
     expect(quotaVerdict(undefined, NOW)).toEqual({ state: 'unknown', window: null, stale: false })
     expect(quotaVerdict(usage([], { status: 'signed-out' }), NOW).state).toBe('unknown')
     expect(quotaVerdict(usage([]), NOW).state).toBe('unknown')
+  })
+
+  it('does not judge agent quota from provider balances, even when one is exhausted', () => {
+    const balances = [balance, { ...balance, id: 'empty-provider', total: -0.25, available: false }]
+    expect(quotaVerdict(usage([], { balances }), NOW)).toEqual({ state: 'unknown', window: null, stale: false })
+    expect(quotaVerdict(usage([window(20)], { balances }), NOW).state).toBe('ok')
   })
 
   it('goes by the tightest window: tight from 80%, exhausted at the cap', () => {

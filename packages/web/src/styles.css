@@ -3692,6 +3692,7 @@ div.inspector-empty > p { margin: 0 0 8px; }
 }
 
 .usage-segment[data-stale] .usage-window,
+.usage-segment[data-stale] .usage-balance,
 .usage-segment[data-stale] .usage-meter {
   opacity: 0.55;
 }
@@ -3721,6 +3722,34 @@ div.inspector-empty > p { margin: 0 0 8px; }
 
 .usage-card-title {
   font-weight: 600;
+}
+
+.usage-card-balance {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.usage-card-balance-total,
+.usage-card-balance-breakdown {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-card-balance-total {
+  font-weight: 600;
+}
+
+.usage-card-balance-breakdown {
+  color: var(--text-muted);
+}
+
+.usage-card-balance-warning {
+  color: var(--warning);
 }
 
 .usage-card-row {

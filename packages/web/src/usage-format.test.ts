@@ -1,8 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentUsage, UsageWindow } from '@conclave/protocol'
-import { spendNote, windowLabel } from './usage-format'
+import { formatBalance, spendNote, windowLabel } from './usage-format'
 
 const window = (kind: UsageWindow['kind'], model: string | null = null): UsageWindow => ({ kind, model, usedPercent: 9, windowMinutes: 1, resetsAt: null })
+
+describe('formatBalance', () => {
+  it('distinguishes currencies and preserves small nonzero balances', () => {
+    expect(formatBalance(0, 'CNY')).toBe('¥0.00')
+    expect(formatBalance(12.5, 'USD')).toBe('$12.50')
+    expect(formatBalance(0.0001, 'CNY')).toBe('¥0.0001')
+    expect(formatBalance(0.01234, 'USD')).toBe('$0.0123')
+  })
+})
 
 describe('windowLabel', () => {
   it('names each window by its period, and a model-specific one by its model too', () => {

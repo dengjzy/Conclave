@@ -8,6 +8,21 @@ npm install -g @deepseek-ai/dsh@0.2.1-rc.2
 
 DSH 可沿用自己的服务商配置，也能选择 Conclave 设置里的服务商。后者支持 Chat Completions、Responses 和 Anthropic 接口；模型和推理强度以实际目录为准，空闲时可切换。图片支持由 DSH 握手和所选模型决定。回复和思考使用官方 ACP 的已提交语义事件，不伪造逐 token 增量。仅记录实际报告的 token，没有可靠价格时不显示估算费用。
 
+## 底部余额
+
+底部状态栏显示 DeepSeek 官方 API 的剩余余额，悬停或点击可查看赠送与充值余额、最近更新时间并刷新。多个服务商和币种分别显示，不折算为百分比额度。设置 → 用量额度 可控制状态栏显示。
+
+数据来自官方 [`GET /user/balance`](https://api-docs.deepseek.com/api/get-user-balance/)，与社区插件 [`GeekRicardo/dsh-balance`](https://github.com/GeekRicardo/dsh-balance) 的 DeepSeek 余额来源相同。该插件的界面依赖 DSH Web，Conclave 使用自己的状态栏展示，无需额外安装插件；不沿用插件按模型价格和固定汇率估算的会话花费。
+
+core 读取以下凭据，不向界面或日志发送 Key：
+
+- Conclave 服务商中对 DeepSeek Harness 启用、接口位于 `https://api.deepseek.com` 的服务商 Key。
+- DSH 默认 `DEEPSEEK_API_KEY` 引用：依次读取 `$DSH_HOME/.credentials.yaml` 的 `refs`、core 进程环境、`$DSH_HOME/.env`；同一 Key 只查询一次。`DSH_HOME` 默认 `~/.dsh`。
+
+这是全局余额，不读取项目 `.env`、自定义凭据引用或执行 Cordis 配置。第三方中转、其他厂商套餐和 DSH 账号登录额度不在此接口的范围内。服务商使用自定义引用时，可将官方 API Key 添加到 Conclave 的服务商设置并启用 DeepSeek Harness。
+
+余额随用量服务每 15 分钟刷新，也在 Agent 退出或手动刷新时更新（两次全量刷新至少间隔 30 秒）。刷新失败时保留最近一次完整读数并标记过期；没有读数时不显示虚构余额。接口仅提供金额，不参与自动选择 Agent、百分比预警或额度重置预测。
+
 ## 专用 profile 与分发
 
 `packages/dsh-runtime` 是随 Conclave 提供的 DSH 插件，不需要发布到 npm。`scripts/build-plugins.mjs` 构建并打包它；桌面后端打包时将 tarball 放入 `plugins/dsh/runtime.tgz`。

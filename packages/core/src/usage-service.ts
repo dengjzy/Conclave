@@ -155,6 +155,7 @@ export class UsageService {
         account,
         status: 'ok',
         windows: [...(previous?.windows ?? []).filter((window) => !named(window)), ...report.windows],
+        ...(previous?.balances === undefined ? {} : { balances: previous.balances }),
         plan: report.plan ?? previous?.plan ?? null,
         error: null,
         updatedAt: report.at,
@@ -187,6 +188,7 @@ export class UsageService {
             account,
             status: 'ok',
             windows: reading.windows,
+            ...(reading.balances === undefined ? {} : { balances: reading.balances }),
             plan: reading.plan,
             error: null,
             updatedAt: this.now(),
@@ -201,9 +203,10 @@ export class UsageService {
         account,
         status: 'error',
         windows: previous?.windows ?? [],
+        ...(previous?.balances === undefined ? {} : { balances: previous.balances }),
         plan: previous?.plan ?? null,
         error: error instanceof UsageFetchError ? error.code : 'request-failed',
-        // Keep when the windows were really read, so the UI can tell how stale they are.
+        // Keep when the numbers were really read, so the UI can tell how stale they are.
         updatedAt: previous?.updatedAt ?? this.now(),
         resetCredits: previous?.resetCredits ?? null
       }

@@ -37,4 +37,16 @@ describe('settings quota readings', () => {
     expect(html).toContain('即将重置')
     expect(html).not.toContain('<meter')
   })
+  it('shows balance-only readings without the empty-quota hint or a fabricated meter', () => {
+    const value: AgentUsage = { ...usage, agent: 'dsh', windows: [], balances: [{ id: 'deepseek', name: 'DeepSeek', currency: 'CNY', total: 0, granted: 0, toppedUp: 0, available: false }] }
+    const html = render(value)
+    expect(html).toContain('DeepSeek')
+    expect(html).toContain('余额 ¥0.00')
+    expect(html).toContain('余额不足，暂时无法调用')
+    expect(html).not.toContain('还没有额度数据')
+    expect(html).not.toContain('<meter')
+    expect(render({ ...value, status: 'error', error: 'network' })).toContain('刷新失败')
+    expect(render({ ...value, status: 'error', error: 'api-key-rejected' })).toContain('API Key 无效或已失效，请检查服务商或智能体中的 Key')
+    expect(render({ ...value, updatedAt: now - 31 * 60_000 })).toContain('可能已过时')
+  })
 })

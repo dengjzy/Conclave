@@ -1,6 +1,6 @@
 import { getLocale, localized, t } from './i18n'
 import { useEffect, useState } from 'react'
-import { tightestWindow, type AgentUsage, type GlobalResets, type ResetCreditOutcome, type UsageWindow } from '@conclave/protocol'
+import { tightestWindow, type AgentUsage, type GlobalResets, type ResetCreditOutcome, type UsageBalance, type UsageWindow } from '@conclave/protocol'
 import type { Preferences } from './preferences'
 
 // How usage numbers read wherever they show: the status bar, and next to an agent being picked.
@@ -64,6 +64,10 @@ export function shownPercent(window: UsageWindow, display: Preferences['usageDis
 export function percentText(window: UsageWindow, display: Preferences['usageDisplay']): string {
   const value = Math.round(shownPercent(window, display))
   return display === 'remaining' ? t('usageFormat.remaining', { value: value }) : `${value}%`
+}
+
+export function formatBalance(value: number, currency: UsageBalance['currency']): string {
+  return new Intl.NumberFormat(getLocale(), { style: 'currency', currency, currencyDisplay: 'narrowSymbol', minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(value)
 }
 
 export function clearsText(clears: readonly UsageWindow['kind'][]): string {

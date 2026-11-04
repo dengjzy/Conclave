@@ -27,12 +27,13 @@ import { useInstalledAgents } from '../installed-agents'
 import { agentLabel } from '../labels'
 import { usePreferences } from '../preferences'
 import { adviceText, alternativeAgent, paceText } from '../quota-advice-text'
-import { clearsText, formatClock, formatDuration, globalResetText, percentText, resetText, shownPercent, SPEND_OUTCOME_TEXT, spendNote, useNow, windowLabel } from '../usage-format'
+import { clearsText, formatBalance, formatClock, formatDuration, globalResetText, percentText, resetText, shownPercent, SPEND_OUTCOME_TEXT, spendNote, useNow, windowLabel } from '../usage-format'
 import { AgentIcon, CheckIcon, InfoIcon } from './icons'
 import { Spinner } from './Spinner'
 import { forecastRunsOut, useQuotaForecasts } from '../quota-forecast'
 
 function errorText(usage: AgentUsage): string {
+  if (usage.error === 'api-key-rejected') return t('UsageBar.apiKeyRejected')
   return usage.error === 'auth-expired'
     ? t('UsageBar.signInCredentialsExpiredRunToRefresh', { value1: agentDescriptor(usage.agent).cli })
     : t('UsageBar.failedToLoadRetriesAutomatically')
@@ -261,7 +262,7 @@ const CARD_HIDE_DELAY_MS = 200
 
 // Every window in full, above the segment. Rendered into <body> at a fixed position: inside the
 // status bar it would be clipped, and a button may not contain it.
-function UsageCard({ usage, accounts, accountLabel, now, advice, alternative, showPace, anchor, id, cardRef, onEnter, onLeave, onRefresh, refreshing, spending, onSpend, onSpendingChange }: {
+export function UsageCard({ usage, accounts, accountLabel, now, advice, alternative, showPace, anchor, id, cardRef, onEnter, onLeave, onRefresh, refreshing, spending, onSpend, onSpendingChange }: {
   usage: AgentUsage
   // The agent's accounts, where it has more than one to switch between; the shown one's name.
   accounts: readonly AgentAccount[]
@@ -287,7 +288,7 @@ function UsageCard({ usage, accounts, accountLabel, now, advice, alternative, sh
   const bottom = window.innerHeight - anchor.top + 6
   const footer =
     usage.status === 'error'
-      ? `${errorText(usage)}${usage.windows.length > 0 ? t('UsageBar.dataAsOf', { value1: formatClock(usage.updatedAt, now) }) : ''}`
+      ? `${errorText(usage)}${usage.windows.length > 0 || usage.balances?.length ? t('UsageBar.dataAsOf', { value1: formatClock(usage.updatedAt, now) }) : ''}`
       : t('UsageBar.updatedAgo', { value1: formatDuration(now - usage.updatedAt) })
   return (
     <div
@@ -331,6 +332,19 @@ function UsageCard({ usage, accounts, accountLabel, now, advice, alternative, sh
           </div>
         )
       })}
+      {usage.balances?.map((balance) => (
+        <div key={`${balance.id}-${balance.currency}`} className="usage-card-balance">
+          <div className="usage-card-balance-total">
+            <span>{balance.name} ({balance.currency})</span>
+            <span>{t('UsageBar.balanceRemaining', { value1: formatBalance(balance.total, balance.currency) })}</span>
+          </div>
+          <div className="usage-card-balance-breakdown">
+            <span>{t('UsageBar.balanceGranted', { value1: formatBalance(balance.granted, balance.currency) })}</span>
+            <span>{t('UsageBar.balanceToppedUp', { value1: formatBalance(balance.toppedUp, balance.currency) })}</span>
+          </div>
+          {!balance.available && <span className="usage-card-balance-warning">{t('UsageBar.balanceUnavailable')}</span>}
+        </div>
+      ))}
       {advice.length > 0 && <AdviceList advice={advice} now={now} alternative={alternative} />}
       {usage.resetCredits && (usage.resetCredits.available > 0 || usage.resetCredits.blockedBy || spending) && (
         <ResetCreditList usage={usage} credits={usage.resetCredits} now={now} spending={spending} onSpend={onSpend} onChange={onSpendingChange} />
@@ -481,6 +495,14 @@ function UsageSegment({ usage, now }: { usage: AgentUsage; now: number }) {
           <span key={`${window.kind}-${window.model}`} className="usage-window" data-level={usageLevel(window.usedPercent)}>
             {index > 0 && <span className="usage-separator">·</span>}
             {windowLabel(window)} {percentText(window, display)}
+          </span>
+        ))}
+        {usage.balances?.map((balance, index) => (
+          <span key={`${balance.id}-${balance.currency}`} className="usage-balance">
+            {(index > 0 || windows.length > 0) && <span className="usage-separator">·</span>}
+            {usage.balances && usage.balances.length > 1 && `${balance.name} `}
+            {t('UsageBar.balanceRemaining', { value1: formatBalance(balance.total, balance.currency) })}
+            {!balance.available && <span className="usage-stale" role="img" aria-label={t('UsageBar.balanceUnavailable')}> ⚠</span>}
           </span>
         ))}
         {usage.resetCredits && usage.resetCredits.available > 0 && (

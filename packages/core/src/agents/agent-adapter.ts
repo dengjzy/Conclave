@@ -118,6 +118,8 @@ export interface AgentAdapter {
   detect?(pathEnv: string, platform: NodeJS.Platform): Promise<AgentDetection>
   signedIn?(home?: string): Promise<boolean>
   readonly usage?: UsageSource
+  // Existing readers report quota windows; monetary balances cannot select an agent for a routine.
+  readonly usageKind?: 'quota' | 'balance'
   readonly accounts?: AccountSupport
   // Spends one of the usage resets its reading reports, without the agent's own app.
   readonly useResetCredit?: ResetCreditUse

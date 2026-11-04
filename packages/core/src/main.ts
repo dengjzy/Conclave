@@ -241,7 +241,10 @@ for (const kind of AGENT_KINDS) {
   if (source) usageSources[kind] = async (home) => {
     const account = accounts.homes().find((entry) => entry.agent === kind && entry.home === home)
     if (account) await accounts.refreshIdentity(kind, account.id)
-    return source(home)
+    return source(home, modelProviders.list().filter((provider) => provider.agents.includes(kind)).flatMap((provider) => {
+      const resolved = modelProviders.resolve(provider.id)
+      return resolved ? [resolved] : []
+    }))
   }
   if (adapter.useResetCredit) resetCreditUses[kind] = adapter.useResetCredit
   const check = adapter.signedIn

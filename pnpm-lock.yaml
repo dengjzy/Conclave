@@ -223,6 +223,9 @@ importers:
       ws:
         specifier: 'catalog:'
         version: 8.21.3
+      yaml:
+        specifier: 2.9.1
+        version: 2.9.1
       yauzl:
         specifier: 3.2.0
         version: 3.2.0
@@ -382,9 +385,6 @@ importers:
         specifier: 'catalog:'
         version: 1.63.0
     devDependencies:
-      '@conclave/protocol':
-        specifier: workspace:*
-        version: link:../protocol
       '@codemirror/commands':
         specifier: 6.11.1
         version: 6.11.1
@@ -406,6 +406,9 @@ importers:
       '@codemirror/view':
         specifier: 6.43.13
         version: 6.43.13
+      '@conclave/protocol':
+        specifier: workspace:*
+        version: link:../protocol
       '@lezer/common':
         specifier: 1.5.2
         version: 1.5.2

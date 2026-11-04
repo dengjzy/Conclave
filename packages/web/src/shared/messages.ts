@@ -9462,6 +9462,26 @@ export const MESSAGES = {
     "zh": "读取失败，稍后自动重试",
     "en": "Failed to load; retries automatically"
   },
+  "UsageBar.apiKeyRejected": {
+    "zh": "API Key 无效或已失效，请检查服务商或智能体中的 Key",
+    "en": "API key is invalid or expired. Check the key in your provider or agent settings."
+  },
+  "UsageBar.balanceRemaining": {
+    "zh": "余额 {value1}",
+    "en": "{value1} remaining"
+  },
+  "UsageBar.balanceGranted": {
+    "zh": "赠送 {value1}",
+    "en": "Granted {value1}"
+  },
+  "UsageBar.balanceToppedUp": {
+    "zh": "充值 {value1}",
+    "en": "Topped up {value1}"
+  },
+  "UsageBar.balanceUnavailable": {
+    "zh": "余额不足，暂时无法调用",
+    "en": "Insufficient balance; API calls unavailable"
+  },
   "UsageBar.noExpirationDate": {
     "zh": "没有过期时间",
     "en": "No expiration date"

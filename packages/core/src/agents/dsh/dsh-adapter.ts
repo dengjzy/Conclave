@@ -4,12 +4,15 @@ import { AcpDriver } from '../acp/acp-driver'
 import { dshDialect } from './dsh-dialect'
 import { dshCommand, dshProviderModels } from './dsh-command'
 import { detectDsh, dshCatalog, dshInstallation, prepareDsh } from './dsh-cli'
+import { readDshUsage } from './dsh-usage'
 
 export const dsh: AgentAdapter = {
   kind: 'dsh',
   createDriver: (stageId, options) => new AcpDriver(dshDialect, stageId, options),
   command: dshCommand,
   providerModels: dshProviderModels,
+  usage: readDshUsage,
+  usageKind: 'balance',
   permissionModes: DSH_MODES,
   fallbackMode: 'ask',
   session: { preassignedId: false, folderBound: true, nativeFork: 'none' },
