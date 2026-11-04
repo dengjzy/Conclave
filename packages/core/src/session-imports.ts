@@ -74,6 +74,45 @@ export class SessionImports {
     return run
   }
 
+  // Synchronizes external updates for an imported conversation without manual re-import.
+  // Returns true if new stages or entries were appended.
+  sync(conversationId: string): Promise<boolean> {
+    const run = this.queue.catch(() => {}).then(() => this.syncNow(conversationId))
+    this.queue = run
+    return run
+  }
+
+  private async syncNow(conversationId: string): Promise<boolean> {
+    const records = this.store.sessionImports().filter((record) => record.conversationId === conversationId)
+    if (!records.length) return false
+    const conversation = this.conversations.get(conversationId)
+    if (!conversation || conversation.sessionId) return false
+
+    const found = await this.scan()
+    let syncedAny = false
+    for (const record of records) {
+      const summary = found.find((each) => each.agent === record.agent && each.sessionId === record.sessionId)
+      const origin = this.origins.find((each) => each.agent === record.agent)
+      if (!summary || !origin) continue
+      if (!this.updated(summary, record)) continue
+      const transcript = await origin.transcripts.read(summary.file)
+      const added = this.since(transcript, record)
+      const through = transcript.entries.reduce((max, entry) => Math.max(max, entry.at), record.importedThrough)
+      if (added.entries.length) {
+        this.conversations.importStage(record.conversationId, summary.agent, summary.sessionId, added)
+        syncedAny = true
+      }
+      this.store.recordSessionImport({
+        agent: summary.agent,
+        sessionId: summary.sessionId,
+        conversationId: record.conversationId,
+        importedThrough: through,
+        sourceModifiedAt: summary.modifiedAt
+      })
+    }
+    return syncedAny
+  }
+
   // Deletes an external session physically from the agent's underlying local storage,
   // making it disappear from both Conclave and the native agent CLI.
   async deleteSessionSource(agent: AgentKind, sessionId: string): Promise<void> {

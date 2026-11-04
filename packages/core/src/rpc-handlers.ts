@@ -279,6 +279,7 @@ export function createRpcHandlers(
       await imports().deleteSessionSource(agent, sessionId)
       return OK
     },
+    'sessionImports.sync': async ({ conversationId }) => ({ synced: await imports().sync(conversationId) }),
     'modelProviders.list': () => modelProviderStore().list(),
     'modelProviders.save': (input) => modelProviderStore().save(input),
     'modelProviders.remove': async ({ id }) => { await modelProviderStore().remove(id); return OK },
@@ -485,6 +486,7 @@ export function createRpcHandlers(
     // Read after subscribing, so an item that changes in between reaches the client either way.
     'conversations.watchChat': ({ id }, connection) => {
       connection.watching.add(id)
+      void sessionImports?.sync(id).catch(() => {})
       return page(conversations.chatPage(id))
     },
     'conversations.unwatchChat': ({ id }, connection) => { connection.watching.delete(id); return OK },

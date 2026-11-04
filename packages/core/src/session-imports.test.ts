@@ -106,6 +106,27 @@ describe('SessionImports', () => {
     expect(service.stages(imported!.id)).toHaveLength(3)
   })
 
+  it('automatically synchronizes external updates for an imported conversation via sync()', async () => {
+    service.setSessionImports(imports)
+    const [imported] = await imports.import([{ agent: 'claude', sessionId: SESSION }])
+    expect(service.stages(imported!.id)).toHaveLength(1)
+
+    // Simulate external terminal update
+    const later = Date.now() + 60_000
+    transcripts.set(SESSION, joined(turn('u1', 100, 'Fix the build', 'Fixed.'), turn('u2', later, 'New turn from terminal', 'Answered outside')))
+    summaries = [summary(SESSION, { modifiedAt: later + 1 })]
+
+    // sync() pulls the update into the conversation automatically
+    const synced = await imports.sync(imported!.id)
+    expect(synced).toBe(true)
+    const stages = service.stages(imported!.id)
+    expect(stages).toHaveLength(2)
+    expect(service.stageChatItems(imported!.id, stages.at(-1)!.id).flatMap((item) => (item.kind === 'user' ? [item.text] : []))).toEqual(['New turn from terminal'])
+
+    // Calling sync again when up to date returns false
+    expect(await imports.sync(imported!.id)).toBe(false)
+  })
+
   it("leaves out Conclave's own sessions and those in its folders", async () => {
     const own = await service.create('claude', [project])
     const ownSession = service.stages(own.id)[0]!.providerSessionId!

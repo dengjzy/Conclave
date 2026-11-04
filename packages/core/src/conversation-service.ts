@@ -165,8 +165,8 @@ export class ConversationService {
   setGitGuard(guard: (dirs: readonly string[]) => Promise<void>): void { this.gitGuard = guard }
   private worktreeSetup: Pick<WorktreeSetup, 'requireTrusted' | 'setUp'> | null = null
   setWorktreeSetup(setup: Pick<WorktreeSetup, 'requireTrusted' | 'setUp'>): void { this.worktreeSetup = setup }
-  private sessionImports: { purgeImported(conversationId: string): Promise<void> } | null = null
-  setSessionImports(imports: { purgeImported(conversationId: string): Promise<void> }): void { this.sessionImports = imports }
+  private sessionImports: { purgeImported(conversationId: string): Promise<void>; sync(conversationId: string): Promise<boolean> } | null = null
+  setSessionImports(imports: { purgeImported(conversationId: string): Promise<void>; sync(conversationId: string): Promise<boolean> }): void { this.sessionImports = imports }
 
   async recordGitChange(id: string, project: string, branch: string, resetStart: boolean): Promise<void> {
     const conversation = this.get(id)
@@ -1020,6 +1020,7 @@ export class ConversationService {
     if (!this.capacityAvailable(agent)) throw new Rejection('agent-capacity', 'Agent 运行数量已达到上限，请等待其他会话结束，或预约稍后执行')
     this.launching.set(id, agent)
     try {
+      await this.sessionImports?.sync(id).catch(() => {})
       const current = this.get(id)
       await this.gitGuard?.(current.projectPaths)
       this.changed(current)
