@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { type AgentProfile } from '@conclave/protocol'
+import { AgentCall, createRpcClient, type AgentProfile, type RpcConnection } from '@conclave/protocol'
 import { AgentProfileService, delegationSummary } from './agent-profile-service'
 import { AgentProfileStore } from './agent-profile-store'
 import { TaskStore } from './task-store'
@@ -11,6 +11,10 @@ import { ConversationService } from './conversation-service'
 import { ProjectRegistry } from './project-registry'
 import { AttachmentStore } from './attachment-store'
 import { fakeChatDaemon } from './fake-chat-agent'
+import { agentToolsOverCore } from './mcp-agent-tools'
+
+const OPENCODE_REPLY = 'OPENCODE_DELEGATE_SMOKE_OK\n\n<conclave-summary>\n结论：委派冒烟测试通过，按要求仅返回指定字符串。\n改动：无。\n验证：未做（本任务禁止使用工具、编辑文件或运行命令）。\n未解决：无。\n</conclave-summary>'
+const COMPLETE_SUMMARY = '<conclave-summary>\n结论：发现问题\n改动：无\n验证：测试失败\n未解决：需要修复超时\n</conclave-summary>'
 
 describe('reusable agent roles and delegated work', () => {
   let root: string
@@ -24,6 +28,12 @@ describe('reusable agent roles and delegated work', () => {
   let reviewer: AgentProfile
   let parentId: string
   const waitFor = async (check: () => boolean) => { await expect.poll(check, { timeout: 5000 }).toBe(true) }
+  const resultMessages = () => chats.messages(parentId).filter((message) => message.role === 'user' && message.text.startsWith('智能体委派结果（'))
+  const deliveredPayload = (callId: string) => {
+    const item = chats.chatPage(parentId).items.find((each) => each.id === `u:agent-result:${callId}`)
+    if (item?.kind !== 'user') throw new Error(`No delivery for ${callId}`)
+    return JSON.parse(item.text.split('\n')[1] ?? '{}')
+  }
   const complete = (sessionId: string, text = 'verified the change', failed = false) => {
     daemon.emit(sessionId, { type: 'assistant', uuid: `a-${sessionId}-${daemon.writes.length}`, message: { id: `m-${sessionId}-${daemon.writes.length}`, content: [{ type: 'text', text }] }, parent_tool_use_id: null })
     daemon.emit(sessionId, { type: 'result', subtype: failed ? 'error_during_execution' : 'success', is_error: failed, result: text, terminal_reason: failed ? 'error' : 'completed', duration_ms: 5 })
@@ -159,7 +169,7 @@ describe('reusable agent roles and delegated work', () => {
     const first = await profiles.dispatch(parentId, reviewer.id, 'Review one')
     const second = await profiles.dispatch(parentId, reviewer.id, 'Review two')
     await waitFor(() => store.call(first.id).state === 'running' && store.call(second.id).state === 'running')
-    const full = 'Detailed evidence and stack trace\n<conclave-summary>\n结论：发现问题\n改动：无\n验证：测试失败\n未解决：需要修复超时\n</conclave-summary>'
+    const full = `${'Detailed evidence and stack trace\n'.repeat(150)}${COMPLETE_SUMMARY}`
     complete(chats.get(first.conversationId).sessionId!, full)
     await waitFor(() => store.call(first.id).delivered)
     expect(store.call(second.id).state).toBe('running')
@@ -169,6 +179,139 @@ describe('reusable agent roles and delegated work', () => {
     expect(delivered).toContain('需要修复超时')
     expect(delivered).toContain('conclave_agent_status')
     expect(delivered).not.toContain('Detailed evidence and stack trace')
+    const payload = deliveredPayload(first.id)
+    expect(payload).toMatchObject({
+      callId: first.id, ref: null, resultKind: 'summary', resultLength: full.length,
+      result: '结论：发现问题\n改动：无\n验证：测试失败\n未解决：需要修复超时',
+      resultRef: { tool: 'conclave_agent_status', arguments: { callId: first.id } }
+    })
+    const client = createRpcClient((frame) => {
+      const request = JSON.parse(frame)
+      expect(request.method).toBe('agentCalls.list')
+      expect(request.params.id).toBe(parentId)
+      client.receive(JSON.stringify({ jsonrpc: '2.0', id: request.id, result: profiles.calls(request.params.id) }))
+    })
+    const rpc: RpcConnection = { ...client, features: ['agent-profiles'], close: () => {}, closed: new Promise(() => {}) }
+    const status = agentToolsOverCore(async (action) => action(rpc), parentId).find((tool) => tool.spec.name === payload.resultRef.tool)!
+    const response = await status.run(payload.resultRef.arguments)
+    expect(response.isError).toBe(false)
+    const retrieved = AgentCall.parse(JSON.parse(response.content[0]?.text ?? 'null'))
+    expect(retrieved.id).toBe(first.id)
+    expect(retrieved.result).toBe(full)
+    expect(retrieved.result).toHaveLength(payload.resultLength)
+    expect(retrieved.result).toContain('Detailed evidence and stack trace')
+    expect(response.content[0]?.text).not.toContain(second.id)
+  })
+
+  it('delivers the exact short OpenCode reply even when its valid summary omits the requested marker', async () => {
+    expect(OPENCODE_REPLY).toHaveLength(132)
+    const instruction = 'Reply only OPENCODE_DELEGATE_SMOKE_OK.'
+    const call = await profiles.dispatch(parentId, reviewer.id, instruction, 'opencode-marker')
+    await waitFor(() => store.call(call.id).state === 'running')
+    const prompt = chats.messages(call.conversationId).find((message) => message.role === 'user')?.text ?? ''
+    expect(prompt).toContain(instruction)
+    expect(prompt).not.toContain('摘要必须使用以下格式，每项都填写')
+
+    complete(chats.get(call.conversationId).sessionId!, OPENCODE_REPLY)
+    await waitFor(() => store.call(call.id).delivered)
+    expect(deliveredPayload(call.id)).toMatchObject({
+      callId: call.id, name: reviewer.name, ref: 'opencode-marker', state: 'completed', error: null,
+      result: OPENCODE_REPLY, resultKind: 'full', resultLength: 132,
+      resultRef: { tool: 'conclave_agent_status', arguments: { callId: call.id } },
+      fullResult: expect.stringContaining(call.id)
+    })
+    expect(store.call(call.id).result).toBe(OPENCODE_REPLY)
+  })
+
+  it.each([4000, 4001])('chooses full text or summary at the %i character boundary', async (length) => {
+    const call = await profiles.dispatch(parentId, reviewer.id, 'Return the report', `boundary-${length}`)
+    await waitFor(() => store.call(call.id).state === 'running')
+    const full = `${'x'.repeat(length - COMPLETE_SUMMARY.length - 1)}\n${COMPLETE_SUMMARY}`
+    expect(full).toHaveLength(length)
+    complete(chats.get(call.conversationId).sessionId!, full)
+    await waitFor(() => store.call(call.id).delivered)
+    const delivered = deliveredPayload(call.id)
+    expect(delivered.resultKind).toBe(length === 4000 ? 'full' : 'summary')
+    expect(delivered.result).toBe(length === 4000 ? full : '结论：发现问题\n改动：无\n验证：测试失败\n未解决：需要修复超时')
+    expect(delivered.resultLength).toBe(length)
+    expect(store.call(call.id).result).toBe(full)
+  })
+
+  it('delivers a long report in full when its attached summary is incomplete', async () => {
+    const call = await profiles.dispatch(parentId, reviewer.id, 'Review with evidence', 'incomplete-summary')
+    await waitFor(() => store.call(call.id).state === 'running')
+    const full = `${'Evidence '.repeat(600)}\n${COMPLETE_SUMMARY.replace('未解决：需要修复超时', '未解决：')}`
+    complete(chats.get(call.conversationId).sessionId!, full)
+    await waitFor(() => store.call(call.id).delivered)
+    expect(deliveredPayload(call.id)).toMatchObject({
+      callId: call.id, result: full, resultKind: 'full', resultLength: full.length,
+      resultRef: { tool: 'conclave_agent_status', arguments: { callId: call.id } }
+    })
+    expect(store.call(call.id).result).toBe(full)
+  })
+
+  it('keeps concurrent results associated with their own calls while the parent handles one at a time', async () => {
+    const first = await profiles.dispatch(parentId, reviewer.id, 'First review', 'first-result')
+    const second = await profiles.dispatch(parentId, reviewer.id, 'Second review', 'second-result')
+    await waitFor(() => store.call(first.id).state === 'running' && store.call(second.id).state === 'running')
+    complete(chats.get(first.conversationId).sessionId!, 'FIRST_DELEGATE_SMOKE_OK')
+    await waitFor(() => store.call(first.id).delivered)
+    const parentSession = chats.get(parentId).sessionId!
+    expect(chats.get(parentId).chat?.turn).toBe('running')
+
+    complete(chats.get(second.conversationId).sessionId!, 'SECOND_DELEGATE_SMOKE_OK')
+    await waitFor(() => store.call(second.id).state === 'completed')
+    expect(store.call(second.id).delivered).toBe(false)
+    expect(resultMessages()).toHaveLength(1)
+    expect(deliveredPayload(first.id)).toMatchObject({ callId: first.id, ref: 'first-result', result: 'FIRST_DELEGATE_SMOKE_OK', resultKind: 'full' })
+
+    complete(parentSession, 'ACK FIRST_DELEGATE_SMOKE_OK')
+    await waitFor(() => store.call(second.id).delivered)
+    expect(deliveredPayload(second.id)).toMatchObject({ callId: second.id, ref: 'second-result', result: 'SECOND_DELEGATE_SMOKE_OK', resultKind: 'full' })
+    await profiles.reconcile()
+    expect(resultMessages()).toHaveLength(2)
+    expect(store.call(first.id).result).toBe('FIRST_DELEGATE_SMOKE_OK')
+    expect(store.call(second.id).result).toBe('SECOND_DELEGATE_SMOKE_OK')
+  })
+
+  it('resumes a stopped parent and does not resend a recorded result after interrupted delivery bookkeeping', async () => {
+    const call = await profiles.dispatch(parentId, reviewer.id, 'Read the result', 'restore-result')
+    await waitFor(() => store.call(call.id).state === 'running')
+    expect(chats.get(parentId).sessionId).toBeNull()
+    complete(chats.get(call.conversationId).sessionId!, OPENCODE_REPLY)
+    await waitFor(() => store.call(call.id).delivered)
+    expect(chats.get(parentId).sessionId).not.toBeNull()
+    expect(deliveredPayload(call.id)).toMatchObject({ callId: call.id, ref: 'restore-result', result: OPENCODE_REPLY, resultKind: 'full' })
+    complete(chats.get(parentId).sessionId!, 'ACK OPENCODE_DELEGATE_SMOKE_OK')
+    await chats.stop(parentId)
+    // The parent recorded the message, but core stopped before persisting the delivery flag.
+    store.patchCall(call.id, { delivered: false })
+    await profiles.close()
+    conversations.close()
+    const db = path.join(root, 'conclave.db')
+    conversations = new ConversationStore(db)
+    chats = new ConversationService(conversations, daemon, path.join(root, 'sessions'), (event) => {
+      if (event.type === 'changed' || event.type === 'chatItems') profiles.tick()
+    }, projects, new AttachmentStore(path.join(root, 'attachments')))
+    store = new AgentProfileStore(db)
+    profiles = new AgentProfileService(store, chats, { profile: () => {}, call: () => {} })
+    chats.setSquadGuard((conversation) => profiles.guard(conversation))
+    chats.setCallCleanup((id) => profiles.cancelForParent(id))
+    chats.setCapacity({ maxConcurrentAgents: 20, agentConcurrency: { claude: 6 } }, () => profiles.tick())
+    daemon.deliver = (event) => {
+      if (event.event === 'data') chats.handleData(event)
+      else if (event.event === 'exit') chats.handleExit(event.sessionId, event.exitCode)
+      else chats.handleStderr(event.sessionId, event.data)
+    }
+    await profiles.reconcile()
+    await profiles.reconcile()
+    expect(store.call(call.id)).toMatchObject({ delivered: true, state: 'completed', result: OPENCODE_REPLY })
+    expect(resultMessages()).toHaveLength(1)
+    expect(daemon.writes.filter(({ frame }) => {
+      const text = JSON.stringify(frame)
+      return text.includes('智能体委派结果（') && text.includes(call.id)
+    })).toHaveLength(1)
+    expect(chats.agentIdle(parentId)).toBe(true)
   })
 
   it('falls back to the whole report when no complete, bounded summary is provided', () => {
