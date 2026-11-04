@@ -22,7 +22,7 @@ describe('environment check', () => {
   })
   afterEach(() => { vi.unstubAllEnvs(); rmSync(root, { recursive: true, force: true }) })
   // These agents offer installation even when no companion app is present.
-  const others = (installations: readonly { agent: string }[] = []) => installations.filter((each) => each.agent !== 'antigravity' && each.agent !== 'kimi' && each.agent !== 'gemini')
+  const others = (installations: readonly { agent: string }[] = []) => installations.filter((each) => each.agent !== 'antigravity' && each.agent !== 'kimi' && each.agent !== 'gemini' && each.agent !== 'grok')
 
   it('reads the first dotted triple as the version', () => {
     expect(parseVersion('git version 2.39.3 (Apple Git-145)')).toBe('2.39.3')
@@ -62,11 +62,12 @@ describe('environment check', () => {
         { tool: 'antigravity', status: 'missing', version: null, path: null, signedIn: null },
         { tool: 'zcode', status: 'missing', version: null, path: null, signedIn: null },
         { tool: 'kimi', status: 'missing', version: null, path: null, signedIn: null },
-        { tool: 'gemini', status: 'missing', version: null, path: null, signedIn: null }
+        { tool: 'gemini', status: 'missing', version: null, path: null, signedIn: null },
+        { tool: 'grok', status: 'missing', version: null, path: null, signedIn: null }
       ],
       detectedAgents: [{ id: 'claude', name: 'Claude Code', locations: [{ source: 'cli', path: path.join(bin, 'claude') }] }],
       // Conclave downloads Antigravity's server itself, so offers it with no application found.
-      cliInstallations: [expect.objectContaining({ agent: 'antigravity' }), expect.objectContaining({ agent: 'kimi' }), expect.objectContaining({ agent: 'gemini' })],
+      cliInstallations: [expect.objectContaining({ agent: 'antigravity' }), expect.objectContaining({ agent: 'kimi' }), expect.objectContaining({ agent: 'gemini' }), expect.objectContaining({ agent: 'grok' })],
       searchPath: [bin],
       checkedAt: 1000
     })

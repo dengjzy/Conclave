@@ -227,7 +227,15 @@ function GeminiMark() {
   )
 }
 
-const AGENT_MARKS = { claude: ClaudeMark, codex: CodexMark, cursor: CursorMark, opencode: OpenCodeMark, pi: PiMark, dsh: DeepSeekMark, antigravity: AntigravityMark, zcode: ZCodeMark, kimi: KimiMark, gemini: GeminiMark } satisfies Record<AgentKind, () => ReactElement>
+function GrokMark() {
+  return (
+    <svg className="agent-mark" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M3.5 4h3.8l5.2 7.4-5.2 8.6H3.5l5.2-8.6L3.5 4zm6.8 0h3.8l6.4 16h-3.8L10.3 4z" />
+    </svg>
+  )
+}
+
+const AGENT_MARKS = { claude: ClaudeMark, codex: CodexMark, cursor: CursorMark, opencode: OpenCodeMark, pi: PiMark, dsh: DeepSeekMark, antigravity: AntigravityMark, zcode: ZCodeMark, kimi: KimiMark, gemini: GeminiMark, grok: GrokMark } satisfies Record<AgentKind, () => ReactElement>
 
 export function AgentIcon({ agent }: { agent: AgentKind | null }) {
   if (agent === null) return <NoAgentMark />
