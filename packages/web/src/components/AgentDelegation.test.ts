@@ -7,6 +7,7 @@ import { isAgentCallResult, showAgentCalls, useAgentCalls } from '../agent-calls
 import { useCore } from '../core-store'
 import { useChat } from '../chat-state'
 import { AgentDelegation, AgentDelegationResult, DelegationDialog } from './AgentDelegation'
+import { AgentCalls } from './AgentCalls'
 import { ChatSurfaceContext, conversationSurface } from './chat-surface'
 import { ConversationInspector } from './ConversationInspector'
 import { TaskInspector } from './TaskInspector'
@@ -160,5 +161,26 @@ describe('delegation surfaces', () => {
     expect(html).toContain('委派结果已返回')
     expect(html).toContain('委派记录')
     expect(html).toContain('审查员 · 查看会话')
+  })
+
+  it('renders causality topology in inspector with root and active branch cards', () => {
+    vi.mocked(useAgentCalls).mockReturnValue({
+      calls: [
+        { ...call, id: 'c1', state: 'running' },
+        { ...call, id: 'c2', state: 'completed', result: 'All checks passed' }
+      ],
+      error: null,
+      dispatched: new Map()
+    })
+    const html = renderToStaticMarkup(createElement(AgentCalls, { conversation: parent }))
+    expect(html).toContain('拓扑')
+    expect(html).toContain('时间线')
+    expect(html).toContain('delegation-topology')
+    expect(html).toContain('delegation-topology-root')
+    expect(html).toContain('Main')
+    expect(html).toContain('主会话发起')
+    expect(html).toContain('data-active="true"')
+    expect(html).toContain('审查员')
+    expect(html).toContain('All checks passed')
   })
 })

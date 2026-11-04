@@ -61,5 +61,73 @@
 .delegation-delivery { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--text-muted); font-size: 12px; }
 .delegation-delivery > svg { width: 16px; height: 16px; }
 .delegation-delivery .link-button { font-size: inherit; }
+.delegation-header-title { display: flex; align-items: center; gap: 8px; }
+.delegation-view-modes { display: inline-flex; align-items: center; gap: 2px; padding: 2px; border-radius: var(--radius-sm); background: var(--fill); border: 1px solid var(--border-2); }
+.delegation-view-tab { padding: 2px 8px; font-size: 11px; font-weight: 500; border: none; border-radius: calc(var(--radius-sm) - 2px); background: transparent; color: var(--text-muted); cursor: pointer; transition: background-color 0.12s, color 0.12s; }
+.delegation-view-tab.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06); }
+
+.delegation-topology { display: flex; flex-direction: column; gap: 14px; margin: 10px 0 0; }
+.delegation-topology-root { position: relative; display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
+.delegation-topology-root-avatar { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--fill); color: var(--text); flex-shrink: 0; }
+.delegation-topology-root-info { display: flex; flex-direction: column; min-width: 0; flex: 1; gap: 2px; }
+.delegation-topology-root-title { font-size: 13px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.delegation-topology-root-subtitle { font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.delegation-topology-live-pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 999px; font-size: 11px; color: var(--status-running); background: color-mix(in srgb, var(--status-running) 10%, transparent); flex-shrink: 0; }
+
+.delegation-topology-tree { position: relative; display: flex; flex-direction: column; gap: 12px; margin-left: 14px; padding-left: 18px; border-left: 1.5px solid var(--border-2); }
+.delegation-topology-branch { position: relative; display: flex; flex-direction: column; gap: 8px; }
+.delegation-topology-branch::before { content: ''; position: absolute; left: -18px; top: 16px; width: 18px; height: 1.5px; background: var(--border-2); }
+.delegation-topology-branch[data-active]::before { background: var(--status-running); }
+
+.delegation-topology-node { position: absolute; left: -28px; top: 8px; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid var(--border); background: var(--surface); color: var(--text-muted); z-index: 1; font-size: 10px; }
+.delegation-topology-node[data-state='completed'] { border-color: var(--status-done); color: var(--status-done); background: color-mix(in srgb, var(--status-done) 8%, var(--surface)); }
+.delegation-topology-node[data-state='running'], .delegation-topology-node[data-state='starting'] { border-color: var(--status-running); color: var(--status-running); background: color-mix(in srgb, var(--status-running) 8%, var(--surface)); }
+.delegation-topology-node[data-state='awaiting'] { border-color: var(--warning); color: var(--warning); }
+.delegation-topology-node[data-state='failed'] { border-color: var(--danger); color: var(--danger); }
+.delegation-topology-node > svg { width: 10px; height: 10px; }
+.delegation-topology-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+.delegation-topology-card { position: relative; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); padding: 12px; display: flex; flex-direction: column; gap: 8px; font-size: 12px; transition: border-color 0.15s ease; }
+.delegation-topology-card[data-active] { border-color: color-mix(in srgb, var(--status-running) 35%, var(--border)); }
+.delegation-topology-card[data-active]::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  padding: 1px;
+  border-radius: inherit;
+  background: conic-gradient(from var(--chat-halo), transparent 0 60%, var(--status-running) 85%, transparent);
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+  animation: chat-halo 2.4s linear infinite;
+}
+
+.delegation-topology-card-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.delegation-topology-card-agent { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; font-size: 13px; }
+.delegation-topology-card-agent > svg { width: 16px; height: 16px; flex-shrink: 0; }
+.delegation-topology-card-meta { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-3); }
+.delegation-topology-instruction-preview { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; padding: 6px 10px; border-radius: var(--radius-sm); background: var(--fill); border: 1px solid transparent; font: inherit; font-size: 12px; color: var(--text-muted); text-align: left; cursor: pointer; transition: background 0.12s, border-color 0.12s; }
+.delegation-topology-instruction-preview:hover { background: var(--fill-2); color: var(--text); border-color: var(--border); }
+.delegation-topology-instruction-preview > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.delegation-expand-icon { display: grid; place-items: center; flex-shrink: 0; color: var(--text-3); transition: transform 0.15s ease; }
+.delegation-expand-icon.open { transform: rotate(180deg); }
+
+.delegation-topology-result-preview { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--status-done) 6%, var(--fill)); border: 1px solid color-mix(in srgb, var(--status-done) 18%, transparent); font-size: 12px; color: var(--text); cursor: pointer; }
+.delegation-topology-result-preview > svg { width: 14px; height: 14px; color: var(--status-done); flex-shrink: 0; }
+.delegation-topology-result-preview p { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+
+.delegation-topology-expanded { display: flex; flex-direction: column; gap: 10px; padding: 4px 0; }
+.delegation-topology-section h4 { margin: 0 0 4px; font-size: 11px; font-weight: 500; color: var(--text-muted); }
+.delegation-topology-full-instruction { margin: 0; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--fill); font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
+.delegation-topology-full-result { padding: 8px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); font-size: 12px; line-height: 1.5; }
+.delegation-topology-card-actions { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
+.delegation-topology-card-actions .link-button { font-size: 12px; }
+
 @keyframes delegation-node-breathe { from { opacity: 0.4; transform: scale(0.9); } to { opacity: 0; transform: scale(1.2); } }
-@media (prefers-reduced-motion: reduce) { .delegation-timeline-item[data-active] .delegation-timeline-node::after { animation: none; opacity: 0; } .delegation-instruction summary::before { transition: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .delegation-timeline-item[data-active] .delegation-timeline-node::after { animation: none; opacity: 0; }
+  .delegation-instruction summary::before { transition: none; }
+  .delegation-topology-card[data-active]::before { content: none; }
+  .delegation-expand-icon { transition: none; }
+}
+:root[data-resting] .delegation-topology-card[data-active]::before { animation-play-state: paused; }
