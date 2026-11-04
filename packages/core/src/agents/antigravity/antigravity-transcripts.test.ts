@@ -54,6 +54,46 @@ describe('antigravityTranscripts', () => {
     expect(scanned).toHaveLength(1)
     expect(scanned[0]?.sessionId).toBe(sessionId)
     expect(scanned[0]?.cwd).toBe('/home/user/workspace/my-project')
+    expect(scanned[0]?.title).toBe('Fix Bootloader')
+    expect(scanned[0]?.named).toBe(true)
+  })
+
+  it('excludes subagent child sessions from scan', async () => {
+    const parentId = '44444444-4444-4444-4444-444444444444'
+    const childId = '55555555-5555-5555-5555-555555555555'
+    createSession(parentId, 'Main session')
+    createSession(childId, 'Subagent task')
+
+    const db = new DatabaseSync(dbFile)
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS conversation_summaries (
+        conversation_id TEXT PRIMARY KEY,
+        workspace_uris TEXT,
+        project_id TEXT,
+        title TEXT,
+        parent_conversation_id TEXT,
+        nesting_depth INTEGER
+      );
+    `)
+    db.prepare('INSERT INTO conversation_summaries (conversation_id, workspace_uris, project_id, title, parent_conversation_id, nesting_depth) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(parentId, '[]', 'p1', 'Main session', null, 0)
+    db.prepare('INSERT INTO conversation_summaries (conversation_id, workspace_uris, project_id, title, parent_conversation_id, nesting_depth) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(childId, '[]', 'p1', 'Child subagent', parentId, 1)
+    db.close()
+
+    const transcripts = antigravityTranscripts(() => brainDir, () => dbFile)
+    const scanned = await transcripts.scan()
+    expect(scanned.map((s) => s.sessionId)).toEqual([parentId])
+  })
+
+  it('cleans leading markdown and URLs when generating fallback title from prompt', async () => {
+    const sessionId = '66666666-6666-6666-6666-666666666666'
+    createSession(sessionId, '# 1. [https://example.com/repo](https://example.com/repo) 深度分析架构设计')
+
+    const transcripts = antigravityTranscripts(() => brainDir, () => path.join(tempDir, 'empty.db'))
+    const scanned = await transcripts.scan()
+    expect(scanned).toHaveLength(1)
+    expect(scanned[0]?.title).toBe('深度分析架构设计')
   })
 
   it('falls back to homedir if summaries db has no workspace or is missing', async () => {
