@@ -1,9 +1,23 @@
 .chat-delegation { --delegation-tone: var(--text-3); position: relative; width: min(100%, 560px); margin: 4px auto; border: 1px solid var(--border-2); border-radius: var(--radius-lg); overflow: hidden; font-size: var(--chat-font-small); }
-.chat-delegation[data-active] { --delegation-tone: var(--status-running); }
+.chat-delegation[data-active] { --delegation-tone: var(--status-running); border-color: color-mix(in srgb, var(--status-running) 35%, var(--border-2)); }
 .chat-delegation[data-state='completed'] { --delegation-tone: var(--status-done); }
 .chat-delegation[data-state='awaiting'] { --delegation-tone: var(--warning); }
 .chat-delegation[data-state='failed'] { --delegation-tone: var(--danger); }
 .chat-delegation::before { content: ''; position: absolute; inset: 0 auto auto 0; height: 1px; width: 100%; background: linear-gradient(90deg, transparent, var(--delegation-tone), transparent); opacity: 0; pointer-events: none; }
+.chat-delegation[data-active]::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  height: auto;
+  padding: 1px;
+  border-radius: inherit;
+  background: conic-gradient(from var(--chat-halo), transparent 0 60%, var(--delegation-tone) 85%, transparent);
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+  opacity: 1;
+  animation: chat-halo 2.4s linear infinite;
+}
 .chat-delegation-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 32px; padding: 4px 16px; }
 .chat-delegation-heading, .chat-delegation-state { display: inline-flex; align-items: center; gap: 8px; }
 .chat-delegation-heading { color: var(--text-muted); }
@@ -24,6 +38,7 @@
 .chat-delegation-packet { stroke: var(--delegation-tone); stroke-width: 2; stroke-dasharray: 12 84; stroke-linecap: round; opacity: 0; }
 .chat-delegation[data-fresh]:not([data-returned]):not([data-return-pulse]) .chat-delegation-packet,
 .chat-delegation[data-return-pulse] .chat-delegation-packet { animation: delegation-flow 900ms ease-out both; }
+.chat-delegation[data-active]:not([data-returned]):not([data-return-pulse]) .chat-delegation-packet { animation: delegation-flow-active 2s ease-in-out infinite; }
 .chat-delegation[data-state='completed'] .chat-delegation-track { stroke: var(--delegation-tone); opacity: 0.45; stroke-dasharray: none; }
 .chat-delegation:is([data-returned], [data-return-pulse]) .chat-delegation-bridge svg { transform: scaleX(-1); }
 .chat-delegation-route-label { position: absolute; top: 24px; left: 0; right: 0; text-align: center; font-size: var(--chat-font-small); color: var(--text-3); }
@@ -47,7 +62,16 @@
 .chat-delegation[data-fresh] { animation: delegation-arrive 240ms ease-out both; }
 .chat-delegation[data-finished] .chat-delegation-state > svg { animation: delegation-settle 480ms ease-out both; }
 @keyframes delegation-flow { 0% { stroke-dashoffset: 12; opacity: 0; } 15% { opacity: 0.9; } 85% { opacity: 0.9; } 100% { stroke-dashoffset: -84; opacity: 0; } }
+@keyframes delegation-flow-active { 0% { stroke-dashoffset: 12; opacity: 0; } 20% { opacity: 0.9; } 80% { opacity: 0.9; } 100% { stroke-dashoffset: -84; opacity: 0; } }
 @keyframes delegation-arrive { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes delegation-settle { 0% { transform: scale(0.7); opacity: 0; } 65% { transform: scale(1.15); } 100% { transform: scale(1); opacity: 1; } }
 @container (max-width: 440px) { .chat-delegation-route { grid-template-columns: minmax(0, 1fr) 48px minmax(0, 1.4fr); gap: 8px; padding: 12px 16px; } .chat-delegation-origin, .chat-delegation-recipient { gap: 8px; } }
-@media (prefers-reduced-motion: reduce) { .chat-delegation[data-fresh], .chat-delegation[data-finished] .chat-delegation-state > svg, .chat-delegation[data-fresh]:not([data-returned]):not([data-return-pulse]) .chat-delegation-packet, .chat-delegation[data-return-pulse] .chat-delegation-packet { animation: none; } .chat-delegation-expand svg { transition: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .chat-delegation[data-fresh],
+  .chat-delegation[data-finished] .chat-delegation-state > svg,
+  .chat-delegation[data-fresh]:not([data-returned]):not([data-return-pulse]) .chat-delegation-packet,
+  .chat-delegation[data-return-pulse] .chat-delegation-packet,
+  .chat-delegation[data-active]:not([data-returned]):not([data-return-pulse]) .chat-delegation-packet { animation: none; }
+  .chat-delegation[data-active]::before { content: none; }
+  .chat-delegation-expand svg { transition: none; }
+}

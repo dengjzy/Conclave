@@ -9714,8 +9714,21 @@ summary.agent-group-head:focus-visible { outline: 2px solid var(--focus); outlin
   list-style: none;
   flex-shrink: 0;
 }
-.discussion-member { display: flex; align-items: center; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); }
+.discussion-member { position: relative; display: flex; align-items: center; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); }
 .discussion-member[data-status='awaiting'] { border-color: var(--warning); }
+.discussion-member[data-status='running'] { border-color: color-mix(in srgb, var(--status-running) 45%, var(--border)); background: color-mix(in srgb, var(--status-running) 6%, var(--surface)); }
+.discussion-member[data-status='running']::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  padding: 1px;
+  border-radius: inherit;
+  background: conic-gradient(from var(--chat-halo), transparent 0 50%, var(--status-running) 85%, transparent);
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+  animation: chat-halo 1.8s linear infinite;
+}
 .discussion-member:not(:has(.discussion-member-mention, .discussion-member-leave)) .discussion-member-open,
 .discussion-member-open:only-child {
   border-radius: 999px;
@@ -9822,7 +9835,10 @@ summary.agent-group-head:focus-visible { outline: 2px solid var(--focus); outlin
 .discussion-typing i:nth-child(2) { animation-delay: 0.15s; }
 .discussion-typing i:nth-child(3) { animation-delay: 0.3s; margin-right: 4px; }
 @keyframes discussion-typing { 0%, 60%, 100% { transform: translateY(0); opacity: 0.5; } 30% { transform: translateY(-3px); opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .discussion-typing i { animation: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .discussion-typing i { animation: none; }
+  .discussion-member[data-status='running']::before { content: none; }
+}
 /* The summary as a card, as a chat app shows a forwarded record: what it is, then what came of it. */
 /* The summary takes the column, as a member's long answer may, so their right edges line up. */
 .discussion-msg[data-kind='summary'] .discussion-msg-body { flex: 1; }
@@ -10235,7 +10251,9 @@ button.squad-member-main { cursor: pointer; }
 :root[data-resting] .chat-assistant[data-streaming] .chat-markdown > :last-child::after,
 :root[data-resting] .chat-reasoning-body[data-streaming]::before,
 :root[data-resting] .chat-input-card[data-working]::before,
-:root[data-resting] .chat-turn-head-icon[data-live]::before { animation-play-state: paused; }
+:root[data-resting] .chat-turn-head-icon[data-live]::before,
+:root[data-resting] .chat-delegation[data-active]::before,
+:root[data-resting] .discussion-member[data-status='running']::before { animation-play-state: paused; }
 
 /* How to spend the quota against its clock: what to do now, one line each. */
 .usage-card-advice {
