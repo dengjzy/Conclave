@@ -35,6 +35,16 @@ describe('the agents\' own MCP servers', () => {
     ])
     expect(await findAgentMcpServers({ env: {}, homedir: home, codex: async () => '[]' })).toEqual([])
   })
+  it('reads Gemini settings from default homedir when GEMINI_CLI_HOME is unset', async () => {
+    mkdirSync(path.join(home, '.gemini'), { recursive: true })
+    writeFileSync(path.join(home, '.gemini', 'settings.json'), JSON.stringify({ mcpServers: {
+      test: { command: 'node', args: ['server.js'] }
+    } }))
+    const found = await findAgentMcpServers({ env: {}, homedir: home, codex: async () => '[]' })
+    expect(found).toEqual([
+      { source: 'gemini', name: 'test', transport: { type: 'stdio', command: 'node', args: ['server.js'], cwd: null, env: {} }, problem: null }
+    ])
+  })
   it('reads Kimi Code’s mcp.json from its configured home without importing disabled servers', async () => {
     const kimiHome = path.join(home, 'custom-kimi')
     mkdirSync(kimiHome)

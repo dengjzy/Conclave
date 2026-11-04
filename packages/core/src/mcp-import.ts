@@ -7,7 +7,6 @@ import { McpEnvKey, McpHeaderName, McpServerName, type AgentKind, type McpImport
 import { planLaunch, readJsonIfExists } from '@conclave/protocol/node'
 import type { ResolvedMcpServer } from './mcp-servers'
 import { Rejection } from './rejection'
-import { geminiHome } from './agents/gemini/gemini-cli'
 
 // A server as an agent's own configuration has it, values and all: read again at import, never
 // kept, never sent to a client.
@@ -110,7 +109,7 @@ export async function findAgentMcpServers({ env = process.env, homedir = os.home
     readJsonServers('antigravity', path.join(env.GEMINI_HOME || path.join(homedir, '.gemini'), 'config', 'mcp_config.json')),
     readZCodeServers(env.ZCODE_CLI_SETTINGS_FILE?.trim() || path.join(homedir, '.zcode', 'cli', 'config.json')),
     readJsonServers('kimi', path.join(env.KIMI_CODE_HOME || path.join(homedir, '.kimi-code'), 'mcp.json')),
-    readJsonServers('gemini', path.join(geminiHome(env, homedir), 'settings.json'))])
+    readJsonServers('gemini', path.join(env.GEMINI_CLI_HOME || homedir, '.gemini', 'settings.json'))])
   return found.flat()
 }
 
