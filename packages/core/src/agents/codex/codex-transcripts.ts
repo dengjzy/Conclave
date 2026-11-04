@@ -1,4 +1,6 @@
-import { rm } from 'node:fs/promises'
+import { readdirSync } from 'node:fs'
+import { rename, rm, writeFile } from 'node:fs/promises'
+import { DatabaseSync } from 'node:sqlite'
 import path from 'node:path'
 import { CODEX_IMAGE_GENERATION, CODEX_IMAGE_VIEW, CONTEXT_COMPACTED } from '@conclave/protocol'
 import { z } from 'zod'
@@ -289,6 +291,61 @@ async function threadNames(home: string): Promise<Map<string, string>> {
   return names
 }
 
+async function pruneCodexSessionIndex(home: string, sessionId: string): Promise<void> {
+  const indexPath = path.join(home, 'session_index.jsonl')
+  try {
+    const kept: string[] = []
+    let changed = false
+    const Entry = z.looseObject({ id: z.string() })
+    await readLines(indexPath, (text) => {
+      const entry = Entry.safeParse(parseLine(text))
+      if (entry.success && entry.data.id === sessionId) {
+        changed = true
+      } else if (text.trim()) {
+        kept.push(text)
+      }
+      return true
+    })
+    if (changed) {
+      const tmpPath = `${indexPath}.${Date.now()}.tmp`
+      await writeFile(tmpPath, kept.length ? kept.join('\n') + '\n' : '', 'utf8')
+      await rename(tmpPath, indexPath)
+    }
+  } catch {
+    // If index doesn't exist or is not readable, skip
+  }
+}
+
+function pruneCodexDatabases(home: string, sessionId: string): void {
+  try {
+    const entries = readdirSync(home, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isFile()) continue
+      const name = entry.name
+      if (/^state_\d+\.sqlite$/.test(name)) {
+        try {
+          const db = new DatabaseSync(path.join(home, name))
+          db.prepare('DELETE FROM threads WHERE id = ?').run(sessionId)
+          db.prepare('DELETE FROM thread_dynamic_tools WHERE thread_id = ?').run(sessionId)
+          db.prepare('DELETE FROM thread_spawn_edges WHERE thread_id = ?').run(sessionId)
+          db.prepare('DELETE FROM thread_attachments WHERE thread_id = ?').run(sessionId)
+          db.prepare('DELETE FROM thread_read_receipts WHERE thread_id = ?').run(sessionId)
+          db.close()
+        } catch {}
+      } else if (/^thread_history_\d+\.sqlite$/.test(name)) {
+        try {
+          const db = new DatabaseSync(path.join(home, name))
+          db.prepare('DELETE FROM thread_turns WHERE thread_id = ?').run(sessionId)
+          db.prepare('DELETE FROM thread_items WHERE thread_id = ?').run(sessionId)
+          db.close()
+        } catch {}
+      }
+    }
+  } catch {
+    // Skip if sqlite is not available or locked
+  }
+}
+
 export function codexTranscripts(home: () => string = () => codexDefaultHome()): TranscriptSource {
   const cache = new SummaryCache()
   return {
@@ -315,11 +372,35 @@ export function codexTranscripts(home: () => string = () => codexDefaultHome()):
       return codexTranscript(texts)
     },
     delete: async (file) => {
+      const root = home()
+      let sessionId: string | null = null
+
+      await readHead(file, (text) => {
+        const line = Line.safeParse(parseLine(text))
+        if (line.success && line.data.type === 'session_meta') {
+          const meta = Meta.safeParse(line.data.payload)
+          if (meta.success) sessionId = meta.data.id
+          return false
+        }
+        return true
+      }).catch(() => {})
+
+      if (!sessionId) {
+        const match = path.basename(file).match(/^rollout-.*-([0-9a-fA-F-]+)\.jsonl(?:\.zst)?$/)
+        if (match) sessionId = match[1]!
+      }
+
       await rm(file, { force: true })
       if (file.endsWith('.zst')) {
         await rm(file.slice(0, -'.zst'.length), { force: true }).catch(() => {})
       } else {
         await rm(`${file}.zst`, { force: true }).catch(() => {})
+      }
+
+      if (sessionId) {
+        await pruneCodexSessionIndex(root, sessionId)
+        pruneCodexDatabases(root, sessionId)
+        await rm(path.join(root, 'archived_sessions', `${sessionId}.jsonl`), { force: true }).catch(() => {})
       }
     }
   }

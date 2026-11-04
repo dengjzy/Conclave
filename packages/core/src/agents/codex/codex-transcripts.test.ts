@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { DatabaseSync } from 'node:sqlite'
 import os from 'node:os'
 import path from 'node:path'
 import { zstdCompressSync } from 'node:zlib'
@@ -116,5 +117,70 @@ describe('codexTranscripts', () => {
     ])
     const read = await codexTranscripts(() => home).read(`${rollout(packed)}.zst`)
     expect(read.entries).toHaveLength(9)
+  })
+
+  it('prunes session_index.jsonl and codex sqlite databases on session delete', async () => {
+    const day = path.join(home, 'sessions', '2026', '10', '01')
+    mkdirSync(day, { recursive: true })
+    const rolloutFile = path.join(day, `rollout-2026-10-01T10-00-00-${THREAD}.jsonl`)
+    writeFileSync(rolloutFile, `${LINES.join('\n')}\n`)
+    writeFileSync(`${rolloutFile}.zst`, zstdCompressSync(Buffer.from('packed')))
+
+    // Set up session_index.jsonl with two sessions
+    const otherThread = '01a15e1a-0000-7000-8000-000000000099'
+    writeFileSync(
+      path.join(home, 'session_index.jsonl'),
+      `${JSON.stringify({ id: THREAD, thread_name: 'Target Session' })}\n${JSON.stringify({ id: otherThread, thread_name: 'Other Session' })}\n`
+    )
+
+    // Set up state_5.sqlite
+    const stateDb = new DatabaseSync(path.join(home, 'state_5.sqlite'))
+    stateDb.exec(`
+      CREATE TABLE threads (id TEXT PRIMARY KEY, title TEXT);
+      CREATE TABLE thread_dynamic_tools (thread_id TEXT);
+      CREATE TABLE thread_spawn_edges (thread_id TEXT);
+      CREATE TABLE thread_attachments (thread_id TEXT);
+      CREATE TABLE thread_read_receipts (thread_id TEXT);
+    `)
+    stateDb.prepare('INSERT INTO threads (id, title) VALUES (?, ?)').run(THREAD, 'Target Session')
+    stateDb.prepare('INSERT INTO threads (id, title) VALUES (?, ?)').run(otherThread, 'Other Session')
+    stateDb.prepare('INSERT INTO thread_attachments (thread_id) VALUES (?)').run(THREAD)
+    stateDb.close()
+
+    // Set up thread_history_1.sqlite
+    const historyDb = new DatabaseSync(path.join(home, 'thread_history_1.sqlite'))
+    historyDb.exec(`
+      CREATE TABLE thread_turns (thread_id TEXT, turn_id TEXT);
+      CREATE TABLE thread_items (thread_id TEXT, item_id TEXT);
+    `)
+    historyDb.prepare('INSERT INTO thread_turns (thread_id, turn_id) VALUES (?, ?)').run(THREAD, 't1')
+    historyDb.prepare('INSERT INTO thread_items (thread_id, item_id) VALUES (?, ?)').run(THREAD, 'i1')
+    historyDb.prepare('INSERT INTO thread_turns (thread_id, turn_id) VALUES (?, ?)').run(otherThread, 't9')
+    historyDb.close()
+
+    // Delete the session via Conclave
+    await codexTranscripts(() => home).delete?.(rolloutFile)
+
+    // Rollout files should be gone
+    expect(existsSync(rolloutFile)).toBe(false)
+    expect(existsSync(`${rolloutFile}.zst`)).toBe(false)
+
+    // session_index.jsonl should have removed THREAD and kept otherThread
+    const indexContent = readFileSync(path.join(home, 'session_index.jsonl'), 'utf8')
+    expect(indexContent).not.toContain(THREAD)
+    expect(indexContent).toContain(otherThread)
+
+    // state_5.sqlite should have THREAD pruned
+    const checkStateDb = new DatabaseSync(path.join(home, 'state_5.sqlite'), { readOnly: true })
+    expect(checkStateDb.prepare('SELECT id FROM threads WHERE id = ?').get(THREAD)).toBeUndefined()
+    expect(checkStateDb.prepare('SELECT id FROM threads WHERE id = ?').get(otherThread)).toBeDefined()
+    expect(checkStateDb.prepare('SELECT thread_id FROM thread_attachments WHERE thread_id = ?').get(THREAD)).toBeUndefined()
+    checkStateDb.close()
+
+    // thread_history_1.sqlite should have THREAD pruned
+    const checkHistDb = new DatabaseSync(path.join(home, 'thread_history_1.sqlite'), { readOnly: true })
+    expect(checkHistDb.prepare('SELECT thread_id FROM thread_turns WHERE thread_id = ?').get(THREAD)).toBeUndefined()
+    expect(checkHistDb.prepare('SELECT thread_id FROM thread_turns WHERE thread_id = ?').get(otherThread)).toBeDefined()
+    checkHistDb.close()
   })
 })
