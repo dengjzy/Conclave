@@ -1,7 +1,8 @@
 import { getLocale, t, tr } from '../i18n'
 import { useEffect, useMemo, useState } from 'react'
-import { agentDescriptor, ChatPermissionMode, DEFAULT_DISCUSSION_ROUNDS, MIN_DISCUSSION_MEMBERS, type AgentKind, type ChatCatalog } from '@conclave/protocol'
-import { closeConversationDraft, perform, selectConversation, selectDiscussion, useChatImagesSupported, useChatOptionsSupported, useConversationWorktreesSupported, useCore, useDiscussionsSupported, useSourceInvestigateSupported, useStartBranchSupported } from '../core-store'
+import { agentDescriptor, ChatPermissionMode, DEFAULT_DISCUSSION_ROUNDS, MIN_DISCUSSION_MEMBERS, type AgentKind, type ChatCatalog, type ExternalSession } from '@conclave/protocol'
+import { closeConversationDraft, perform, selectConversation, selectDiscussion, setSettingsOpen, useChatImagesSupported, useChatOptionsSupported, useConversationWorktreesSupported, useCore, useDiscussionsSupported, useSessionImportSupported, useSourceInvestigateSupported, useStartBranchSupported } from '../core-store'
+import { resumeSession, useExternalSessionsWhen } from '../external-sessions'
 import { OtherProjectsHint } from './OtherProjectsHint'
 import { ConversationTip } from './ConversationTip'
 import { defaultAgent } from '../default-agent'
@@ -30,6 +31,24 @@ import { ProviderPicker } from './ProviderPicker'
 import { ConversationModePicker } from './ConversationCreateMenu'
 import { createDiscussion, defaultMemberName, loadDiscussionPosts } from '../discussions'
 import { discussionModelChoice } from '../discussion-model'
+
+function ResumableDraftHint({ sessions, projectPaths }: { sessions: readonly ExternalSession[] | null; projectPaths: readonly string[] }) {
+  if (!sessions) return null
+  const matched = sessions.filter((s) => s.status === 'new' && s.problem === null && (projectPaths.length === 0 || projectPaths.some((p) => p === s.cwd || s.cwd.startsWith(p + '/') || p.startsWith(s.cwd + '/'))))
+  const target = matched[0] ?? (projectPaths.length === 0 ? sessions.find((s) => s.status === 'new' && s.problem === null) : null)
+  if (!target) return null
+  return (
+    <div className="conversation-draft-resumable-hint">
+      <span className="muted">{t('ResumableSessions.title')}：</span>
+      <button type="button" className="link-button" onClick={() => void resumeSession(target)}>
+        {target.title || target.sessionId}（{agentLabel(target.agent)}）
+      </button>
+      <button type="button" className="link-button muted" onClick={() => setSettingsOpen(true, 'session-import')}>
+        {t('ResumableSessions.viewAll')}
+      </button>
+    </div>
+  )
+}
 
 // A new conversation while chats are the default: the agent and projects are picked on the page,
 // and the first message creates the conversation and starts the agent, so none is left empty.
@@ -98,6 +117,8 @@ export function ConversationDraft() {
   const deferStart = rpc?.features.includes('deferred-conversation-start') ?? false
   const optionsSupported = useChatOptionsSupported()
   const imagesSupported = useChatImagesSupported()
+  const sessionImportSupported = useSessionImportSupported()
+  const externalSessions = useExternalSessionsWhen(sessionImportSupported)
   const worktreesSupported = useConversationWorktreesSupported()
   const inWorktree = worktree && worktreesSupported && projectPaths.length > 0
   // The primary project's branch: where its worktree starts, or what it is switched to; null keeps
@@ -357,6 +378,9 @@ export function ConversationDraft() {
               </p>
               <OtherProjectsHint agent={agent} projectCount={projectPaths.length} />
               {!issue && <ConversationTip agent={agent} agents={installed.length} images={imagesSupported} />}
+              {!issue && !isMulti && sessionImportSupported && (
+                <ResumableDraftHint sessions={externalSessions} projectPaths={projectPaths} />
+              )}
             </div>
           </div>
           <div className="chat-dock">

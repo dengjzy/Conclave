@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react'
-import { openNewConversationDraft, switchConversationDraftMode, useDiscussionsSupported, type ConversationDraftMode } from '../core-store'
+import { openNewConversationDraft, setSettingsOpen, switchConversationDraftMode, useDiscussionsSupported, useSessionImportSupported, type ConversationDraftMode } from '../core-store'
 import { t } from '../i18n'
 import { ChatPicker } from './ChatPicker'
 import { ContextMenu, MenuItem, type MenuPoint } from './ContextMenu'
@@ -14,6 +14,7 @@ const MODES = ['single', 'fanout', 'debate'] as const
 
 export function ConversationCreateMenu({ projects, className = 'icon-button task-list-add sidebar-add', label = t('ConversationDraft.newConversation') }: { projects?: readonly string[]; className?: string; label?: string }) {
   const supported = useDiscussionsSupported()
+  const sessionImportSupported = useSessionImportSupported()
   const button = useRef<HTMLButtonElement>(null)
   const [at, setAt] = useState<MenuPoint | null>(null)
   const close = useCallback(() => setAt(null), [])
@@ -37,6 +38,7 @@ export function ConversationCreateMenu({ projects, className = 'icon-button task
     ><PlusIcon /></button>
     {at && <ContextMenu at={at} align="end" trigger={button.current} label={t('ConversationDraft.newConversation')} onClose={close}>
       {MODES.filter((mode) => mode === 'single' || supported).map((mode) => <MenuItem key={mode} label={conversationModeLabel(mode)} onSelect={() => { close(); openNewConversationDraft(mode, projects) }} />)}
+      {sessionImportSupported && <MenuItem label={t('SettingsPage.sessionImport')} onSelect={() => { close(); setSettingsOpen(true, 'session-import') }} />}
     </ContextMenu>}
   </>
 }
