@@ -2,3 +2,103 @@
 .conversation-draft-pane[hidden] { display: none; }
 .discussion-readonly-note { margin: 0 0 16px; color: var(--text-muted); }
 .discussion-summary-choice { display: flex; align-items: center; gap: 8px; }
+
+.chat-draft-agent-wrapper {
+  position: relative;
+  display: flex;
+}
+
+.chat-draft-agent-toggle {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid var(--border-2);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  z-index: 2;
+  transition: all 0.15s ease;
+}
+
+.chat-draft-agent-toggle:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.chat-draft-agent-toggle.checked {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.chat-draft-agent-toggle:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.chat-draft-multi-bar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin: 12px auto 4px;
+  padding: 12px 16px;
+  background: var(--fill);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  max-width: 520px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.chat-draft-multi-modes {
+  display: flex;
+  gap: 8px;
+  background: var(--surface);
+  padding: 4px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-2);
+}
+
+.chat-draft-multi-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.chat-draft-multi-tab:hover {
+  color: var(--text);
+  background: var(--fill);
+}
+
+.chat-draft-multi-tab.active {
+  background: var(--fill-2);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.chat-draft-multi-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+}

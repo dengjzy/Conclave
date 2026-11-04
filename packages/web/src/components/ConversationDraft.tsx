@@ -1,7 +1,7 @@
 import { getLocale, t, tr } from '../i18n'
 import { useEffect, useMemo, useState } from 'react'
-import { agentDescriptor, ChatPermissionMode, type AgentKind, type ChatCatalog } from '@conclave/protocol'
-import { closeConversationDraft, perform, selectConversation, useChatImagesSupported, useChatOptionsSupported, useConversationWorktreesSupported, useCore, useSourceInvestigateSupported, useStartBranchSupported } from '../core-store'
+import { agentDescriptor, ChatPermissionMode, DEFAULT_DISCUSSION_ROUNDS, MIN_DISCUSSION_MEMBERS, type AgentKind, type ChatCatalog } from '@conclave/protocol'
+import { closeConversationDraft, perform, selectConversation, selectDiscussion, useChatImagesSupported, useChatOptionsSupported, useConversationWorktreesSupported, useCore, useDiscussionsSupported, useSourceInvestigateSupported, useStartBranchSupported } from '../core-store'
 import { OtherProjectsHint } from './OtherProjectsHint'
 import { ConversationTip } from './ConversationTip'
 import { defaultAgent } from '../default-agent'
@@ -28,6 +28,8 @@ import { inboxKey, rememberInvestigationProjects } from '../source-inboxes'
 import { catalogKey, providerFor } from '../model-provider-choice'
 import { ProviderPicker } from './ProviderPicker'
 import { ConversationModePicker } from './ConversationCreateMenu'
+import { createDiscussion, defaultMemberName, loadDiscussionPosts } from '../discussions'
+import { discussionModelChoice } from '../discussion-model'
 
 // A new conversation while chats are the default: the agent and projects are picked on the page,
 // and the first message creates the conversation and starts the agent, so none is left empty.
@@ -43,8 +45,27 @@ export function ConversationDraft() {
   const profile = profileId ? profiles[profileId] : null
   const initial = from?.configuration
   const composerId = from?.key ?? null
-  // Unset when nothing settles it, for each start to pick.
-  const [agent, setAgent] = useState<AgentKind | null>(() => (draftProfileId ? profiles[draftProfileId]?.agent : null) ?? initial?.agent ?? defaultAgent(useCore.getState().tasks, useCore.getState().conversations))
+  const discussionsSupported = useDiscussionsSupported()
+  const defaultAgentKind = (draftProfileId ? profiles[draftProfileId]?.agent : null) ?? initial?.agent ?? defaultAgent(useCore.getState().tasks, useCore.getState().conversations)
+  const [selectedAgents, setSelectedAgents] = useState<AgentKind[]>(() => defaultAgentKind ? [defaultAgentKind] : [])
+  const isMulti = selectedAgents.length > 1
+  const [multiMode, setMultiMode] = useState<'fanout' | 'debate'>('fanout')
+  const agent = selectedAgents[0] ?? null
+  const selectSingleAgent = (kind: AgentKind) => {
+    setSelectedAgents([kind])
+    setProfileId(null)
+  }
+  const toggleAgent = (kind: AgentKind) => {
+    setSelectedAgents((current) => {
+      if (current.includes(kind)) {
+        if (current.length <= 1) return current
+        return current.filter((k) => k !== kind)
+      } else {
+        return [...current, kind]
+      }
+    })
+    setProfileId(null)
+  }
   // Asked for again while the page is open (another project's ＋), it takes the new ones.
   const requested = useCore((s) => s.conversationDraftProjects)
   const [projectPaths, setProjectPaths] = useState<string[]>(() => [...(requested?.paths ?? [])])
@@ -125,7 +146,11 @@ export function ConversationDraft() {
   const mode = profile?.capability === 'readOnly' && agent ? agentDescriptor(agent).readOnlyMode : agent ? (chosenMode && offeredModes.includes(chosenMode) ? chosenMode : reading ?? defaultStartMode(agent, offeredModes)) : null
   const effort = pick.effort && (!catalog || efforts.includes(pick.effort)) ? pick.effort : null
   const settingsLoading = Boolean(initial && agent && optionsSupported && catalog === undefined)
-  const canSend = agent !== null && !busy && !settingsLoading && attached.uploading === 0 && (issue !== null || text.trim() !== '' || attached.images.length > 0)
+  const canSend = !busy && !settingsLoading && attached.uploading === 0 && (
+    isMulti
+      ? (written.trim() !== '' && selectedAgents.length >= MIN_DISCUSSION_MEMBERS)
+      : (agent !== null && (issue !== null || text.trim() !== '' || attached.images.length > 0))
+  )
   // The model a start would run, as quota windows name models; unknown until its catalog is in.
   const modelFor = (kind: AgentKind) => {
     const models = catalogs[catalogKey(kind, providerOf(kind))]?.models ?? []
@@ -177,6 +202,41 @@ export function ConversationDraft() {
     if (!canSend) return
     if (issue) return investigate()
     setBusy(true)
+    if (isMulti) {
+      const catalogsForAgents = await Promise.all(
+        selectedAgents.map(async (k) => {
+          const prov = providerOf(k)
+          const cat = await perform((rpc) => rpc.call('conversations.chatCatalog', { agent: k, ...(prov ? { modelProvider: prov.id } : {}) })).catch(() => null)
+          return { agent: k, catalog: cat }
+        })
+      )
+      const created = await createDiscussion({
+        topic: written.trim(),
+        projectPaths,
+        members: selectedAgents.map((k) => {
+          const cat = catalogsForAgents.find((e) => e.agent === k)?.catalog
+          const choice = discussionModelChoice(cat, { model: picks[k]?.model, effort: picks[k]?.effort })
+          return {
+            agent: k,
+            model: choice.model ?? undefined,
+            effort: choice.effort ?? undefined,
+            name: defaultMemberName(k, choice.model ?? null),
+            role: ''
+          }
+        }),
+        chair: 0,
+        maxRounds: multiMode === 'fanout' ? 1 : DEFAULT_DISCUSSION_ROUNDS,
+        summarize: true,
+        anonymous: false
+      })
+      setBusy(false)
+      if (created) {
+        saveComposerDraft(composerId, EMPTY_DRAFT)
+        void loadDiscussionPosts(created.id)
+        selectDiscussion(created.id)
+      }
+      return
+    }
     const created = await create()
     if (created) {
       if (await openWithFirstMessage(created, written.trim(), attached.images, deferStart, messageReferences(writtenMessage, written.trim()))) saveComposerDraft(composerId, EMPTY_DRAFT)
@@ -217,27 +277,79 @@ export function ConversationDraft() {
                 </div>
               )}
               <div className="chat-draft-agents" role="radiogroup" aria-label="agent">
-                {installed.map((kind) => (
-                  <button
-                    key={kind}
-                    type="button"
-                    role="radio"
-                    aria-checked={agent === kind}
-                    className="chat-draft-agent"
-                    disabled={busy}
-                    onClick={() => { setAgent(kind); setProfileId(null) }}
-                  >
-                    <AgentIcon agent={kind} />
-                    <span>{agentLabel(kind)}</span>
-                    {providerOf(kind) ? <span className="chat-draft-agent-provider">{providerOf(kind)?.name}</span> : (
-                      <>
-                        {recommendation?.agent === kind && <RecommendedMark recommendation={recommendation} />}
-                        <AgentQuotaHint agent={kind} model={modelFor(kind)} />
-                      </>
-                    )}
-                  </button>
-                ))}
+                {installed.map((kind) => {
+                  const isSelected = selectedAgents.includes(kind)
+                  const canReadOnly = agentDescriptor(kind).capabilities.readOnly !== false
+                  return (
+                    <div key={kind} className={`chat-draft-agent-wrapper ${isSelected ? 'selected' : ''}`}>
+                      <button
+                        type="button"
+                        role="radio"
+                        aria-checked={isSelected}
+                        className="chat-draft-agent"
+                        disabled={busy}
+                        onClick={() => {
+                          if (isMulti) {
+                            toggleAgent(kind)
+                          } else {
+                            selectSingleAgent(kind)
+                          }
+                        }}
+                      >
+                        <AgentIcon agent={kind} />
+                        <span>{agentLabel(kind)}</span>
+                        {providerOf(kind) ? <span className="chat-draft-agent-provider">{providerOf(kind)?.name}</span> : (
+                          <>
+                            {recommendation?.agent === kind && <RecommendedMark recommendation={recommendation} />}
+                            <AgentQuotaHint agent={kind} model={modelFor(kind)} />
+                          </>
+                        )}
+                      </button>
+                      {discussionsSupported && canReadOnly && (
+                        <button
+                          type="button"
+                          className={`chat-draft-agent-toggle ${isSelected ? 'checked' : ''}`}
+                          data-tooltip={isSelected ? (isMulti ? t('ChatQuoteCards.remove') : undefined) : t('DiscussionDraft.addMember')}
+                          disabled={busy || (isSelected && selectedAgents.length === 1)}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            toggleAgent(kind)
+                          }}
+                        >
+                          {isSelected ? (selectedAgents.length > 1 ? '✓' : '●') : '+'}
+                        </button>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
+              {isMulti && (
+                <div className="chat-draft-multi-bar">
+                  <div className="chat-draft-multi-modes" role="tablist">
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={multiMode === 'fanout'}
+                      className={`chat-draft-multi-tab ${multiMode === 'fanout' ? 'active' : ''}`}
+                      onClick={() => setMultiMode('fanout')}
+                    >
+                      {t('ConversationModes.fanout')}
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={multiMode === 'debate'}
+                      className={`chat-draft-multi-tab ${multiMode === 'debate' ? 'active' : ''}`}
+                      onClick={() => setMultiMode('debate')}
+                    >
+                      {t('ConversationModes.debate')}
+                    </button>
+                  </div>
+                  <p className="chat-draft-multi-note muted">
+                    {t('ConversationModes.readOnly')}
+                  </p>
+                </div>
+              )}
               <p className="chat-draft-hint muted">
                 {issue
                   ? t('ConversationDraft.agentReadsTheOriginalIssueAndInvestigatesIn')
@@ -250,7 +362,7 @@ export function ConversationDraft() {
           <div className="chat-dock">
             <div className="chat-dock-header chat-draft-projects">
               <ProjectPicker projects={projectPaths.map((path) => ({ path, worktreePath: null }))} onChange={setProjectPaths} locked={busy} />
-              {branches.options?.git && (
+              {!isMulti && branches.options?.git && (
                 <DraftBranchPicker
                   options={branches.options}
                   picked={branch}
@@ -260,7 +372,7 @@ export function ConversationDraft() {
                   onPick={setBranch}
                 />
               )}
-              {projectPaths.length > 0 && worktreesSupported && (
+              {!isMulti && projectPaths.length > 0 && worktreesSupported && (
                 <label
                   className="chat-draft-worktree"
                   data-tooltip-side="top"
@@ -278,7 +390,7 @@ export function ConversationDraft() {
             >
               {commandMenu.menu}
               {mentionMenu.menu}
-              {imagesSupported && !issue && <ChatImageStrip images={attached.images} uploading={attached.uploading} onRemove={attached.remove} />}
+              {imagesSupported && !issue && !isMulti && <ChatImageStrip images={attached.images} uploading={attached.uploading} onRemove={attached.remove} />}
               <MentionField
                 value={value}
                 setValue={setValue}
@@ -287,7 +399,11 @@ export function ConversationDraft() {
                 autoFocus
                 readOnly={busy}
                 aria-label={t('ConversationDraft.firstMessage')}
-                placeholder={!agent ? t('ConversationDraft.chooseAnAgentAboveFirst') : issue ? t('ConversationDraft.additionalInstructionsOptionalEnterToInvestigate') : t('ConversationDraft.sendTheFirstMessageToEnterToSend', { value1: agentLabel(agent) })}
+                placeholder={
+                  isMulti
+                    ? t('DiscussionDraft.topic')
+                    : (!agent ? t('ConversationDraft.chooseAnAgentAboveFirst') : issue ? t('ConversationDraft.additionalInstructionsOptionalEnterToInvestigate') : t('ConversationDraft.sendTheFirstMessageToEnterToSend', { value1: agentLabel(agent) }))
+                }
                 onPasteCapture={imagesSupported ? attached.handlers.onPaste : undefined}
                 onKeyDownCapture={(event) => {
                   if (commandMenu.onKeyDown(event) || mentionMenu.onKeyDown(event) || !sendsMessage(event)) return
@@ -296,15 +412,20 @@ export function ConversationDraft() {
                 }}
               />
               <div className="chat-options">
-                {imagesSupported && !issue && <ChatAddMenu disabled={busy} onAdd={attached.add} />}
-                {agent && (
+                {imagesSupported && !issue && !isMulti && <ChatAddMenu disabled={busy} onAdd={attached.add} />}
+                {isMulti && (
+                  <span className="chat-options-note muted">
+                    {multiMode === 'fanout' ? t('ConversationModes.fanout') : t('ConversationModes.debate')}
+                  </span>
+                )}
+                {!isMulti && agent && (
                   <ProviderPicker agent={agent} value={providerId} disabled={busy || Boolean(profile)} onChange={(next) => {
                     // Models differ between accounts, so what was picked for the old one goes.
                     setProviderId(next)
                     setPicks({})
                   }} />
                 )}
-                {agent && optionsSupported && (
+                {!isMulti && agent && optionsSupported && (
                   <>
                     <ChatPicker
                       label={t('ChatHandoff.permissionMode')}
@@ -340,7 +461,7 @@ export function ConversationDraft() {
                   type="button"
                   className="chat-input-button" data-tooltip-side="top-end"
                   aria-label={t('ChatComposer.sendEnter')}
-                  data-tooltip={busy && agent ? (issue ? t('ConversationDraft.readingIssueAndStarting', { value1: agentLabel(agent) }) : inWorktree ? t('ConversationDraft.creatingWorktreeAndStarting', { value1: agentLabel(agent) }) : t('ChatComposer.starting', { value1: agentLabel(agent) })) : issue ? t('ConversationDraft.investigateEnter') : t('ChatComposer.sendEnter')}
+                  data-tooltip={busy && agent ? (issue ? t('ConversationDraft.readingIssueAndStarting', { value1: agentLabel(agent) }) : inWorktree ? t('ConversationDraft.creatingWorktreeAndStarting', { value1: agentLabel(agent) }) : t('ChatComposer.starting', { value1: agentLabel(agent) })) : issue ? t('ConversationDraft.investigateEnter') : isMulti ? (multiMode === 'fanout' ? t('ConversationModes.fanout') : t('ConversationModes.debate')) : t('ChatComposer.sendEnter')}
                   disabled={!canSend}
                   onClick={() => void send()}
                 >

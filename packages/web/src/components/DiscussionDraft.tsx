@@ -1,10 +1,11 @@
 import { localized, t, tr } from '../i18n'
-import { useId, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { agentDescriptor, DEFAULT_DISCUSSION_REQUIREMENTS, DEFAULT_DISCUSSION_ROUNDS, MAX_DISCUSSION_MEMBERS, MAX_DISCUSSION_ROUNDS, MIN_DISCUSSION_MEMBERS, type AgentKind, type ChatCatalog, type Discussion } from '@conclave/protocol'
 import { resolveModel, useAgentCatalogs } from '../agent-models'
 import { discussionModelChoice, discussionModelReady, discussionModelUnavailable } from '../discussion-model'
 import { closeDiscussionDraft, selectDiscussion, useDiscussionRequirementsSupported, useDiscussionSummarySupported } from '../core-store'
 import { createDiscussion, defaultMemberName, loadDiscussionPosts } from '../discussions'
+import { composerDraft, EMPTY_DRAFT, saveComposerDraft } from '../composer-drafts'
 import { useInstalledAgents } from '../installed-agents'
 import { agentLabel } from '../labels'
 import { effortLabel } from './ChatOptionsBar'
@@ -101,7 +102,13 @@ function MemberRow({ member, catalog, index, agents, chair, chairGroup, summariz
 export function DiscussionDraft({ from, mode = 'fanout', initialProjects }: { from: Discussion | null; mode?: 'fanout' | 'debate'; initialProjects?: readonly string[] }) {
   const installed = useInstalledAgents().filter((agent) => agentDescriptor(agent).capabilities.readOnly !== false)
   const chairGroup = useId()
-  const [topic, setTopic] = useState('')
+  const [topic, setTopic] = useState(() => composerDraft(null).text)
+  useEffect(() => {
+    const current = composerDraft(null)
+    if (topic !== current.text) {
+      saveComposerDraft(null, { ...current, text: topic })
+    }
+  }, [topic])
   const requirementsSupported = useDiscussionRequirementsSupported()
   const summarySupported = useDiscussionSummarySupported()
   const [summarize, setSummarize] = useState(from?.summarize ?? true)
@@ -178,6 +185,7 @@ export function DiscussionDraft({ from, mode = 'fanout', initialProjects }: { fr
     })
     setBusy(false)
     if (!created) return
+    saveComposerDraft(null, EMPTY_DRAFT)
     void loadDiscussionPosts(created.id)
     selectDiscussion(created.id)
   }
