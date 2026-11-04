@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { antigravityTranscripts, parseAntigravityWorkspace } from './antigravity-transcripts'
+import { antigravityTranscript, antigravityTranscripts, parseAntigravityWorkspace } from './antigravity-transcripts'
 
 let tempDir: string
 let brainDir: string
@@ -156,5 +156,68 @@ describe('antigravityTranscripts', () => {
     const row = checkDb.prepare('SELECT count(*) as count FROM conversation_summaries WHERE conversation_id = ?').get(sessionId) as { count: number }
     expect(row.count).toBe(0)
     checkDb.close()
+  })
+
+  it('parses tool calls, outputs and media from transcript lines', () => {
+    const lines = [
+      JSON.stringify({
+        step_index: 0,
+        source: 'USER_EXPLICIT',
+        type: 'USER_INPUT',
+        created_at: '2026-11-04T12:00:00Z',
+        content: '<USER_REQUEST>\nAnalyze this screenshot\n</USER_REQUEST>',
+        media: [{ mime_type: 'image/png', uri: '/path/to/screenshot.png' }]
+      }),
+      JSON.stringify({
+        step_index: 1,
+        source: 'MODEL',
+        type: 'PLANNER_RESPONSE',
+        created_at: '2026-11-04T12:00:02Z',
+        thinking: 'Looking at git status...',
+        content: 'I will run git status.',
+        tool_calls: [
+          {
+            name: 'run_command',
+            args: { CommandLine: 'git status', toolSummary: 'Git status check' }
+          }
+        ]
+      }),
+      JSON.stringify({
+        step_index: 2,
+        source: 'MODEL',
+        type: 'GENERIC',
+        status: 'DONE',
+        created_at: '2026-11-04T12:00:04Z',
+        content: 'On branch main\nnothing to commit'
+      }),
+      JSON.stringify({
+        step_index: 3,
+        source: 'MODEL',
+        type: 'PLANNER_RESPONSE',
+        created_at: '2026-11-04T12:00:06Z',
+        content: 'Your working tree is clean.'
+      })
+    ]
+
+    const transcript = antigravityTranscript(lines)
+    expect(transcript.entries).toHaveLength(5) // user + reasoning + assistant + tool + assistant
+    const userEntry = transcript.entries[0]
+    expect(userEntry?.item.kind).toBe('user')
+    if (userEntry?.item.kind === 'user') {
+      expect(userEntry.item.text).toContain('Analyze this screenshot')
+      expect(userEntry.item.text).toContain('![image](/path/to/screenshot.png)')
+    }
+
+    const toolEntry = transcript.entries.find((e) => e.item.kind === 'tool')
+    expect(toolEntry).toBeDefined()
+    if (toolEntry && toolEntry.item.kind === 'tool') {
+      expect(toolEntry.item.name).toBe('run_command')
+      expect(toolEntry.item.title).toBe('Git status check')
+      expect(toolEntry.item.input).toBe('git status')
+      expect(toolEntry.item.output).toBe('On branch main\nnothing to commit')
+      expect(toolEntry.item.status).toBe('done')
+    }
+
+    expect(transcript.messages).toHaveLength(3) // 1 user + 2 assistant
   })
 })

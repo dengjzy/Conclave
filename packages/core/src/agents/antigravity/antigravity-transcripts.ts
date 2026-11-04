@@ -3,6 +3,7 @@ import { homedir } from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
+import { clip, type ChatItemBody } from '../../chat-items'
 import { parseLine, readHead, readLines, SummaryCache, timeOf, titleOf, type Transcript, type TranscriptEntry, type TranscriptMessage, type TranscriptSource, type TranscriptSummary } from '../../agent-transcripts'
 
 const UUID_DIR = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -109,9 +110,10 @@ async function summarizeAntigravitySession(brainDir: string, sessionId: string, 
   }
 }
 
-function antigravityTranscript(lines: string[]): Transcript {
+export function antigravityTranscript(lines: string[]): Transcript {
   const entries: TranscriptEntry[] = []
   const messages: TranscriptMessage[] = []
+  const tools: Array<Extract<ChatItemBody, { kind: 'tool' }>> = []
   let at = Date.now()
 
   for (const line of lines) {
@@ -123,17 +125,65 @@ function antigravityTranscript(lines: string[]): Transcript {
       let text = raw.content
       const match = /<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/.exec(text)
       if (match?.[1]) text = match[1].trim()
+
+      if (Array.isArray(raw.media)) {
+        for (const m of raw.media) {
+          if (m && typeof m === 'object' && typeof (m as Record<string, unknown>).uri === 'string') {
+            const uri = (m as Record<string, unknown>).uri as string
+            if (!text.includes(uri)) text += `\n\n![image](${uri})`
+          }
+        }
+      }
+
       const id = 'agy:u:' + String(raw.step_index ?? crypto.randomUUID())
       entries.push({ at, item: { id, kind: 'user', text, images: [] } })
       messages.push({ at, role: 'user', text, ref: id })
     } else if (raw.type === 'PLANNER_RESPONSE') {
-      const id = 'agy:a:' + String(raw.step_index ?? crypto.randomUUID())
+      const stepId = String(raw.step_index ?? crypto.randomUUID())
+      const id = 'agy:a:' + stepId
       if (typeof raw.thinking === 'string' && raw.thinking.trim()) {
         entries.push({ at, item: { id: 'think:' + id, kind: 'reasoning', text: raw.thinking, streaming: false } })
       }
       if (typeof raw.content === 'string' && raw.content.trim()) {
         entries.push({ at, item: { id, kind: 'assistant', text: raw.content, streaming: false } })
         messages.push({ at, role: 'assistant', text: raw.content, ref: id })
+      }
+      if (Array.isArray(raw.tool_calls) && raw.tool_calls.length > 0) {
+        raw.tool_calls.forEach((call, index) => {
+          if (!call || typeof call !== 'object') return
+          const c = call as { name?: string; args?: Record<string, unknown> }
+          const name = c.name || 'tool'
+          const args = c.args ?? {}
+          const title = (typeof args.toolSummary === 'string' && args.toolSummary)
+            || (typeof args.CommandLine === 'string' && args.CommandLine)
+            || (typeof args.Path === 'string' && args.Path)
+            || (typeof args.query === 'string' && args.query)
+            || name
+          const input = typeof args.CommandLine === 'string'
+            ? args.CommandLine
+            : Object.keys(args).length > 0 ? clip(JSON.stringify(args, null, 2)) : null
+          const toolId = `agy:t:${stepId}:${index}`
+          const toolItem: Extract<ChatItemBody, { kind: 'tool' }> = {
+            id: toolId,
+            kind: 'tool',
+            name,
+            title,
+            input,
+            output: null,
+            status: 'done',
+            diffs: []
+          }
+          entries.push({ at, item: toolItem })
+          tools.push(toolItem)
+        })
+      }
+    } else if (raw.type === 'GENERIC') {
+      const last = tools.at(-1)
+      if (last && typeof raw.content === 'string') {
+        last.output = clip(raw.content.trim())
+        if (raw.status === 'ERROR') {
+          last.status = 'failed'
+        }
       }
     }
   }
