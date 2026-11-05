@@ -80,7 +80,7 @@ describe('ConversationService', () => {
     rmSync(root, { recursive: true, force: true })
   })
 
-  it.each(['antigravity', 'gemini'] as const)('refuses unsupported read-only %s starts before persisting or spawning', async (agent) => {
+  it.each(['gemini'] as const)('refuses unsupported read-only %s starts before persisting or spawning', async (agent) => {
     await expect(service.create(agent, [], true, { readOnly: true, deferStart: true }))
       .rejects.toMatchObject({ reason: 'read-only-unsupported' })
     await expect(service.create(agent, [], true, { deferStart: true }, null, undefined, { id: 'discussion-1', title: 'Read' }))
@@ -92,8 +92,15 @@ describe('ConversationService', () => {
     expect(daemon.spawns).toEqual([])
   })
 
+  it('allows antigravity read-only starts with deferStart', async () => {
+    const conversation = await service.create('antigravity', [], true, { permissionMode: 'ask', readOnly: true, deferStart: true }, null, undefined, { id: randomUUID(), title: 'Discussion' })
+    expect(conversation.agent).toBe('antigravity')
+    expect(conversation.workspaceReadOnly).toBe(true)
+    expect(store.chatOptions(conversation.id).permissionMode).toBe('ask')
+  })
+
   it('refuses to resume a legacy unsupported read-only conversation', async () => {
-    const legacy = store.create('antigravity', root, [root], randomUUID())
+    const legacy = store.create('gemini', root, [root], randomUUID())
     store.setWorkspaceReadOnly(legacy.id, true)
     store.setChatOptions(legacy.id, { permissionMode: 'bypass', allowBypass: true })
     await expect(service.continue(legacy.id, true)).rejects.toMatchObject({ reason: 'read-only-unsupported' })
@@ -104,7 +111,7 @@ describe('ConversationService', () => {
   it('refuses a read-only handoff before stopping the current agent', async () => {
     const current = await service.create('claude', [], true, { readOnly: true })
     expect(store.chatOptions(current.id).allowBypass).toBe(false)
-    await expect(service.handoff(current.id, 'antigravity', '', true, true))
+    await expect(service.handoff(current.id, 'gemini', '', true, true))
       .rejects.toMatchObject({ reason: 'read-only-unsupported' })
     expect(service.get(current.id).sessionId).toBe(current.sessionId)
     expect(daemon.spawns).toHaveLength(1)

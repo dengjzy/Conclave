@@ -1,8 +1,7 @@
 import type { AgentDescriptor } from './agent-descriptor'
 
 // Google's Antigravity ACP server, the one its Zed and JetBrains extensions run: its three session
-// modes are Conclave's ask, acceptEdits and bypass. It has no read-only or plan mode, so a stage that
-// must stay read-only refuses to start rather than run in one that edits.
+// modes are Conclave's ask, acceptEdits and bypass. Group discussions run it in ask mode.
 export const antigravity: AgentDescriptor = {
   translations: { en: {
     modes: {
@@ -32,7 +31,7 @@ export const antigravity: AgentDescriptor = {
   readOnlyMode: 'ask',
   // Signed in with a personal account, its file tools refuse anything outside its cwd.
   primaryOnlyFiles: true,
-  capabilities: { readOnly: false, unattended: false, bypass: true, autoMode: false, pathMentions: false, optionsWhileBusy: false, skills: false, userMcp: true, modelProviders: [], accounts: false },
+  capabilities: { unattended: false, bypass: true, autoMode: false, pathMentions: false, optionsWhileBusy: false, skills: false, userMcp: true, modelProviders: [], accounts: false },
   environment: {
     role: '聊天界面运行 Google 的 Antigravity ACP 服务（Zed、JetBrains 扩展用的同一个），由 Conclave 下载到自己的目录；不需要 agy 或 Antigravity 编辑器。',
     install: '在 设置 → 外部智能体 里下载 Antigravity ACP 服务',

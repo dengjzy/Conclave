@@ -522,11 +522,6 @@ describe('DiscussionService', () => {
 
   it('refuses to create discussion with members lacking read-only capability', async () => {
     await expect(discussions.create(fields({
-      members: [{ agent: 'antigravity', name: 'Ann' }, { agent: 'claude', name: 'Bob' }],
-      chair: 1
-    }))).rejects.toThrowError(expect.objectContaining({ reason: 'discussion-member-read-only' }))
-
-    await expect(discussions.create(fields({
       members: [{ agent: 'gemini', name: 'Gem' }, { agent: 'claude', name: 'Bob' }],
       chair: 1
     }))).rejects.toThrowError(expect.objectContaining({ reason: 'discussion-member-read-only' }))
@@ -536,7 +531,7 @@ describe('DiscussionService', () => {
     const discussion = await discussions.create(fields())
     await until(() => state(discussion.id) === 'done')
     await expect(discussions.addMember(discussion.id, {
-      agent: 'antigravity',
+      agent: 'gemini',
       name: 'Dan',
       role: 'analyst'
     })).rejects.toThrowError(expect.objectContaining({ reason: 'discussion-member-read-only' }))
@@ -678,7 +673,7 @@ describe('DiscussionService', () => {
     }
   })
 
-  it.each(['antigravity', 'gemini'] as const)('refuses legacy %s members after reopening', async (agent) => {
+  it.each(['gemini'] as const)('refuses legacy %s members after reopening', async (agent) => {
     const discussion = await discussions.create(fields())
     await until(() => state(discussion.id) === 'done')
     const ann = by(discussion, 'Ann')

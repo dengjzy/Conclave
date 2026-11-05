@@ -139,7 +139,7 @@ describe('reusable agent roles and delegated work', () => {
     expect(profiles.list().map((role) => role.id)).toEqual([reviewer.id])
   })
 
-  it.each(['antigravity', 'gemini'] as const)('rejects unsupported read-only direct work for %s before queueing', async (agent) => {
+  it.each(['gemini'] as const)('rejects unsupported read-only direct work for %s before queueing', async (agent) => {
     await expect(profiles.dispatch(parentId, undefined, 'Read only', undefined, { agent })).rejects.toMatchObject({ reason: 'read-only-unsupported' })
     conversations.setWorkspaceReadOnly(parentId, true)
     await expect(profiles.dispatch(parentId, undefined, 'Cannot escalate', undefined, { agent, capability: 'develop' })).rejects.toMatchObject({ reason: 'read-only-unsupported' })
