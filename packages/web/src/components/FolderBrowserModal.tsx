@@ -98,11 +98,11 @@ export function FolderBrowserModal({
           </div>
 
           {/* Breadcrumb Path Bar */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--surface-sunken)', padding: '6px 12px', borderRadius: 6, overflowX: 'auto' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--fill)', padding: '6px 12px', borderRadius: 'var(--radius-sm)', overflowX: 'auto' }}>
             <button
               type="button"
               className="link-button"
-              style={{ fontWeight: 600, color: 'var(--text-accent)' }}
+              style={{ fontWeight: 600, color: 'var(--accent)' }}
               onClick={() => void loadDirectory('/')}
             >
               /
@@ -116,7 +116,7 @@ export function FolderBrowserModal({
                     type="button"
                     className="link-button"
                     style={{
-                      color: idx === breadcrumbs.length - 1 ? 'var(--text-primary)' : 'var(--text-accent)',
+                      color: idx === breadcrumbs.length - 1 ? 'var(--text)' : 'var(--accent)',
                       fontWeight: idx === breadcrumbs.length - 1 ? 600 : 400
                     }}
                     onClick={() => void loadDirectory(full)}
@@ -133,13 +133,13 @@ export function FolderBrowserModal({
             style={{
               maxHeight: 320,
               overflowY: 'auto',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 6,
-              background: 'var(--surface-default)'
+              border: '1px solid var(--border)',
+              borderRadius: 'var(--radius-sm)',
+              background: 'var(--surface)'
             }}
           >
             {loading && <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-muted)' }}>正在加载目录...</div>}
-            {error && <div style={{ padding: 16, color: 'var(--text-danger)' }}>{error}</div>}
+            {error && <div style={{ padding: 16, color: 'var(--danger)' }}>{error}</div>}
             {!loading && listing && (
               <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
                 {listing.parent && (
@@ -157,7 +157,7 @@ export function FolderBrowserModal({
                         alignItems: 'center',
                         gap: 8,
                         color: 'var(--text-muted)',
-                        borderBottom: '1px solid var(--border-subtle)'
+                        borderBottom: '1px solid var(--border)'
                       }}
                       onClick={() => void loadDirectory(listing.parent!)}
                     >
@@ -183,16 +183,16 @@ export function FolderBrowserModal({
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
-                        borderBottom: '1px solid var(--border-subtle)'
+                        borderBottom: '1px solid var(--border)'
                       }}
                       onClick={() => void loadDirectory(dir.path)}
                     >
                       <span style={{ display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         <span style={{ fontSize: '1rem' }}>📁</span>
-                        <span style={{ color: 'var(--text-primary)' }}>{dir.name}</span>
+                        <span style={{ color: 'var(--text)' }}>{dir.name}</span>
                       </span>
                       {dir.isGit && (
-                        <span style={{ fontSize: '0.7rem', padding: '2px 6px', borderRadius: 4, background: 'var(--surface-raised)', color: 'var(--text-accent)' }}>
+                        <span style={{ fontSize: '0.7rem', padding: '2px 6px', borderRadius: 'var(--radius-xs)', background: 'var(--fill-2)', color: 'var(--accent)' }}>
                           git
                         </span>
                       )}
@@ -204,7 +204,7 @@ export function FolderBrowserModal({
           </div>
         </div>
 
-        <footer className="modal-footer" style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 20px', borderTop: '1px solid var(--border-subtle)' }}>
+        <footer className="modal-footer" style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 20px', borderTop: '1px solid var(--border)' }}>
           <button type="button" className="button tertiary" onClick={() => void openNativePicker()}>
             🖥️ 系统原生窗口
           </button>

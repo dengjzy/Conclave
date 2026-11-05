@@ -34,18 +34,34 @@
   --code-type: light-dark(#c18401, #e5c07b);
   --code-variable: light-dark(#e45649, #e06c75);
 
-  --warning: #c79a1c;
+  --warning: light-dark(#c79a1c, #e0b44c);
 
-  --status-pending: #8a8578;
-  --status-abandoned: #b5b0a3;
-  --status-running: #2f6fdb;
-  --status-done: #3b8a4f;
+  --status-pending: light-dark(#8a8578, #8a8f98);
+  --status-abandoned: light-dark(#b5b0a3, #5d564c);
+  --status-running: light-dark(#2f6fdb, #60b1ff);
+  --status-done: light-dark(#3b8a4f, #4cb782);
   --status-review: var(--warning);
 
   --radius: 8px;
   --radius-sm: 6px;
   --radius-xs: 4px;
   --radius-lg: 12px;
+  --radius-full: 999px;
+
+  /* 4px spacing scale (DESIGN.md, 间距) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* Motion & timing (DESIGN.md, 焦点与动效) */
+  --duration-fast: 120ms;
+  --duration-normal: 200ms;
+  --ease-standard: cubic-bezier(0.16, 1, 0.3, 1);
+
   /* Dark has no shadows: a transparent one reads as none. */
   --shadow: 0 1px 2px light-dark(rgb(0 0 0 / 6%), transparent);
   /* Something floating over other apps' windows (the card of waiting requests). */
