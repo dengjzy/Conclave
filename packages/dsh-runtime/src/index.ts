@@ -82,14 +82,15 @@ export function apply(ctx: Context): void {
     if (request.agent?.session.id !== sessionId) return next()
     const id = `conclave-dsh-question-${++serial}`
     const plan = request.questions.length === 1 ? request.questions[0] : undefined
-    const isPlan = plan?.intent?.kind === 'plan-review'
+    const planIntent = plan?.intent?.kind === 'plan-review' ? plan.intent : null
+    const isPlan = planIntent !== null
     const answer = new Promise<unknown>((resolve, reject) => { questions.set(id, { resolve, reject }) })
     const abort = () => questions.get(id)?.reject(new UserQuestionError('Conclave: question cancelled', 'ASK_ABORTED'))
     if (request.signal?.aborted) abort()
     else request.signal?.addEventListener('abort', abort, { once: true })
     if (isPlan) reviewing = true
     write({ jsonrpc: '2.0', id, method: isPlan ? '_conclave/plan' : '_conclave/question', params: isPlan ? {
-      sessionId, toolCallId: plan.intent?.callId ?? id, plan: plan.detail, name: plan.header
+      sessionId, toolCallId: planIntent?.callId ?? id, plan: plan?.detail, name: plan?.header
     } : {
       sessionId, toolCallId: request.wait?.callId ?? id,
       questions: request.questions.map((question) => ({ id: question.id, prompt: question.question, allowMultiple: question.multiSelect, options: question.options?.map((option) => ({ id: option.label, label: option.label })) ?? [] }))
@@ -98,7 +99,7 @@ export function apply(ctx: Context): void {
       const result = Answer.parse(await answer)
       if (isPlan && plan) {
         if (result.outcome.outcome === 'cancelled') throw new UserQuestionError('Conclave: plan review cancelled', 'ASK_CANCELLED')
-        return { answers: [{ id: plan.id, selected: [result.outcome.outcome === 'accepted' ? plan.intent?.approve ?? 'Approve' : 'Keep planning'] }] }
+        return { answers: [{ id: plan.id, selected: [result.outcome.outcome === 'accepted' ? planIntent?.approve ?? 'Approve' : 'Keep planning'] }] }
       }
       if (result.outcome.outcome !== 'answered') throw new UserQuestionError('Conclave: question cancelled', 'ASK_CANCELLED')
       const answers = result.outcome.answers ?? []

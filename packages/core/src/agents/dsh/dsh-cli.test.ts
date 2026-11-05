@@ -17,6 +17,7 @@ async function fixture(failOnce = false) {
   await writeFile(command, `#!/usr/bin/env node
 const fs = require('node:fs')
 const path = require('node:path')
+if (process.argv.includes('--version')) { console.log('0.2.2-rc.1'); process.exit(0); }
 const profile = path.join(process.env.DSH_HOME, 'profiles', 'conclave')
 fs.mkdirSync(profile, {recursive:true})
 const calls = path.join(profile, 'calls')
@@ -51,5 +52,15 @@ describe.skipIf(process.platform === 'win32')('DSH managed profile', () => {
     await expect(prepareDshProfile(f.command, f.bundle, f.home)).rejects.toMatchObject({ reason: 'dsh-runtime-install-failed' })
     await prepareDshProfile(f.command, f.bundle, f.home)
     expect(await readFile(existing, 'utf8')).toBe('user-config')
+  })
+
+  it('writes and updates compatibility exemptions for profile packages', async () => {
+    const f = await fixture()
+    const deepseekDir = path.join(f.profile, 'node_modules', '@deepseek-ai', 'dsh-session')
+    await mkdir(deepseekDir, { recursive: true })
+    await writeFile(path.join(deepseekDir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-session', version: '0.2.1-rc.2' }))
+    await prepareDshProfile(f.command, f.bundle, f.home)
+    const compat = JSON.parse(await readFile(path.join(f.profile, 'compatibility.json'), 'utf8'))
+    expect(compat['@deepseek-ai/dsh-session@0.2.1-rc.2']).toEqual(['0.2.2-rc.1'])
   })
 })

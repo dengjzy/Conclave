@@ -47,7 +47,7 @@ describe('DSH launch configuration', () => {
     expect(dshCompatible('0.2.0')).toBe(false)
     expect(dshCompatible('0.2.1-rc.1')).toBe(false)
     expect(dshCompatible(null)).toBe(false)
-    expect(dshInstallation('win32')).toMatchObject({ agent: 'dsh', shell: 'powershell', command: expect.stringContaining('@0.2.1-rc.2') })
+    expect(dshInstallation('win32')).toMatchObject({ agent: 'dsh', shell: 'powershell', command: expect.stringContaining('@0.2.2-rc.1') })
     expect(dshInstallation('linux')?.shell).toBe('bash')
     expect(dshInstallation('freebsd')).toBeNull()
   })

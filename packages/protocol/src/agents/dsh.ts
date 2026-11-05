@@ -18,9 +18,9 @@ export const dsh: AgentDescriptor = {
   capabilities: { unattended: true, bypass: true, autoMode: false, pathMentions: false, optionsWhileBusy: false, skills: true, userMcp: true, modelProviders: ['openai-chat', 'openai-responses', 'anthropic'], accounts: false },
   environment: {
     role: '通过 Conclave 专用 profile 运行；首次使用时准备随应用提供的运行时插件。',
-    install: 'npm install -g @deepseek-ai/dsh@0.2.1-rc.2',
+    install: 'npm install -g @deepseek-ai/dsh@0.2.2-rc.1',
     signIn: '在 DSH 中配置模型服务商，或在 Conclave 的服务商设置中添加 API Key',
-    outdated: { status: '需要 DSH 0.2.1-rc.2', hint: '，请安装 0.2.1-rc.2' }
+    outdated: { status: '需要 DSH 0.2.2-rc.1', hint: '，请使用 0.2.2-rc.1 以上版本' }
   },
   usageWhere: 'DeepSeek 官方余额可在底部状态栏查看；其他服务商请到对应平台查看',
   translations: { en: {
@@ -33,9 +33,9 @@ export const dsh: AgentDescriptor = {
     },
     environment: {
       role: 'Runs in an Conclave profile; prepares the bundled runtime plugin on first use.',
-      install: 'npm install -g @deepseek-ai/dsh@0.2.1-rc.2',
+      install: 'npm install -g @deepseek-ai/dsh@0.2.2-rc.1',
       signIn: 'Configure a model provider in DSH, or add an API key in Conclave provider settings',
-      outdated: { status: 'Requires DSH 0.2.1-rc.2', hint: '; install 0.2.1-rc.2' }
+      outdated: { status: 'Requires DSH 0.2.2-rc.1', hint: '; use 0.2.2-rc.1 or later' }
     },
     usageWhere: 'DeepSeek API balances appear in the status bar; check other providers on their own platforms'
   } }
