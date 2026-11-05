@@ -23,9 +23,9 @@ describe('direct delegation choices', () => {
       const conversation = { ...parent, ...patch }
       expect(delegationReadOnly(conversation)).toBe(true)
       expect(directDelegationTarget(conversation, 'codex', 'develop', catalog, {}, null)?.capability).toBe('readOnly')
-      expect(directDelegationTarget(conversation, 'antigravity', 'develop', null, {}, null)).toBeNull()
+      expect(directDelegationTarget(conversation, 'gemini', 'develop', null, {}, null)).toBeNull()
     }
-    expect(directDelegationTarget(parent, 'antigravity', 'develop', null, {}, null)?.capability).toBe('develop')
+    expect(directDelegationTarget(parent, 'gemini', 'develop', null, {}, null)?.capability).toBe('develop')
   })
 
   it('waits for catalogs and refuses retired explicit models instead of silently switching', () => {
