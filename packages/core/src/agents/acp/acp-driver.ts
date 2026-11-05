@@ -157,6 +157,12 @@ export class AcpDriver implements ChatDriver {
     const known = ChatPermissionMode.safeParse(mode)
     return known.success && this.dialect.modes[known.data] !== undefined
   }
+  private get readOnlyMode(): ChatPermissionMode {
+    if (this.hasMode('readOnly')) return 'readOnly'
+    const preferred = this.options.preferred?.permissionMode
+    if (preferred && this.hasMode(preferred)) return preferred as ChatPermissionMode
+    return this.hasMode('plan') ? 'plan' : 'ask'
+  }
   private toolName(update: Pick<z.infer<typeof Update>, 'kind' | 'rawInput' | 'name' | 'title' | 'toolCallId'>, old: string | undefined): string {
     return this.dialect.toolName?.(update.rawInput, update.name, update.title, update.toolCallId) ?? (update.kind === 'execute' ? 'commandExecution' : update.kind === 'edit' ? 'fileChange' : old ?? update.kind ?? 'tool')
   }
@@ -293,7 +299,7 @@ export class AcpDriver implements ChatDriver {
 
   private change(option: ChatOption, value: string, id: string): unknown {
     if (option === 'permissionMode' && this.options.planOnly && value !== 'plan') throw new Rejection('plan-only', '此阶段只能规划')
-    if (option === 'permissionMode' && this.options.readOnly && value !== 'readOnly') throw new Rejection('plan-only', '只读成员不能换模式')
+    if (option === 'permissionMode' && this.options.readOnly && value !== this.readOnlyMode) throw new Rejection('plan-only', '只读成员不能换模式')
     if (option === 'effort') return this.changeEffort(value, id)
     const category = option === 'permissionMode' ? 'mode' : 'model'
     const config = this.config.find((entry) => entry.category === category)
@@ -520,7 +526,7 @@ export class AcpDriver implements ChatDriver {
       if (!this.session) { this.startError = `${this.name} 没有返回会话 ID`; return }
       this.catalog(opened.data)
       this.setup = true
-      const preferred = { ...this.options.preferred, ...(this.options.planOnly ? { permissionMode: 'plan' } : this.options.readOnly ? { permissionMode: 'readOnly' } : {}) }
+      const preferred = { ...this.options.preferred, ...(this.options.planOnly ? { permissionMode: 'plan' } : this.options.readOnly ? { permissionMode: this.readOnlyMode } : {}) }
       this.initialChoices = (['permissionMode', 'model', 'effort'] as const).flatMap((option) => preferred[option] ? [{ option, value: preferred[option] }] : [])
       // A log from before the catalog came second has it already.
       if (this.modelsRead) this.nextInitial(at)
@@ -631,7 +637,7 @@ export class AcpDriver implements ChatDriver {
     const effort = this.config.find((entry) => entry.category === 'thought_level')
     this.state.set({
       permissionMode: mode ? this.conclaveMode(mode.currentValue) : null,
-      permissionModes: mode ? valuesOf(mode).flatMap((entry) => { const mapped = this.conclaveMode(entry.value); return mapped && (!this.options.planOnly || mapped === 'plan') && (!this.options.readOnly || mapped === 'readOnly') ? [mapped] : [] }) : [],
+      permissionModes: mode ? valuesOf(mode).flatMap((entry) => { const mapped = this.conclaveMode(entry.value); return mapped && (!this.options.planOnly || mapped === 'plan') && (!this.options.readOnly || mapped === this.readOnlyMode) ? [mapped] : [] }) : [],
       model: model?.currentValue ?? null,
       models: model ? this.offered(valuesOf(model)).map((entry) => ({ id: entry.value, label: entry.name, description: entry.description ?? null, efforts: this.models.find((one) => one.id === entry.value)?.efforts ?? (entry.value === model.currentValue && effort ? valuesOf(effort).map((one) => one.value) : []), isDefault: entry.value === model.currentValue })) : [],
       effort: effort?.currentValue ?? null

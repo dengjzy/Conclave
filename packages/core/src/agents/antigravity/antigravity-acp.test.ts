@@ -65,10 +65,13 @@ describe('Antigravity ACP', () => {
     expect(items(driver, 'state').at(-1)?.permissionMode).toBe('acceptEdits')
   })
 
-  it('refuses to start a stage that must stay read-only, having no such mode', () => {
+  it('starts a stage that must stay read-only in ask mode', () => {
     const { driver } = start({ readOnly: true })
-    expect(driver.ready()).toBe(false)
-    expect(driver.failure()).toBeTruthy()
+    expect(driver.ready()).toBe(true)
+    const state = items(driver, 'state').at(-1)
+    expect(state?.permissionMode).toBe('ask')
+    expect(state?.permissionModes).toEqual(['ask'])
+    expect(() => driver.setOption('permissionMode', 'acceptEdits')).toThrow('只读成员不能换模式')
   })
 
   it('names the other projects only on the wire of its first prompt', () => {
