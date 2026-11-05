@@ -11,7 +11,16 @@
 | TypeScript Token Definitions | [`packages/web/src/tokens/index.ts`](packages/web/src/tokens/index.ts) |
 | Visual Principles & Rationale | [`DESIGN.md`](DESIGN.md) |
 
-Theming and dark mode resolve automatically through CSS `light-dark()` driven by `color-scheme` (following the system preference, or pinned in user settings via `[data-theme='light'|'dark']`). Five palette overrides (`terracotta`, `indigo`, `nord`, `paper`, `catppuccin`) apply via `[data-palette]` attributes.
+Theming and dark mode resolve automatically through CSS `light-dark()` driven by `color-scheme` (following the system preference, or pinned in user settings via `[data-theme='light'|'dark']`). Two curated minimal palettes (`studio`, `ember`) apply via `[data-palette]` attributes.
+
+---
+
+## Palettes
+
+| Palette | Key | Rationale / Character | Canvas / Container (Light) | Canvas / Container (Dark) | Accent (Light / Dark) |
+|---|---|---|---|---|---|
+| **Studio** | `studio` | Default. Pure neutral cold grays; deep OLED true black in dark mode. Single cyan/sky hue. | `#f8f9fa` / `#ffffff` | `#000000` / `#0c0d0e` | `#0284c7` / `#38bdf8` |
+| **Ember** | `ember` | Warm stone and titanium ivory by day, volcanic charcoal by night. Glowing amber accent. | `#f6f4f0` / `#fcfbf9` | `#0c0a09` / `#1c1917` | `#d97706` / `#fbbf24` |
 
 ---
 
@@ -21,8 +30,8 @@ Theming and dark mode resolve automatically through CSS `light-dark()` driven by
 
 | Token | CSS Variable | Light | Dark | Use for | Do not use for |
 |---|---|---|---|---|---|
-| `surface.canvas` | `--bg` | `#f8f8f8` | `#000000` | Application window root, background canvas behind panes | Content cards, buttons, or input boxes |
-| `surface.card` | `--surface` | `#ffffff` | `#0d0d0d` | Main message stream, card panels, inspectors, modal containers | Canvas background; outer window border |
+| `surface.canvas` | `--bg` | `#f8f9fa` | `#000000` | Application window root, background canvas behind panes | Content cards, buttons, or input boxes |
+| `surface.card` | `--surface` | `#ffffff` | `#0c0d0e` | Main message stream, card panels, inspectors, modal containers | Canvas background; outer window border |
 | `surface.fill.subtle` | `--fill` | `rgb(0 0 0 / 3%)` | `rgb(255 255 255 / 6%)` | Quiet containers, tag backgrounds, quiet hover wash | Solid primary action buttons; active state tabs |
 | `surface.fill.active` | `--fill-2` | `rgb(0 0 0 / 6%)` | `rgb(255 255 255 / 10%)` | Pressed button states, selected row highlights, pill chips | Large area container backgrounds |
 | `surface.muted` | `--surface-muted` | `rgb(0 0 0 / 4%)` | `rgb(255 255 255 / 6%)` | Backward-compatible alias for subtle surface wash | New component backgrounds (prefer `--fill`) |
@@ -31,49 +40,49 @@ Theming and dark mode resolve automatically through CSS `light-dark()` driven by
 
 | Token | CSS Variable | Light | Dark | Use for | Do not use for |
 |---|---|---|---|---|---|
-| `border.subtle` | `--border` | `#eeeeee` | `#1a1a1a` | Hairline section dividers, card outer frames, table cell borders | Form input outlines; active selection borders |
-| `border.strong` | `--border-2` | `#e3e3e3` | `#202020` | Input controls, blockquote vertical rules, dashed splitters | Subtle nested card lines; full view partitions |
+| `border.subtle` | `--border` | `#ebecee` | `#18191b` | Hairline section dividers, card outer frames, table cell borders | Form input outlines; active selection borders |
+| `border.strong` | `--border-2` | `#e2e4e7` | `#232528` | Input controls, blockquote vertical rules, dashed splitters | Subtle nested card lines; full view partitions |
 
 ### Typography & Contrast
 
 | Token | CSS Variable | Light | Dark | Use for | Do not use for |
 |---|---|---|---|---|---|
-| `text.primary` | `--text` | `#080808` | `#ffffff` | Primary headings, body copy, active button labels, icons | Low-priority metadata or timestamp labels |
-| `text.muted` | `--text-muted` | `#666666` | `#aaaaaa` | Secondary labels, agent descriptions, tab inactive titles | Main message text; critical error explanations |
-| `text.tertiary` | `--text-3` | `#999999` | `#6f6f6f` | Timestamps, token usage counts, keyboard shortcuts (`kbd`) | Interactive button labels; readable content text |
+| `text.primary` | `--text` | `#09090b` | `#fafafa` | Primary headings, body copy, active button labels, icons | Low-priority metadata or timestamp labels |
+| `text.muted` | `--text-muted` | `#64748b` | `#a1a1aa` | Secondary labels, agent descriptions, tab inactive titles | Main message text; critical error explanations |
+| `text.tertiary` | `--text-3` | `#94a3b8` | `#71717a` | Timestamps, token usage counts, keyboard shortcuts (`kbd`) | Interactive button labels; readable content text |
 
 ### Action & Interactive Focus (Single Action Hue)
 
 | Token | CSS Variable | Light | Dark | Use for | Do not use for |
 |---|---|---|---|---|---|
-| `action.accent` | `--accent` | `#c2542d` | `#e0754c` | The single primary action button per view, active checkmarks, links | Card background decoration; general status badges |
-| `action.text` | `--accent-text` | `#ffffff` | `#1a0f0a` | Foreground text displayed directly on `--accent` solid fills | Text on standard neutral surfaces |
-| `action.bg.subtle` | `--accent-bg` | `rgb(194 84 45 / 9%)` | `rgb(224 117 76 / 14%)` | Active tab background tint, current agent icon container wash | Solid action buttons; border outlines |
-| `action.focus` | `--focus` | `#c2542d55` | `#e0754c55` | 2px keyboard focus outline (`:focus-visible`) | Mouse-click focus ring; decorative card borders |
+| `action.accent` | `--accent` | `#0284c7` | `#38bdf8` | The single primary action button per view, active checkmarks, links | Card background decoration; general status badges |
+| `action.text` | `--accent-text` | `#ffffff` | `#09090b` | Foreground text displayed directly on `--accent` solid fills | Text on standard neutral surfaces |
+| `action.bg.subtle` | `--accent-bg` | `rgb(2 132 199 / 9%)` | `rgb(56 189 248 / 14%)` | Active tab background tint, current agent icon container wash | Solid action buttons; border outlines |
+| `action.focus` | `--focus` | `#0284c755` | `#38bdf855` | 2px keyboard focus outline (`:focus-visible`) | Mouse-click focus ring; decorative card borders |
 
 ### Agent & System State (Mixed-Initiative & Observability)
 
 | Token | CSS Variable | Light | Dark | Use for | Do not use for |
 |---|---|---|---|---|---|
-| `state.running` | `--status-running` | `#2f6fdb` | `#60b1ff` | Active agent execution, tool execution spinner, streaming text | Static queued states; completed tasks |
-| `state.done` | `--status-done` | `#3b8a4f` | `#4cb782` | Successfully completed rounds, verified tasks, added git diff lines | Idle or waiting states; decorative highlights |
-| `state.review` | `--status-review` / `--warning` | `#c79a1c` | `#e0b44c` | Human-in-the-loop: Agent waiting for user reply, quota caution | Terminal errors; standard progress indicators |
-| `state.pending` | `--status-pending` | `#8a8578` | `#8a8f98` | Tasks queued in backlog, inactive sub-agent in delegation graph | Blocked or failed execution states |
-| `state.abandoned`| `--status-abandoned` | `#b5b0a3` | `#5d564c` | Cancelled runs, archived tasks, dismissed delegations | Normal completion; active warning states |
-| `state.danger` | `--danger` | `#b3261e` | `#ef6b62` | Unrecoverable errors, tool failures, deleted git diff lines | Non-fatal warnings; user confirmation prompts |
-| `state.info` | `--info` | `#0072f5` | `#60b1ff` | Step progress rings, modified files, informational notes | Interactive primary buttons; error banners |
+| `state.running` | `--status-running` | `#0284c7` | `#38bdf8` | Active agent execution, tool execution spinner, streaming text | Static queued states; completed tasks |
+| `state.done` | `--status-done` | `#16a34a` | `#34d399` | Successfully completed rounds, verified tasks, added git diff lines | Idle or waiting states; decorative highlights |
+| `state.review` | `--status-review` / `--warning` | `#d97706` | `#fbbf24` | Human-in-the-loop: Agent waiting for user reply, quota caution | Terminal errors; standard progress indicators |
+| `state.pending` | `--status-pending` | `#64748b` | `#71717a` | Tasks queued in backlog, inactive sub-agent in delegation graph | Blocked or failed execution states |
+| `state.abandoned`| `--status-abandoned` | `#cbd5e1` | `#3f3f46` | Cancelled runs, archived tasks, dismissed delegations | Normal completion; active warning states |
+| `state.danger` | `--danger` | `#dc2626` | `#f87171` | Unrecoverable errors, tool failures, deleted git diff lines | Non-fatal warnings; user confirmation prompts |
+| `state.info` | `--info` | `#0284c7` | `#38bdf8` | Step progress rings, modified files, informational notes | Interactive primary buttons; error banners |
 
 ### Observability Syntax & Multi-Agent Topology
 
 | Token | CSS Variable | Light | Dark | Use for | Do not use for |
 |---|---|---|---|---|---|
-| `code.keyword` | `--code-keyword` | `#a626a4` | `#c678dd` | Language keywords in diffs and code blocks | General UI text headings |
-| `code.string` | `--code-string` | `#50a14f` | `#98c379` | String literals in code syntax | Status completion labels |
-| `code.number` | `--code-number` | `#986801` | `#d19a66` | Numbers, constants, unit values | System warning badges |
-| `code.comment` | `--code-comment` | `#a0a1a7` | `#7f848e` | Code comments, secondary syntax | Primary diff text |
-| `code.title` | `--code-title` | `#4078f2` | `#61afef` | Function and class names in code | Interactive web links |
-| `code.type` | `--code-type` | `#c18401` | `#e5c07b` | Type annotations, interfaces, structs | Alert indicators |
-| `code.variable`| `--code-variable` | `#e45649` | `#e06c75` | Variable identifiers, parameter names | Destructive action triggers |
+| `code.keyword` | `--code-keyword` | `#9333ea` | `#c084fc` | Language keywords in diffs and code blocks | General UI text headings |
+| `code.string` | `--code-string` | `#16a34a` | `#4ade80` | String literals in code syntax | Status completion labels |
+| `code.number` | `--code-number` | `#d97706` | `#fbbf24` | Numbers, constants, unit values | System warning badges |
+| `code.comment` | `--code-comment` | `#94a3b8` | `#71717a` | Code comments, secondary syntax | Primary diff text |
+| `code.title` | `--code-title` | `#0284c7` | `#38bdf8` | Function and class names in code | Interactive web links |
+| `code.type` | `--code-type` | `#d97706` | `#f59e0b` | Type annotations, interfaces, structs | Alert indicators |
+| `code.variable`| `--code-variable` | `#e11d48` | `#fb7185` | Variable identifiers, parameter names | Destructive action triggers |
 | `graph.1`–`6` | `--graph-1`..`6` | *syntax cycle* | *syntax cycle* | Multi-agent causality topology lines, git branches, usage charts | UI button colors; general surface cards |
 
 ---
@@ -116,7 +125,7 @@ Theming and dark mode resolve automatically through CSS `light-dark()` driven by
 
 **Rules**
 - **Surfaces over Heavy Shadows**: Hierarchy is built through surfaces (`--bg` → `--surface` → `--fill`) and hairline borders (`--border`).
-- **Zero Dark Shadows**: Dark mode renders zero box-shadows (`transparent`). Depth is created exclusively by surface lightness steps (`#000000` canvas vs `#0d0d0d` containers).
+- **Zero Dark Shadows**: Dark mode renders zero box-shadows (`transparent`). Depth is created exclusively by surface lightness steps (`#000000` canvas vs `#0c0d0e` containers in Studio; `#0c0a09` vs `#1c1917` in Ember).
 
 ---
 

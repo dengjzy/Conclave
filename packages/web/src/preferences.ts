@@ -1,7 +1,6 @@
 import { AgentKind, LanguagePreference, TranslateLanguage } from '@conclave/protocol'
 import { z } from 'zod'
 import { create } from 'zustand'
-import { BACKDROPS } from './backdrops'
 import { PALETTES } from './palettes'
 import { DEFAULT_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH } from './sidebar-width'
 import { SetupProgress } from './setup-progress'
@@ -20,9 +19,7 @@ const Preferences = z.object({
   language: LanguagePreference.default('zh-CN').catch('zh-CN'),
   theme: z.enum(['system', 'light', 'dark']).default('light').catch('light'),
   // The set of colours the interface is drawn in; each has a light and a dark side.
-  palette: z.enum(PALETTES).catch('terracotta'),
-  // Experimental: the gradient behind the sidebar and status bar; none keeps the flat canvas.
-  backdrop: z.enum(['none', ...BACKDROPS]).catch('none'),
+  palette: z.enum(PALETTES).catch('studio'),
   terminalFontSize: z.number().int().min(10).max(20).catch(12),
   // How far apart the terminal's lines are, as a multiple of the font's own line: Geist Mono's is
   // already a third taller than its size, enough as it is.

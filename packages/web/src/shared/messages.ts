@@ -990,18 +990,6 @@ export const MESSAGES = {
     "zh": "关闭",
     "en": "Close"
   },
-  "BackdropPicker.disableGradientBackground": {
-    "zh": "关闭渐变背景",
-    "en": "Disable gradient background"
-  },
-  "BackdropPicker.fromTheSlackThemeOfTheSameName": {
-    "zh": "{name}：取自 Slack 的同名主题",
-    "en": "{name}: from the Slack theme of the same name"
-  },
-  "BackdropPicker.fromSlackSTheme": {
-    "zh": "取自 Slack 的 {name} 主题",
-    "en": "From Slack's {name} theme"
-  },
   "BranchStatus.noGitBranch": {
     "zh": "无 Git 分支",
     "en": "No Git branch"
@@ -10945,6 +10933,22 @@ export const MESSAGES = {
   "overview.tomorrow": {
     "zh": "明天",
     "en": "Tomorrow"
+  },
+  "palettes.studio": {
+    "zh": "极简工坊",
+    "en": "Studio"
+  },
+  "palettes.studioOrigin": {
+    "zh": "中性纯净灰阶与纯黑，冷调蓝点缀操作，极致克制",
+    "en": "Pure neutral grays with true black and electric blue, minimal restraint"
+  },
+  "palettes.ember": {
+    "zh": "暖木微光",
+    "en": "Ember"
+  },
+  "palettes.emberOrigin": {
+    "zh": "温润石墨与象牙白，琥珀金点缀操作，温润舒适",
+    "en": "Warm charcoal and ivory with glowing amber, calm and eye-friendly"
   },
   "palettes.terracotta": {
     "zh": "赤陶",

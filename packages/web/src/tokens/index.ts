@@ -6,7 +6,7 @@
  * Semantic usage rules and constraints reside in `TOKENS.md` and `DESIGN.md`.
  */
 
-export const PALETTES = ['terracotta', 'indigo', 'nord', 'paper', 'catppuccin'] as const
+export const PALETTES = ['studio', 'ember'] as const
 export type Palette = (typeof PALETTES)[number]
 
 /** Semantic surface and background tokens */

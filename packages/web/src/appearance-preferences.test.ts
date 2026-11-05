@@ -6,7 +6,7 @@ describe('appearance group defaults', () => {
   const customized = {
     ...DEFAULT_PREFERENCES,
     theme: 'dark' as const,
-    palette: 'nord' as const,
+    palette: 'ember' as const,
     chatFontSize: 18,
     chatFontFamily: 'Custom family',
     terminalFontSize: 16,
@@ -18,7 +18,7 @@ describe('appearance group defaults', () => {
     const preview = withAppearanceDefaults(customized, DEFAULT_PREFERENCES, 'chat')
     expect(preview.chatFontSize).toBe(DEFAULT_PREFERENCES.chatFontSize)
     expect(preview.chatFontFamily).toBe(DEFAULT_PREFERENCES.chatFontFamily)
-    expect(preview.palette).toBe('nord')
+    expect(preview.palette).toBe('ember')
     expect(preview.terminalFontSize).toBe(16)
     expect(preview.notifications).toBe(false)
     expect(customized.chatFontSize).toBe(18)

@@ -4,42 +4,42 @@
    attribute on any element retints that element, which is how the settings draw their swatches.
    The rules for choosing these values are in DESIGN.md. */
 :root,
-[data-palette='terracotta'] {
-  --bg: light-dark(#f8f8f8, #000000);
-  --surface: light-dark(#ffffff, #0d0d0d);
+[data-palette='studio'] {
+  --bg: light-dark(#f8f9fa, #000000);
+  --surface: light-dark(#ffffff, #0c0d0e);
   /* Fills are translucent so they layer on any surface: a wash for hover and quiet boxes, a
      second step for pressed and selected. */
   --surface-muted: light-dark(rgb(0 0 0 / 4%), rgb(255 255 255 / 6%));
   --fill: light-dark(rgb(0 0 0 / 3%), rgb(255 255 255 / 6%));
   --fill-2: light-dark(rgb(0 0 0 / 6%), rgb(255 255 255 / 10%));
-  --border: light-dark(#eeeeee, #1a1a1a);
-  --border-2: light-dark(#e3e3e3, #202020);
-  --text: light-dark(#080808, #ffffff);
-  --text-muted: light-dark(#666666, #aaaaaa);
-  --text-3: light-dark(#999999, #6f6f6f);
-  --accent: light-dark(#c2542d, #e0754c);
-  --accent-text: light-dark(#ffffff, #1a0f0a);
-  --accent-bg: light-dark(rgb(194 84 45 / 9%), rgb(224 117 76 / 14%));
-  --info: light-dark(#0072f5, #60b1ff);
-  --danger: light-dark(#b3261e, #ef6b62);
-  --focus: light-dark(#c2542d55, #e0754c55);
-  --mark-mono: light-dark(#000000, #ffffff);
+  --border: light-dark(#ebecee, #18191b);
+  --border-2: light-dark(#e2e4e7, #232528);
+  --text: light-dark(#09090b, #fafafa);
+  --text-muted: light-dark(#64748b, #a1a1aa);
+  --text-3: light-dark(#94a3b8, #71717a);
+  --accent: light-dark(#0284c7, #38bdf8);
+  --accent-text: light-dark(#ffffff, #09090b);
+  --accent-bg: light-dark(rgb(2 132 199 / 9%), rgb(56 189 248 / 14%));
+  --info: light-dark(#0284c7, #38bdf8);
+  --danger: light-dark(#dc2626, #f87171);
+  --focus: light-dark(#0284c755, #38bdf855);
+  --mark-mono: light-dark(#09090b, #fafafa);
 
   /* Code in replies, coloured by kind of token: One Light and One Dark. */
-  --code-keyword: light-dark(#a626a4, #c678dd);
-  --code-string: light-dark(#50a14f, #98c379);
-  --code-number: light-dark(#986801, #d19a66);
-  --code-comment: light-dark(#a0a1a7, #7f848e);
-  --code-title: light-dark(#4078f2, #61afef);
-  --code-type: light-dark(#c18401, #e5c07b);
-  --code-variable: light-dark(#e45649, #e06c75);
+  --code-keyword: light-dark(#9333ea, #c084fc);
+  --code-string: light-dark(#16a34a, #4ade80);
+  --code-number: light-dark(#d97706, #fbbf24);
+  --code-comment: light-dark(#94a3b8, #71717a);
+  --code-title: light-dark(#0284c7, #38bdf8);
+  --code-type: light-dark(#d97706, #f59e0b);
+  --code-variable: light-dark(#e11d48, #fb7185);
 
-  --warning: light-dark(#c79a1c, #e0b44c);
+  --warning: light-dark(#d97706, #fbbf24);
 
-  --status-pending: light-dark(#8a8578, #8a8f98);
-  --status-abandoned: light-dark(#b5b0a3, #5d564c);
-  --status-running: light-dark(#2f6fdb, #60b1ff);
-  --status-done: light-dark(#3b8a4f, #4cb782);
+  --status-pending: light-dark(#64748b, #71717a);
+  --status-abandoned: light-dark(#cbd5e1, #3f3f46);
+  --status-running: light-dark(#0284c7, #38bdf8);
+  --status-done: light-dark(#16a34a, #34d399);
   --status-review: var(--warning);
 
   --radius: 8px;
@@ -80,123 +80,41 @@
   color-scheme: light;
 }
 
-/* Indigo, after Linear: cool near-black greys and a single indigo for action. */
-[data-palette='indigo'] {
-  --bg: light-dark(#fcfcfd, #08090a);
-  --surface: light-dark(#ffffff, #0f1011);
-  --surface-muted: light-dark(rgb(40 42 48 / 4%), rgb(247 248 248 / 6%));
-  --fill: light-dark(rgb(40 42 48 / 3%), rgb(247 248 248 / 5%));
-  --fill-2: light-dark(rgb(40 42 48 / 6%), rgb(247 248 248 / 9%));
-  --border: light-dark(#ebebee, #1c1e22);
-  --border-2: light-dark(#dfe1e4, #23252a);
-  --text: light-dark(#282a30, #f7f8f8);
-  --text-muted: light-dark(#6f6e77, #8a8f98);
-  --text-3: light-dark(#9b9ca2, #62666d);
-  --accent: light-dark(#5e6ad2, #7170ff);
-  --accent-text: light-dark(#ffffff, #ffffff);
-  --accent-bg: light-dark(rgb(94 106 210 / 10%), rgb(113 112 255 / 16%));
-  --info: light-dark(#3d7ae5, #4ea7fc);
-  --danger: light-dark(#c52828, #eb5757);
-  --focus: light-dark(#5e6ad255, #7170ff55);
-  --mark-mono: light-dark(#282a30, #f7f8f8);
-  --warning: light-dark(#b7791f, #d9a343);
-  --status-pending: #8a8f98;
-  --status-abandoned: light-dark(#b4b6bd, #62666d);
-  --status-running: light-dark(#3d7ae5, #4ea7fc);
-  --status-done: light-dark(#2d9d5c, #4cb782);
-}
+/* Ember: warm stone and titanium ivory by day, volcanic charcoal by night; glowing amber for action. */
+[data-palette='ember'] {
+  --bg: light-dark(#f6f4f0, #0c0a09);
+  --surface: light-dark(#fcfbf9, #1c1917);
+  --surface-muted: light-dark(rgb(60 40 20 / 4%), rgb(255 245 235 / 6%));
+  --fill: light-dark(rgb(60 40 20 / 3.5%), rgb(255 245 235 / 6%));
+  --fill-2: light-dark(rgb(60 40 20 / 7%), rgb(255 245 235 / 10%));
+  --border: light-dark(#eae5dc, #292524);
+  --border-2: light-dark(#ded7cb, #44403c);
+  --text: light-dark(#1c1917, #f5f5f4);
+  --text-muted: light-dark(#78716c, #a8a29e);
+  --text-3: light-dark(#a8a29e, #78716c);
+  --accent: light-dark(#d97706, #fbbf24);
+  --accent-text: light-dark(#ffffff, #1c1917);
+  --accent-bg: light-dark(rgb(217 119 6 / 10%), rgb(251 191 36 / 15%));
+  --info: light-dark(#0284c7, #38bdf8);
+  --danger: light-dark(#b91c1c, #f87171);
+  --focus: light-dark(#d9770655, #fbbf2455);
+  --mark-mono: light-dark(#1c1917, #f5f5f4);
 
-/* Nord: the arctic palette, Polar Night under Snow Storm with Frost for action. */
-[data-palette='nord'] {
-  --bg: light-dark(#eceff4, #2e3440);
-  --surface: light-dark(#f8f9fb, #3b4252);
-  --surface-muted: light-dark(rgb(46 52 64 / 5%), rgb(216 222 233 / 7%));
-  --fill: light-dark(rgb(46 52 64 / 4%), rgb(216 222 233 / 6%));
-  --fill-2: light-dark(rgb(46 52 64 / 8%), rgb(216 222 233 / 11%));
-  --border: light-dark(#d8dee9, #434c5e);
-  --border-2: light-dark(#c9d1de, #4c566a);
-  --text: light-dark(#2e3440, #eceff4);
-  --text-muted: light-dark(#4c566a, #d8dee9);
-  --text-3: #7b88a1;
-  --accent: light-dark(#5e81ac, #88c0d0);
-  --accent-text: light-dark(#eceff4, #2e3440);
-  --accent-bg: light-dark(rgb(94 129 172 / 12%), rgb(136 192 208 / 16%));
-  --info: light-dark(#5e81ac, #81a1c1);
-  --danger: #bf616a;
-  --focus: light-dark(#5e81ac55, #88c0d055);
-  --mark-mono: light-dark(#2e3440, #eceff4);
-  --code-keyword: light-dark(#5e81ac, #81a1c1);
-  --code-string: light-dark(#6f9a5a, #a3be8c);
-  --code-number: light-dark(#8f6a8a, #b48ead);
-  --code-comment: light-dark(#8a93a6, #616e88);
-  --code-title: light-dark(#3b7f93, #88c0d0);
-  --code-type: light-dark(#4e8e8c, #8fbcbb);
-  --code-variable: light-dark(#4c566a, #d8dee9);
-  --warning: light-dark(#b58a2a, #ebcb8b);
-  --status-pending: #7b88a1;
-  --status-abandoned: light-dark(#aeb7c7, #4c566a);
-  --status-running: light-dark(#5e81ac, #81a1c1);
-  --status-done: light-dark(#6f9a5a, #a3be8c);
-}
+  --code-keyword: light-dark(#9333ea, #c084fc);
+  --code-string: light-dark(#15803d, #4ade80);
+  --code-number: light-dark(#d97706, #fbbf24);
+  --code-comment: light-dark(#a8a29e, #78716c);
+  --code-title: light-dark(#b45309, #f59e0b);
+  --code-type: light-dark(#d97706, #fbbf24);
+  --code-variable: light-dark(#c2410c, #fb923c);
 
-/* Paper: warm cream like Notion's pages and a reader's sepia, bronze for action; dark is the
-   same paper by lamplight. */
-[data-palette='paper'] {
-  --bg: light-dark(#f4efe6, #1a1714);
-  --surface: light-dark(#fbf8f2, #231f1a);
-  --surface-muted: light-dark(rgb(60 45 20 / 5%), rgb(239 232 220 / 6%));
-  --fill: light-dark(rgb(60 45 20 / 4%), rgb(239 232 220 / 6%));
-  --fill-2: light-dark(rgb(60 45 20 / 7%), rgb(239 232 220 / 10%));
-  --border: light-dark(#e8e1d4, #2f2a24);
-  --border-2: light-dark(#ddd4c3, #3a332b);
-  --text: light-dark(#2a241d, #efe8dc);
-  --text-muted: light-dark(#6b6256, #b3a897);
-  --text-3: light-dark(#9a9082, #7d7467);
-  --accent: light-dark(#a36d1c, #d9a24f);
-  --accent-text: light-dark(#ffffff, #231a0d);
-  --accent-bg: light-dark(rgb(163 109 28 / 10%), rgb(217 162 79 / 14%));
-  --info: light-dark(#2f6fa8, #7fb0e0);
-  --danger: light-dark(#b0423a, #e07a70);
-  --focus: light-dark(#a36d1c55, #d9a24f55);
-  --mark-mono: light-dark(#2a241d, #efe8dc);
-  --warning: light-dark(#b58a2a, #d9b55a);
-  --status-pending: light-dark(#938a7a, #8f8574);
-  --status-abandoned: light-dark(#bfb5a3, #5d564c);
-  --status-running: light-dark(#2f6fa8, #7fb0e0);
-  --status-done: light-dark(#4a7f52, #8dbb88);
-}
+  --warning: light-dark(#b45309, #fbbf24);
 
-/* Catppuccin: Latte by day, Mocha by night, mauve for action; code in its own colours. */
-[data-palette='catppuccin'] {
-  --bg: light-dark(#e6e9ef, #181825);
-  --surface: light-dark(#eff1f5, #1e1e2e);
-  --surface-muted: light-dark(rgb(76 79 105 / 6%), rgb(205 214 244 / 7%));
-  --fill: light-dark(rgb(76 79 105 / 5%), rgb(205 214 244 / 6%));
-  --fill-2: light-dark(rgb(76 79 105 / 9%), rgb(205 214 244 / 10%));
-  --border: light-dark(#dce0e8, #313244);
-  --border-2: light-dark(#ccd0da, #45475a);
-  --text: light-dark(#4c4f69, #cdd6f4);
-  --text-muted: light-dark(#6c6f85, #a6adc8);
-  --text-3: light-dark(#9ca0b0, #6c7086);
-  --accent: light-dark(#8839ef, #cba6f7);
-  --accent-text: light-dark(#eff1f5, #1e1e2e);
-  --accent-bg: light-dark(rgb(136 57 239 / 10%), rgb(203 166 247 / 14%));
-  --info: light-dark(#1e66f5, #89b4fa);
-  --danger: light-dark(#d20f39, #f38ba8);
-  --focus: light-dark(#8839ef55, #cba6f755);
-  --mark-mono: light-dark(#4c4f69, #cdd6f4);
-  --code-keyword: light-dark(#8839ef, #cba6f7);
-  --code-string: light-dark(#40a02b, #a6e3a1);
-  --code-number: light-dark(#fe640b, #fab387);
-  --code-comment: light-dark(#9ca0b0, #6c7086);
-  --code-title: light-dark(#1e66f5, #89b4fa);
-  --code-type: light-dark(#df8e1d, #f9e2af);
-  --code-variable: light-dark(#e64553, #eba0ac);
-  --warning: light-dark(#df8e1d, #f9e2af);
-  --status-pending: light-dark(#8c8fa1, #7f849c);
-  --status-abandoned: light-dark(#acb0be, #45475a);
-  --status-running: light-dark(#1e66f5, #89b4fa);
-  --status-done: light-dark(#40a02b, #a6e3a1);
+  --status-pending: light-dark(#78716c, #a8a29e);
+  --status-abandoned: light-dark(#d6d3d1, #44403c);
+  --status-running: light-dark(#d97706, #fbbf24);
+  --status-done: light-dark(#15803d, #4ade80);
+  --status-review: var(--warning);
 }
 
 /* The ant mascot. Its shell is the palette's hue taken toward black, so every palette has its own
@@ -233,38 +151,6 @@
   :root:not([data-theme='light']) { color-scheme: dark; }
 }
 :root[data-theme='dark'] { color-scheme: dark; }
-
-/* Experimental backdrops, after Slack's themes: the window's frame is a gradient of two shades
-   (a radial wash over a conic sweep, as Slack draws it), and the sidebar and status bar sit on it
-   while the panes float above. A light gradient keeps dark ink on the frame; every other one, and
-   every gradient in dark, takes light ink. See backdrops.ts. */
-[data-backdrop='aubergine'] { --backdrop-primary: light-dark(#4a154b, #431349); --backdrop-highlight: light-dark(#39063a, #200221); }
-[data-backdrop='lagoon'] { --backdrop-primary: light-dark(#0b527b, #003d61); --backdrop-highlight: light-dark(#1c405f, #001a2d); }
-[data-backdrop='mood-indigo'] { --backdrop-primary: light-dark(#112377, #12206c); --backdrop-highlight: light-dark(#091861, #040b3d); }
-[data-backdrop='sea-glass'] { --backdrop-primary: light-dark(#a9edef, #053c48); --backdrop-highlight: light-dark(#df9ff4, #200221); --backdrop-ink-light: light; }
-[data-backdrop='kind-of-blue'] { --backdrop-primary: light-dark(#1f407d, #002d63); --backdrop-highlight: light-dark(#002034, #00101c); }
-[data-backdrop='funky-fresh'] { --backdrop-primary: light-dark(#c5b8ff, #272665); --backdrop-highlight: light-dark(#5bbb7b, #001204); --backdrop-ink-light: light; }
-[data-backdrop='sunglasses-inside'] { --backdrop-primary: #2e1331; --backdrop-highlight: #1c0227; }
-[data-backdrop] {
-  --backdrop:
-    radial-gradient(circle at 50% 50%, var(--backdrop-primary) 20%, transparent 80%),
-    conic-gradient(from 45deg at 50% 50%, var(--backdrop-highlight) 0%, var(--backdrop-primary) 25%, var(--backdrop-highlight) 50%, var(--backdrop-primary) 75%, var(--backdrop-highlight) 100%);
-}
-/* The window's own surfaces, kept for what pops up from the frame (menus, tooltips) so they stay
-   solid and in the window's scheme while the frame around them is see-through. */
-:root[data-backdrop] {
-  --frame-scheme: var(--backdrop-ink-light, dark);
-  --root-scheme: light;
-  --root-bg: var(--bg);
-  --root-surface: var(--surface);
-  --root-border: var(--border);
-  --root-border-2: var(--border-2);
-  --root-shadow: var(--shadow);
-}
-@media (prefers-color-scheme: dark) {
-  :root[data-backdrop]:not([data-theme='light']) { --frame-scheme: dark; --root-scheme: dark; }
-}
-:root[data-backdrop][data-theme='dark'] { --frame-scheme: dark; --root-scheme: dark; }
 
 /* Scrollbars as a thumb alone, on no track: the system's track would sit as a grey band down the
    chat and every list. The thumb's inset keeps it clear of the content's edge. */
@@ -4675,10 +4561,6 @@ div.inspector-empty > p { margin: 0 0 8px; }
 
 .settings-row:has(.title-naming-options) { flex-wrap: wrap; }
 .settings-row:has(.title-naming-options) .settings-row-text { flex: 1 1 32ch; }
-/* Eight swatches: they go under the label, on a narrow window too. */
-.settings-row:has(.backdrop-picker) { flex-wrap: wrap; }
-.settings-row:has(.backdrop-picker) .settings-row-text { flex: 1 1 100%; }
-.backdrop-picker { justify-content: flex-start; }
 
 .segmented {
   display: inline-flex;
@@ -4762,63 +4644,6 @@ div.inspector-empty > p { margin: 0 0 8px; }
 .palette-swatch-dot { width: 6px; height: 6px; border-radius: 999px; background: var(--accent); }
 .palette-swatch-line { flex: 1; height: 2px; border-radius: 1px; background: var(--text-3); }
 
-/* A backdrop's swatch: each half resolves the gradient's light-dark() its own way. */
-.backdrop-swatch { display: flex; width: 64px; height: 40px; overflow: hidden; border-radius: var(--radius-sm); box-shadow: 0 0 0 1px var(--border); background: var(--bg); }
-.palette-option[aria-checked='true'] .backdrop-swatch { box-shadow: 0 0 0 2px var(--accent); }
-.backdrop-swatch-half { flex: 1; background: var(--backdrop, var(--bg)); }
-.backdrop-swatch-half[data-scheme='light'] { color-scheme: light; }
-.backdrop-swatch-half[data-scheme='dark'] { color-scheme: dark; }
-.backdrop-swatch:not([data-backdrop]) { background: linear-gradient(to top right, transparent calc(50% - 1px), var(--border-2) 50%, transparent calc(50% + 1px)), var(--bg); }
-.backdrop-swatch:not([data-backdrop]) .backdrop-swatch-half { background: transparent; }
-
-/* The frame on a backdrop. The sidebar, status bar and the brand over the sidebar take the
-   frame's ink and see-through surfaces; the pane beside the sidebar becomes a solid card. */
-:root[data-backdrop] .app { background: var(--backdrop); }
-:root[data-backdrop] :is(.sidebar, .statusbar),
-:root[data-backdrop] .app:not([data-sidebar-hidden]) > .window-brand {
-  color-scheme: var(--frame-scheme);
-  /* Declared here, or the frame inherits the body's colour, already resolved in the window's scheme. */
-  color: var(--text);
-  --bg: transparent;
-  --surface: light-dark(rgb(255 255 255 / 55%), rgb(255 255 255 / 12%));
-  --border: light-dark(rgb(0 0 0 / 8%), rgb(255 255 255 / 12%));
-  --border-2: light-dark(rgb(0 0 0 / 14%), rgb(255 255 255 / 20%));
-  --shadow: none;
-}
-:root[data-backdrop] :is(.sidebar, .statusbar, .window-brand) :is(.menu, [role='menu'], [role='dialog'], [role='listbox']),
-:root[data-backdrop] :is(.sidebar, .statusbar, .window-brand) [data-tooltip]::after {
-  color-scheme: var(--root-scheme);
-  color: var(--text);
-  --bg: var(--root-bg);
-  --surface: var(--root-surface);
-  --border: var(--root-border);
-  --border-2: var(--root-border-2);
-  --shadow: var(--root-shadow);
-}
-/* A tooltip is inverted (text on --bg over --text): the colour above would match its background. */
-:root[data-backdrop] :is(.sidebar, .statusbar, .window-brand) [data-tooltip]::after { color: var(--bg); }
-:root[data-backdrop] .sidebar { border-right-color: transparent; }
-:root[data-backdrop] .statusbar { background: transparent; border-top-color: transparent; }
-:root[data-backdrop] .workspace > :not(.sidebar, .utility-panel-dock, .side-panel-separator) {
-  /* The narrower separator below is the workspace's own; panes inside keep theirs. */
-  --side-panel-separator-size: 12px;
-  margin: 8px 8px 0 0;
-  border-radius: var(--radius-lg);
-}
-/* Only for a pane with no background of its own, which would otherwise show the gradient; and
-   clipped to its corners only where it says nothing of overflow itself: a pane that scrolls itself
-   (a task's details) would stop scrolling, and scrolling clips to the corners too. */
-:where(:root[data-backdrop] .workspace > :not(.sidebar, .utility-panel-dock, .side-panel-separator)) { background: var(--bg); overflow: hidden; }
-/* Between the pane and the utility dock, the separator is the gap: as wide as the frame's margins,
-   its line shown only to drag, and a wider grip than it looks. */
-:root[data-backdrop] .workspace { --side-panel-separator-size: 8px; }
-:root[data-backdrop] .workspace > :has(+ .side-panel-separator) { margin-right: 0; }
-:root[data-backdrop] .workspace > .side-panel-separator { margin-top: 8px; }
-:root[data-backdrop] .workspace > .side-panel-separator::before { content: ''; position: absolute; inset: 0 -4px; }
-:root[data-backdrop] .workspace > .side-panel-separator:not(:hover, :focus-visible, [data-dragging='true'])::after { background: transparent; }
-:root[data-backdrop] .workspace > :first-child:not(.sidebar),
-:root[data-backdrop] .workspace > .sidebar[hidden] + * { margin-left: 8px; }
-:root[data-backdrop] .utility-panel-dock { margin-bottom: 0; }
 
 .settings-resettable { display: inline-flex; align-items: center; gap: 6px; }
 /* Hidden keeps its room: the control beside it stays put as it comes and goes. */

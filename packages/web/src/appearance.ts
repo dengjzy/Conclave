@@ -4,28 +4,23 @@ import { usePreferences, type Preferences } from './preferences'
 const systemDark = window.matchMedia('(prefers-color-scheme: dark)')
 
 // The CSS resolves the tokens: [data-theme] pins a theme, its absence follows the system, and
-// [data-palette] picks the set of colours, and [data-backdrop] the frame's gradient, if any.
-function apply(theme: Preferences['theme'], palette: Preferences['palette'], backdrop: Preferences['backdrop']): void {
+// [data-palette] picks the set of colours.
+function apply(theme: Preferences['theme'], palette: Preferences['palette']): void {
   if (theme === 'system') {
     delete document.documentElement.dataset.theme
   } else {
     document.documentElement.dataset.theme = theme
   }
   document.documentElement.dataset.palette = palette
-  if (backdrop === 'none') {
-    delete document.documentElement.dataset.backdrop
-  } else {
-    document.documentElement.dataset.backdrop = backdrop
-  }
   setNativeTheme(theme)
 }
 
 export function startAppearance(): void {
-  const { theme, palette, backdrop } = usePreferences.getState()
-  apply(theme, palette, backdrop)
+  const { theme, palette } = usePreferences.getState()
+  apply(theme, palette)
   usePreferences.subscribe((next, previous) => {
-    if (next.theme !== previous.theme || next.palette !== previous.palette || next.backdrop !== previous.backdrop) {
-      apply(next.theme, next.palette, next.backdrop)
+    if (next.theme !== previous.theme || next.palette !== previous.palette) {
+      apply(next.theme, next.palette)
     }
   })
 }

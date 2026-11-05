@@ -17,8 +17,8 @@ import {
 } from './index'
 
 describe('design tokens', () => {
-  it('defines 5 valid palettes', () => {
-    expect(PALETTES).toEqual(['terracotta', 'indigo', 'nord', 'paper', 'catppuccin'])
+  it('defines 2 valid palettes', () => {
+    expect(PALETTES).toEqual(['studio', 'ember'])
   })
 
   it('all tokens begin with --', () => {

@@ -4,7 +4,7 @@ export const APPEARANCE_SECTIONS = ['colors', 'chat', 'terminal', 'language'] as
 export type AppearanceSection = typeof APPEARANCE_SECTIONS[number]
 
 const SECTION_PREFERENCES = {
-  colors: ['theme', 'palette', 'backdrop'],
+  colors: ['theme', 'palette'],
   chat: ['chatFontSize', 'chatFont', 'chatFontFamily', 'chatCjkFontFamily', 'chatWidth', 'foldTurns'],
   terminal: ['codeFontFamily', 'codeCjkFontFamily', 'terminalFontSize', 'terminalLineHeight', 'colorPrompt'],
   language: ['language']

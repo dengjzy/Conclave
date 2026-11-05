@@ -45,7 +45,6 @@
 .settings .settings-row-control { margin-left: auto; }
 .settings .settings-row:has(.palette-picker) .settings-row-text { flex-basis: 100%; }
 .settings .settings-row:has(.palette-picker) .settings-row-control { margin-left: 0; }
-.settings .settings-row:has(.backdrop-picker) { padding-top: 16px; }
 .settings .palette-picker { gap: 12px; justify-content: flex-start; }
 .settings .palette-option { gap: 8px; }
 .settings .palette-option .palette-name { color: var(--text-muted); }
@@ -81,14 +80,6 @@
 .appearance-controls .settings-row { flex-wrap: wrap; }
 .appearance-controls .settings-row-text { flex: 1 1 24ch; }
 .appearance-controls .settings-row-control { min-width: 0; }
-.appearance-backdrop { border-top: 1px solid var(--border); }
-.appearance-backdrop summary { display: flex; align-items: center; gap: 12px; padding: 16px 0; list-style: none; cursor: pointer; font-size: 14px; font-weight: 500; }
-.appearance-backdrop summary::-webkit-details-marker { display: none; }
-.appearance-backdrop-value { margin-left: auto; color: var(--text-muted); font-size: 12px; font-weight: 400; }
-.appearance-backdrop summary > svg { width: 16px; height: 16px; color: var(--text-muted); }
-.appearance-backdrop[open] summary > svg { transform: rotate(180deg); }
-.appearance-backdrop > p { margin: 0 0 12px; font-size: 12px; line-height: 1.6; color: var(--text-muted); }
-.appearance-backdrop .backdrop-picker { padding-bottom: 16px; }
 
 .theme-picker { min-width: 0; padding: 20px 0 24px; margin: 0; border: 0; }
 .theme-picker legend { float: left; width: 100%; padding: 0; margin-bottom: 4px; font-size: 14px; font-weight: 500; }
@@ -147,9 +138,6 @@
 .appearance-preview-prompt { color: var(--accent); }
 .appearance-preview-terminal-comment { color: var(--text-muted); }
 .appearance-preview-caption { margin: 12px 0 0; color: var(--text-muted); font-size: 12px; line-height: 1.6; text-wrap: pretty; }
-.appearance-preview-window[data-backdrop] .appearance-preview-toolbar { background: var(--backdrop); color: var(--text); color-scheme: var(--backdrop-ink-light, dark); }
-.appearance-preview-window[data-backdrop] .appearance-preview-toolbar svg,
-.appearance-preview-window[data-backdrop] .appearance-preview-sample { color: inherit; }
 
 /* Keep the controls and their result together at normal desktop widths. */
 .settings-content { container: settings-content / inline-size; }

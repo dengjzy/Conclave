@@ -6,13 +6,11 @@ import { useChatTypeface } from '../chat-typeface'
 import { changedAppearancePreferences, withAppearanceDefaults, type AppearanceSection } from '../appearance-preferences'
 import { codeFontStack } from '../code-font'
 import { PALETTE_LABEL } from '../palettes'
-import { BACKDROP_LABEL } from '../backdrops'
 import { Resettable, Segmented, SettingsGroup, SettingsRow, Stepper, Toggle } from './SettingsControls'
 import { ChatFontPicker } from './ChatFontPicker'
 import { CodeFontPicker } from './CodeFontPicker'
 import { CjkFontPicker } from './CjkFontPicker'
 import { PalettePicker } from './PalettePicker'
-import { BackdropPicker } from './BackdropPicker'
 import { ArrowUpIcon, CheckIcon, ChatIcon, ChevronDownIcon, RobotIcon, RotateLeftIcon, TerminalIcon } from './icons'
 
 function ThemeMiniature({ scheme }: { scheme: 'light' | 'dark' }) {
@@ -56,7 +54,7 @@ function AppearancePreview({ section, comparing, onCompare }: { section: Appeara
   const typeface = useChatTypeface()
   const current = usePreferences()
   const preview = comparing ? withAppearanceDefaults(current, DEFAULT_PREFERENCES, section) : current
-  const { palette, theme, backdrop, chatWidth, foldTurns, terminalFontSize, terminalLineHeight, colorPrompt } = preview
+  const { palette, theme, chatWidth, foldTurns, terminalFontSize, terminalLineHeight, colorPrompt } = preview
   const codeStyle = { fontFamily: codeFontStack(preview.codeFontFamily, preview.codeCjkFontFamily) }
   const [systemDark, setSystemDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches)
   useEffect(() => {
@@ -73,7 +71,7 @@ function AppearancePreview({ section, comparing, onCompare }: { section: Appeara
     <aside className="appearance-preview" aria-label={t('SettingsPage.livePreview')}>
       <div className="appearance-preview-heading"><h3>{t('SettingsPage.livePreview')}</h3><span>{PALETTE_LABEL[palette].name}</span></div>
       {section !== 'language' && <button type="button" className="button appearance-compare" disabled={!comparing && changedAppearancePreferences(current, DEFAULT_PREFERENCES, section).length === 0} aria-pressed={comparing} onClick={onCompare}>{comparing ? t('SettingsPage.showCurrent') : t('SettingsPage.compareDefaults')}</button>}
-      <div className="appearance-preview-window" data-palette={palette} data-backdrop={backdrop === 'none' ? undefined : backdrop} data-section={section} data-comparing={comparing || undefined} style={{ colorScheme: scheme }}>
+      <div className="appearance-preview-window" data-palette={palette} data-section={section} data-comparing={comparing || undefined} style={{ colorScheme: scheme }}>
         <div className="appearance-preview-toolbar"><ChatIcon /><span>Conclave</span><span className="appearance-preview-sample">{t('SettingsPage.sample')}</span></div>
         <div className="appearance-preview-chat chat-view" {...previewTypeface}>
           <div className="appearance-preview-thread" data-width={chatWidth}>
@@ -110,8 +108,6 @@ export function AppearanceSettings() {
     for (const key of changed) setPreference(key, DEFAULT_PREFERENCES[key])
     setComparing(false)
   }
-  const backdropLabelId = useId()
-  const backdrop = usePreferences((s) => s.backdrop)
   const language = usePreferences((s) => s.language)
   const terminalFontSize = usePreferences((s) => s.terminalFontSize)
   const terminalLineHeight = usePreferences((s) => s.terminalLineHeight)
@@ -141,15 +137,6 @@ export function AppearanceSettings() {
             description={t('SettingsPage.colorsForTheEntireInterfaceWithLightAnd')}
             control={(labelId) => <PalettePicker labelId={labelId} />}
           />
-          <details className="appearance-backdrop">
-            <summary id={backdropLabelId}>
-              <span>{t('SettingsPage.gradientBackgroundExperimental')}</span>
-              <span className="appearance-backdrop-value">{backdrop === 'none' ? t('common.off') : BACKDROP_LABEL[backdrop]}</span>
-              <ChevronDownIcon />
-            </summary>
-            <p>{t('SettingsPage.aGradientBehindTheSidebarAndWindowEdges')}</p>
-            <BackdropPicker labelId={backdropLabelId} />
-          </details>
         </SettingsGroup>
         </div>
         <div hidden={section !== 'chat'}>
