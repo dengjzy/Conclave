@@ -6,6 +6,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { createHash } from 'node:crypto'
+import { gte, valid } from 'semver'
 import { z } from 'zod'
 import { DSH_CONFIG_ENV, type AgentCliInstallation, type ChatCatalog } from '@conclave/protocol'
 import { launchFile } from '@conclave/protocol/node'
@@ -18,7 +19,7 @@ import { dshDialect } from './dsh-dialect'
 import { DSH_PROVIDER_ENV, dshCommand } from './dsh-command'
 
 const execute = promisify(execFile)
-export const DSH_VERSION = '0.2.1-rc.2'
+export const DSH_MIN_VERSION = '0.2.1-rc.2'
 const prepares = new Map<string, Promise<void>>()
 
 async function output(command: string, args: string[], timeout = 10_000, env = process.env): Promise<string> {
@@ -26,7 +27,9 @@ async function output(command: string, args: string[], timeout = 10_000, env = p
   return (await execute(launch.file, launch.args, { env: launch.env, timeout, windowsHide: true, maxBuffer: 1024 * 1024 })).stdout
 }
 
-export function dshCompatible(version: string | null): boolean { return version === DSH_VERSION }
+export function dshCompatible(version: string | null): boolean {
+  return version !== null && valid(version) !== null && gte(version, DSH_MIN_VERSION)
+}
 
 async function versionOf(command: string): Promise<string | null> {
   const printed = (await output(command, ['--version']).catch(() => '')).trim()
@@ -47,13 +50,13 @@ export async function detectDsh(pathEnv: string, platform: NodeJS.Platform): Pro
 export async function requireDsh(): Promise<string> {
   const command = await findOnPath('dsh', process.env.PATH ?? '', process.platform)
   if (!command) throw new Rejection('dsh-cli-missing', '未找到 DeepSeek Harness，请安装后重新检测')
-  if (!dshCompatible(await versionOf(command))) throw new Rejection('dsh-version-incompatible', `请安装 DeepSeek Harness ${DSH_VERSION}，其他版本尚未验证兼容`)
+  if (!dshCompatible(await versionOf(command))) throw new Rejection('dsh-version-incompatible', `请升级 DeepSeek Harness，Conclave 需要 ${DSH_MIN_VERSION} 以上版本`)
   return command
 }
 
 export function dshInstallation(platform: NodeJS.Platform): AgentCliInstallation | null {
   return platform === 'win32' || platform === 'darwin' || platform === 'linux'
-    ? { agent: 'dsh', shell: platform === 'win32' ? 'powershell' : 'bash', command: `npm install -g @deepseek-ai/dsh@${DSH_VERSION}` } : null
+    ? { agent: 'dsh', shell: platform === 'win32' ? 'powershell' : 'bash', command: `npm install -g @deepseek-ai/dsh@${DSH_MIN_VERSION}` } : null
 }
 
 export function bundledDsh(): string {
