@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { ConversationInitialMessage } from '@conclave/protocol'
 import { MIGRATIONS, TaskStore } from './task-store'
 import { applyLegacyMigrations } from './legacy-database'
 import { ProjectRegistry } from './project-registry'
@@ -20,6 +21,48 @@ describe('TaskStore migrations', () => {
 
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('upgrades old conversations and retains the first message and delivery state across restarts', () => {
+    const id = '17cbb637-5668-4f53-9424-4449f2a2d63b'
+    const raw = new DatabaseSync(file)
+    const upgrade = MIGRATIONS.findIndex((sql) => sql.includes('ADD COLUMN initial_message'))
+    expect(upgrade).toBeGreaterThan(0)
+    applyLegacyMigrations(raw, MIGRATIONS.slice(0, upgrade))
+    raw.prepare(`INSERT INTO conversations (id, title, title_locked, agent, workspace_path, managed_workspace, created_at, updated_at)
+      VALUES (?, 'Existing chat', 0, 'claude', '/code/app', 0, 1, 1)`).run(id)
+    raw.close()
+
+    new TaskStore(file).close()
+    const message: ConversationInitialMessage = {
+      ref: '25cbe507-eb46-49d3-8a6b-a07f7d7f452c',
+      text: 'Inspect app.ts',
+      images: [{ id: `${'a'.repeat(64)}.png`, width: 640, height: 480 }],
+      references: [{ start: 8, end: 14, target: { kind: 'file', path: '/code/app/app.ts', relative: 'app.ts' } }],
+      at: 10,
+      phase: 'accepted',
+      error: null
+    }
+    const conversations = new ConversationStore(file, () => 20)
+    expect(conversations.get(id)).toMatchObject({ title: 'Existing chat', updatedAt: 1, initialMessage: undefined })
+    expect(conversations.setInitialMessage(id, message)).toMatchObject({ updatedAt: 20, initialMessage: message })
+    conversations.close()
+
+    new TaskStore(file).close()
+    const accepted = new ConversationStore(file, () => 30)
+    expect(accepted.list()).toEqual([expect.objectContaining({ id, initialMessage: message })])
+    accepted.setInitialMessage(id, { ...message, phase: 'sending' })
+    accepted.close()
+
+    const sending = new ConversationStore(file, () => 40)
+    expect(sending.get(id)).toMatchObject({ updatedAt: 30, initialMessage: { ...message, phase: 'sending' } })
+    const uncertain: ConversationInitialMessage = { ...message, phase: 'uncertain', error: 'Connection lost before acknowledgment' }
+    sending.setInitialMessage(id, uncertain)
+    sending.close()
+
+    const reopened = new ConversationStore(file)
+    expect(reopened.get(id)).toMatchObject({ updatedAt: 40, initialMessage: uncertain })
+    reopened.close()
   })
 
   it('keeps summaries enabled for existing group chats when the preference is introduced', () => {

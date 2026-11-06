@@ -1,23 +1,16 @@
 import { t } from './i18n'
 import { create } from 'zustand'
 import { z } from 'zod'
-import { ChatReference, ChatImage, RpcError, type ChatItem, type RpcConnection } from '@conclave/protocol'
+import { ConversationInitialMessage, RpcError, type ChatImage, type ChatReference, type ChatItem, type Conversation, type RpcConnection } from '@conclave/protocol'
 import { reasonText } from './labels'
+import { useCore } from './core-store'
 
-const InitialMessage = z.object({
-  ref: z.string().uuid(),
-  text: z.string(),
-  images: z.array(ChatImage),
-  references: z.array(ChatReference).optional(),
-  at: z.number(),
-  phase: z.enum(['starting', 'sending', 'failed']),
-  error: z.string().nullable()
-})
+const InitialMessage = ConversationInitialMessage.extend({ durable: z.boolean().optional() })
 export type InitialMessage = z.infer<typeof InitialMessage>
 const Messages = z.record(z.string(), InitialMessage)
 const STORAGE_KEY = 'conclave.initial-messages'
 
-// A reload leaves delivery uncertain; keep the same ref for an explicit retry.
+// Submit is idempotent by ref, including when its reply was lost.
 export function restoredInitialMessages(raw: string | null): Record<string, InitialMessage> {
   try {
     const parsed = Messages.safeParse(JSON.parse(raw ?? '{}'))
@@ -41,6 +34,12 @@ export function keepInitialMessage(id: string, text: string, images: readonly Ch
   useInitialMessages.setState({ [id]: { ref: crypto.randomUUID(), text, images: [...images], at: Date.now(), ...(references?.length ? { references } : {}), phase: 'starting', error: null } })
 }
 
+export function useInitialMessage(conversation: Conversation): InitialMessage | undefined {
+  const local = useInitialMessages((messages) => messages[conversation.id])
+  const message = conversation.initialMessage ?? local
+  return message?.phase === 'sent' ? undefined : message
+}
+
 function discard(id: string): void {
   useInitialMessages.setState((messages) => {
     const { [id]: _removed, ...rest } = messages
@@ -50,18 +49,52 @@ function discard(id: string): void {
 
 export function acknowledgeInitialMessage(id: string, items: readonly ChatItem[]): void {
   const message = useInitialMessages.getState()[id]
+  // An out log precedes delivery; only core can acknowledge a durable message.
+  if (useCore.getState().conversations[id]?.initialMessage) { if (message) discard(id); return }
+  if (message?.durable) return
   if (message && items.some((item) => item.kind === 'user' && item.id === `u:${message.ref}`)) discard(id)
+}
+
+async function submitInitialMessage(id: string, rpc: RpcConnection, message: InitialMessage, retry: boolean): Promise<void> {
+  const original = useCore.getState().conversations[id]
+  let changed: Conversation | undefined
+  const unlisten = rpc.on('conversations.changed', ({ conversation }) => {
+    if (conversation.id === id && conversation.initialMessage) changed = conversation
+  })
+  try {
+    const result = await rpc.call('conversations.submit', {
+      id, ref: message.ref, text: message.text, images: message.images.map((image) => image.id),
+      ...(rpc.features.includes('chat-references') ? { references: message.references } : {}),
+      ...(retry ? { retry: true } : {})
+    })
+    if (useCore.getState().rpc !== rpc) return
+    // Notifications can advance delivery before the submit reply reaches us.
+    const receipt = changed?.initialMessage ?? result.initialMessage
+    useCore.setState((state) => {
+      const current = state.conversations[id]
+      return { conversations: { ...state.conversations, [id]: current && current !== original ? { ...current, initialMessage: receipt } : changed ?? result } }
+    })
+    discard(id)
+  } catch (error) {
+    if (useCore.getState().conversations[id]?.initialMessage) { discard(id); return }
+    const detail = error instanceof RpcError && error.reason ? reasonText(error.reason, error.message) : error instanceof Error ? error.message : String(error)
+    useInitialMessages.setState({ [id]: { ...message, durable: true, phase: 'failed', error: detail } })
+  } finally { unlisten() }
 }
 
 // Delivery belongs to the message, so leaving its page cannot start it again.
 const deliveries = new Map<string, Promise<void>>()
-export function sendInitialMessage(id: string, rpc: RpcConnection): Promise<void> {
+export function sendInitialMessage(id: string, rpc: RpcConnection, retry = false): Promise<void> {
   const pending = deliveries.get(id)
   if (pending) return pending
-  const message = useInitialMessages.getState()[id]
+  const durable = rpc.features.includes('durable-initial-message')
+  const receipt = useCore.getState().conversations[id]?.initialMessage
+  const message = durable ? receipt ?? useInitialMessages.getState()[id] : useInitialMessages.getState()[id]
   if (!message) return Promise.resolve()
-  useInitialMessages.setState({ [id]: { ...message, phase: 'starting', error: null } })
-  const delivery = (async () => {
+  if (durable && receipt && (receipt.phase !== 'failed' || !retry)) return Promise.resolve()
+  if (durable && message.phase === 'failed' && !retry) return Promise.resolve()
+  useInitialMessages.setState({ [id]: { ...message, ...(durable ? { durable: true } : {}), phase: 'starting', error: null } })
+  const delivery = (durable ? submitInitialMessage(id, rpc, message, retry) : (async () => {
     try {
       await rpc.call('conversations.continue', { id })
       if (!useInitialMessages.getState()[id]) return
@@ -73,7 +106,7 @@ export function sendInitialMessage(id: string, rpc: RpcConnection): Promise<void
       const detail = error instanceof RpcError && error.reason ? reasonText(error.reason, error.message) : error instanceof Error ? error.message : String(error)
       useInitialMessages.setState({ [id]: { ...message, phase: 'failed', error: detail } })
     }
-  })().finally(() => deliveries.delete(id))
+  })()).finally(() => deliveries.delete(id))
   deliveries.set(id, delivery)
   return delivery
 }

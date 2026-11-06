@@ -44,7 +44,7 @@ import { effortLabel } from './ChatOptionsBar'
 import { ChatMessageRelay, useMessageRelay } from './chat-message-relay'
 import { useChatTypeface } from '../chat-typeface'
 import { freshKeys, useJustFinished } from '../chat-motion'
-import { acknowledgeInitialMessage, sendInitialMessage, useInitialMessages, type InitialMessage } from '../initial-messages'
+import { acknowledgeInitialMessage, sendInitialMessage, useInitialMessage, type InitialMessage } from '../initial-messages'
 import { Spinner } from './Spinner'
 import { ChatFind, useChatFindState, type ChatHistoryResult } from './ChatFind'
 import { ArrowDownIcon, ChevronDownIcon, ChevronRightIcon, FileChangesIcon, AgentIcon, ForkIcon } from './icons'
@@ -249,22 +249,28 @@ function UserMessage({ item, pending = false }: { item: UserItem; pending?: bool
   )
 }
 
-function InitialMessageEntry({ id, agent, message }: { id: string; agent: AgentKind; message: InitialMessage }) {
+function InitialMessageEntry({ id, agent, message, showMessage }: { id: string; agent: AgentKind; message: InitialMessage; showMessage: boolean }) {
   const rpc = useCore((state) => state.rpc)
+  const [retrying, setRetrying] = useState(false)
+  const retry = async () => {
+    if (!rpc || retrying) return
+    setRetrying(true)
+    try { await sendInitialMessage(id, rpc, true) } finally { setRetrying(false) }
+  }
   return (
     <>
-      <div className="chat-entry" data-user>
+      {showMessage && <div className="chat-entry" data-user>
         <UserMessage pending item={{ kind: 'user', id: `u:${message.ref}`, stageId: 'pending', revision: 0, at: message.at, text: message.text, images: message.images, references: message.references }} />
-      </div>
-      {message.phase === 'failed' ? (
+      </div>}
+      {message.phase === 'failed' || message.phase === 'uncertain' ? (
         <div className="chat-initial-error chat-notice" data-level="error" role="alert">
-          <span>{tr('ConversationChat.firstMessageNotSent', { value1: message.error })}</span>
-          <button type="button" className="button ghost" disabled={!rpc} onClick={() => { if (rpc) void sendInitialMessage(id, rpc) }}>{t('ChatContextMenu.retry')}</button>
+          <span>{tr(message.phase === 'uncertain' ? 'ConversationChat.firstMessageUncertain' : message.durable ? 'ConversationChat.firstMessageReceiptUnconfirmed' : 'ConversationChat.firstMessageNotSent', { value1: message.error })}</span>
+          {message.phase === 'failed' && <button type="button" className="button ghost" disabled={!rpc || retrying} onClick={() => void retry()}>{t('ChatContextMenu.retry')}</button>}
         </div>
       ) : (
         <div className="chat-working" role="status">
           <Spinner />
-          <span>{message.phase === 'starting' ? t('ChatComposer.starting', { value1: agentLabel(agent) }) : t('ChatComposer.sendingFirstMessage')}</span>
+          <span>{message.phase === 'accepted' ? t('ChatComposer.firstMessageAccepted') : message.phase === 'starting' ? t('ChatComposer.starting', { value1: agentLabel(agent) }) : t('ChatComposer.sendingFirstMessage')}</span>
         </div>
       )}
     </>
@@ -607,7 +613,7 @@ function Block({ conversationId, block, task, replies, fresh, dispatched, return
 // unless another is given, as a task's chat does.
 export function ConversationChat({ conversation, surface, onHandoff, variant = 'full' }: { conversation: Conversation; surface?: ChatSurface; onHandoff?: (agent?: AgentKind) => void; variant?: 'full' | 'compact' }) {
   const { id } = conversation
-  const initialMessage = useInitialMessages((messages) => messages[id])
+  const initialMessage = useInitialMessage(conversation)
   const width = usePreferences((s) => s.chatWidth)
   const typeface = useChatTypeface()
   const view = useRef<HTMLDivElement>(null)
@@ -667,7 +673,7 @@ export function ConversationChat({ conversation, surface, onHandoff, variant = '
 
   const items = page?.items ?? NO_ITEMS
   const browserTabs = useWatchBrowserTabs(items.some((item) => item.kind === 'tool' && isBrowserTool(item.name)) ? id : null)
-  useEffect(() => acknowledgeInitialMessage(id, items), [id, items])
+  useEffect(() => acknowledgeInitialMessage(id, items), [id, items, conversation.initialMessage])
   // A task's redos, each starting its chat over.
   const attempts = useCore((s) => (conversation.taskId ? s.tasks[conversation.taskId]?.attempts : undefined))
   const redoneAt = useMemo(() => (attempts ?? []).map((attempt) => attempt.at), [attempts, getLocale()])
@@ -983,8 +989,8 @@ export function ConversationChat({ conversation, surface, onHandoff, variant = '
             </Fragment>
           )
         })}
-        {initialMessage && !items.some((item) => item.kind === 'user' && item.id === `u:${initialMessage.ref}`) && (
-          <InitialMessageEntry id={id} agent={conversation.agent} message={initialMessage} />
+        {initialMessage && (
+          <InitialMessageEntry id={id} agent={conversation.agent} message={initialMessage} showMessage={!items.some((item) => item.kind === 'user' && item.id === `u:${initialMessage.ref}`)} />
         )}
         {(turn === 'running' || turn === 'awaiting') && (
           <ChatWorking

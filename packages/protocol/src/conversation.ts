@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { AgentProfile } from './agent-profile'
-import { ChatDecision, ChatTurnActivity } from './chat'
+import { ChatDecision, ChatImage, ChatTurnActivity } from './chat'
+import { ChatReference } from './chat-reference'
 import { ConversationRoute, ModelProviderId, ProviderRoute } from './model-provider'
 import { TaskSource } from './source'
 import { AgentKind } from './task'
@@ -24,6 +25,17 @@ export type ConversationRequest = z.infer<typeof ConversationRequest>
 export const ConversationDoing = z.object({ tool: z.string().nullable(), title: z.string() })
 export type ConversationDoing = z.infer<typeof ConversationDoing>
 
+export const ConversationInitialMessage = z.object({
+  ref: z.string().uuid(),
+  text: z.string(),
+  images: z.array(ChatImage),
+  references: z.array(ChatReference).optional(),
+  at: z.number(),
+  phase: z.enum(['accepted', 'starting', 'sending', 'sent', 'failed', 'uncertain']),
+  error: z.string().nullable()
+})
+export type ConversationInitialMessage = z.infer<typeof ConversationInitialMessage>
+
 export const Conversation = z.object({
   id: z.string().uuid(),
   title: z.string(),
@@ -41,6 +53,7 @@ export const Conversation = z.object({
   deletion: z.object({ state: z.enum(['running', 'failed']), error: z.string().optional() }).optional(),
   // Includes CLI checks and handshake, before the agent can take a message.
   starting: z.boolean().optional(),
+  initialMessage: ConversationInitialMessage.optional(),
   createdAt: z.number(),
   updatedAt: z.number(),
   // How the agent last stopped: code is null when it was stopped rather than exiting on its own.

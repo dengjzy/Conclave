@@ -491,6 +491,7 @@ daemon.onConnect(() => {
       await cliMaintenance.reconcile(sessions)
       await conversations.reconcile(sessions, listedAt)
       await conversations.recoverDeletions()
+      conversations.recoverInitialMessages()
       await smallModels.recoverHelpers({ stages: () => conversations.chatStageRefs(), items: (id, stageId) => conversations.stageChatItems(id, stageId) })
       terminals.reconcile(sessions)
       await discussions.reconcile()
@@ -586,6 +587,7 @@ async function shutdown(): Promise<void> {
     return
   }
   shuttingDown = true
+  conversations.closeInitialMessages()
   announcements.stop()
   await schedules.stop()
   await automation.close()

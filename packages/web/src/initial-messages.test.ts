@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createRpcClient, RpcRequest, type ChatImage, type ChatReference, type Conversation, type RpcConnection } from '@conclave/protocol'
 import { acknowledgeInitialMessage, keepInitialMessage, restoredInitialMessages, sendInitialMessage, useInitialMessages } from './initial-messages'
+import { useCore } from './core-store'
 
 const id = 'd964b86b-6a8c-4e23-9b79-dff4fdb4a3ad'
 const image: ChatImage = { id: `${'a'.repeat(64)}.png`, width: 4, height: 3 }
@@ -13,10 +14,16 @@ function connection(features: RpcConnection['features'] = ['deferred-conversatio
   const rpc: RpcConnection = { ...client, close() {}, closed: Promise.resolve(), features }
   const reply = (index: number, result: unknown) => rpc.receive(JSON.stringify({ jsonrpc: '2.0', id: sent[index]?.id, result }))
   const fail = (index: number) => rpc.receive(JSON.stringify({ jsonrpc: '2.0', id: sent[index]?.id, error: { code: -32000, message: 'startup failed' } }))
-  return { rpc, sent, reply, fail }
+  rpc.on('conversations.changed', ({ conversation }) => useCore.setState((state) => ({ conversations: { ...state.conversations, [conversation.id]: conversation } })))
+  useCore.setState({ rpc, conversations: { [id]: conversation } })
+  const change = (conversation: Conversation) => rpc.receive(JSON.stringify({ jsonrpc: '2.0', method: 'conversations.changed', params: { conversation } }))
+  return { rpc, sent, reply, fail, change }
 }
 
-beforeEach(() => useInitialMessages.setState({}, true))
+beforeEach(() => {
+  useInitialMessages.setState({}, true)
+  useCore.setState(useCore.getInitialState(), true)
+})
 
 describe('initial message delivery', () => {
   it('restores reference targets after a reload and delivers them separately from the native prompt', async () => {
@@ -107,5 +114,82 @@ describe('initial message delivery', () => {
     expect(restored[id]).toMatchObject({ text: 'still here', images: [image], ref: saved[id]?.ref, phase: 'failed' })
     expect(restoredInitialMessages('{')).toEqual({})
     expect(restoredInitialMessages(JSON.stringify({ [id]: { text: 'incomplete' } }))).toEqual({})
+  })
+})
+
+describe('durable initial message delivery', () => {
+  const features = ['deferred-conversation-start', 'durable-initial-message', 'chat-references']
+  const accepted = (phase: NonNullable<Conversation['initialMessage']>['phase'] = 'accepted'): Conversation => {
+    const message = useInitialMessages.getState()[id]
+    if (!message) throw new Error('missing local message')
+    return { ...conversation, sessionId: null, initialMessage: { ...message, phase, error: null } }
+  }
+
+  it('submits the whole message once and keeps the server receipt after the local copy is gone', async () => {
+    const { rpc, sent, reply } = connection(features)
+    const references: ChatReference[] = [{ start: 0, end: 4, target: { kind: 'file', path: '/workspace/a.ts', relative: 'a.ts' } }]
+    keepInitialMessage(id, 'a.ts', [image], references)
+    const receipt = accepted()
+    const delivery = sendInitialMessage(id, rpc)
+    expect(sendInitialMessage(id, rpc)).toBe(delivery)
+    expect(sent).toMatchObject([{ method: 'conversations.submit', params: { id, ref: receipt.initialMessage?.ref, text: 'a.ts', images: [image.id], references } }])
+    reply(0, receipt)
+    await delivery
+    expect(useInitialMessages.getState()[id]).toBeUndefined()
+    expect(useCore.getState().conversations[id]?.initialMessage).toEqual(receipt.initialMessage)
+    await sendInitialMessage(id, rpc, true)
+    expect(sent).toHaveLength(1)
+  })
+
+  it.each(['sending', 'sent', 'uncertain'] as const)('keeps a newer %s notification when the accepted reply arrives later', async (phase) => {
+    const { rpc, reply, change } = connection(features)
+    keepInitialMessage(id, 'once', [])
+    const receipt = accepted()
+    const newest = accepted(phase)
+    const delivery = sendInitialMessage(id, rpc)
+    change(newest)
+    reply(0, receipt)
+    await delivery
+    expect(useCore.getState().conversations[id]?.initialMessage?.phase).toBe(phase)
+    expect(useInitialMessages.getState()[id]).toBeUndefined()
+  })
+
+  it('does not treat an out-log user item as delivery, and retries a lost submit reply with the same ref', async () => {
+    const { rpc, sent, reply } = connection(features)
+    keepInitialMessage(id, 'once', [image])
+    const receipt = accepted()
+    const message = receipt.initialMessage!
+    const first = sendInitialMessage(id, rpc)
+    acknowledgeInitialMessage(id, [{ kind: 'user', id: `u:${message.ref}`, stageId: 'stage', revision: 0, at: 0, text: 'once', images: [image] }])
+    expect(useInitialMessages.getState()[id]).toBeDefined()
+    rpc.failAll(new Error('connection closed'))
+    await first
+    expect(useInitialMessages.getState()[id]).toMatchObject({ phase: 'failed', ref: message.ref })
+    useInitialMessages.setState(restoredInitialMessages(JSON.stringify(useInitialMessages.getState())), true)
+    await sendInitialMessage(id, rpc)
+    expect(sent).toHaveLength(1)
+    const retry = sendInitialMessage(id, rpc, true)
+    expect(sent[1]).toMatchObject({ method: 'conversations.submit', params: { ref: message.ref, retry: true, text: 'once', images: [image.id] } })
+    reply(1, receipt)
+    await retry
+  })
+
+  it('retries a persisted failed receipt without local storage and never retries uncertain delivery', async () => {
+    const { rpc, sent, reply, change } = connection(features)
+    keepInitialMessage(id, 'once', [image])
+    const failed = accepted('failed')
+    const uncertain = accepted('uncertain')
+    useInitialMessages.setState({}, true)
+    change(failed)
+    await sendInitialMessage(id, rpc)
+    expect(sent).toHaveLength(0)
+    const retry = sendInitialMessage(id, rpc, true)
+    expect(sent[0]).toMatchObject({ method: 'conversations.submit', params: { ref: failed.initialMessage?.ref, retry: true } })
+    reply(0, uncertain)
+    await retry
+    acknowledgeInitialMessage(id, [{ kind: 'user', id: `u:${failed.initialMessage?.ref}`, stageId: 'stage', revision: 0, at: 0, text: 'once', images: [image] }])
+    expect(useCore.getState().conversations[id]?.initialMessage?.phase).toBe('uncertain')
+    await sendInitialMessage(id, rpc, true)
+    expect(sent).toHaveLength(1)
   })
 })

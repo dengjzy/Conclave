@@ -1,6 +1,7 @@
 import type { ChatReference, AgentProfile, SkillRef } from '@conclave/protocol'
 import { agentCliAccess } from './agent-cli-access'
 import { randomUUID } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 import { appendFile, mkdir, realpath, rm, rmdir, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { chatReferencesFor, canHaveHelper, helperAllowsMode, isHelper, agentDescriptor, modelPrice, providerEndpoint, type CostBaseline, checkEditAdditionalProjects, checkSwitchBranch, handoffMessage, isPlanApproval, parseHandoffMessage, MAX_TASK_REPOS, type AgentKind, type ChatCatalog, type ChatImage, type ChatItem, type ChatModel, type ChatOption, type ChatSettings, type CommitPushResult, type CommitResult, type PushResult, type Conversation, type ConversationMessage, type ConversationSearchHit, type ConversationStage, type FileDiff, type FolderChanges, type ProjectBranches, type ProjectHead, type ChatDecision, type KnowledgeBase, type TaskSource, type UnattendedMode, isConclaveRequest , PROCESS_OWNER_ENV, processOwner, parseProcessOwner } from '@conclave/protocol'
@@ -217,6 +218,10 @@ export class ConversationService {
   private readonly cancelStops = new Map<string, Promise<void>>()
   // The tail of each conversation's sends and retries, for an agent that takes them one at a time.
   private readonly serialActions = new Map<string, Promise<void>>()
+  private readonly initialDeliveries = new Map<string, Promise<void>>()
+  private initialMessagesClosed = false
+  private readonly readySessions = new Set<string>()
+  private readonly initialTargetChanges = new Map<string, number>()
   // Conclave's own questions waiting on the user, by request id.
   private readonly asks = new Map<string, { resolve: (decision: ChatDecision) => void; reject: (error: Error) => void }>()
   // Conversations a scheduled run is carrying out, by the mode it runs in: nobody is there, so
@@ -514,6 +519,7 @@ export class ConversationService {
   }
 
   async switchBranch(id: string, project: string, ref: string): Promise<Conversation> {
+    this.requireInitialMessageSettled(id)
     return this.branched(id, project, (dir) => switchProjectBranch(dir, ref))
   }
 
@@ -535,6 +541,7 @@ export class ConversationService {
 
   // A project of the conversation git may write to: only while no agent works in its folder.
   private gitProject(id: string, project: string): string {
+    this.requireInitialMessageSettled(id)
     const conversation = this.get(id)
     const blocker = checkSwitchBranch(conversation)
     if (blocker) throw new Rejection(blocker)
@@ -545,6 +552,10 @@ export class ConversationService {
   // Only while no agent works in the folder (checkSwitchBranch). The conversation's changes then
   // count from the new HEAD, and its agent hears of the switch with the next message it is sent.
   private async branched(id: string, project: string, change: (dir: string) => Promise<string>): Promise<Conversation> {
+    return this.changeInitialTarget(id, () => this.changeBranch(id, project, change))
+  }
+
+  private async changeBranch(id: string, project: string, change: (dir: string) => Promise<string>): Promise<Conversation> {
     const conversation = this.get(id)
     const blocker = checkSwitchBranch(conversation)
     if (blocker) throw new Rejection(blocker)
@@ -702,6 +713,10 @@ export class ConversationService {
   // Everything but the primary changes (checkEditAdditionalProjects). The agent is given its
   // directories at launch, so an idle one restarts and goes on from where it was, as after /add-dir.
   async setAdditionalProjects(id: string, projectPaths: readonly string[]): Promise<Conversation> {
+    return this.changeInitialTarget(id, () => this.changeAdditionalProjects(id, projectPaths))
+  }
+
+  private async changeAdditionalProjects(id: string, projectPaths: readonly string[]): Promise<Conversation> {
     const conversation = this.free(id)
     if (conversation.squadRunId || conversation.parentConversationId) throw new Rejection('squad-managed')
     const blocker = this.launching.has(id) ? 'conversation-running' : checkEditAdditionalProjects(conversation)
@@ -841,6 +856,9 @@ export class ConversationService {
   // Puts a free conversation away, or takes it out again. An archived one is read-only, so its
   // agent, which must be idle, is let go; the next message after taking it out resumes it.
   async setArchived(id: string, archived: boolean): Promise<Conversation> {
+    this.requireInitialMessageSettled(id)
+    const helper = this.store.helper(id)
+    if (helper) this.requireInitialMessageSettled(helper.id)
     const current = this.free(id)
     if (current.squadRunId || current.parentConversationId) throw new Rejection('squad-managed')
     if (current.discussionId) throw new Rejection('discussion-member', 'a group chat member is put away with its group chat')
@@ -872,14 +890,15 @@ export class ConversationService {
   }
 
   // Readies the agent for a message: one already up stays as it is.
-  async continue(id: string, allowBypass?: boolean, readable?: readonly string[]): Promise<Conversation> {
+  async continue(id: string, allowBypass?: boolean, readable?: readonly string[], initialMessage = false): Promise<Conversation> {
+    if (!initialMessage) this.requireInitialMessageSettled(id)
     this.writable(id)
     const current = this.free(id)
     if (this.launching.has(id)) throw new Rejection('conversation-running')
     this.checkReadOnly(current.agent, Boolean(current.workspaceReadOnly || current.discussionId), Boolean(current.discussionId))
     if (current.sessionId && this.chats.activity(id) !== null && !this.chats.sessionLost(id)) return current
     if (allowBypass !== undefined) this.store.setChatOptions(id, { allowBypass: current.workspaceReadOnly || Boolean(current.discussionId) ? false : allowBypass })
-    if (current.sessionId) await this.stop(id)
+    if (current.sessionId) await this.stop(id, initialMessage)
     return this.start(id, current.agent, '', false, { readable })
   }
 
@@ -902,6 +921,10 @@ export class ConversationService {
   }
 
   async handoff(id: string, agent: AgentKind, note: string, stopRunning: boolean, allowBypass?: boolean, choice: HandoffChoice = {}): Promise<Conversation> {
+    return this.changeInitialTarget(id, () => this.handoffNow(id, agent, note, stopRunning, allowBypass, choice))
+  }
+
+  private async handoffNow(id: string, agent: AgentKind, note: string, stopRunning: boolean, allowBypass: boolean | undefined, choice: HandoffChoice): Promise<Conversation> {
     this.writable(id)
     const current = this.free(id)
     // A group chat's member is the agent the group chat names; another would speak in its place.
@@ -1268,6 +1291,7 @@ export class ConversationService {
       const retired = this.rememberedOnProvider(this.store.chatOptions(id)[agent], opened.options.providerModels)
       if (retired.dropped) this.chats.updateNotice(opened, { dir: 'note', at: Date.now(), level: 'info', id: `provider-model:${stage.id}`, text: `服务商不再提供上次用的模型 ${retired.dropped}，这次改用它的默认模型 ${retired.instead ?? ''}`.trim() })
       await launch?.ready(agentStage)
+      this.readySessions.add(sessionId)
       if (handoff) {
         const message = handoffMessage(handoff.path, handoff.note)
         await this.chats.send(id, message, [], false, false, undefined, chatReferencesFor(handoff.note, message, handoff.references))
@@ -1276,6 +1300,7 @@ export class ConversationService {
       // Spawn succeeded even when attaching its stage failed. Always stop that process, and
       // leave its launch files to the exit/reconnect sweep if the daemon cannot confirm it.
       await this.daemon.request('kill', { sessionId, force: true }).catch(() => {})
+      this.readySessions.delete(sessionId)
       await this.rememberNativeSession(stage.id)
       this.chats.forget(sessionId, stage.id)
       const retained = this.nativeDeletion !== null
@@ -1370,6 +1395,10 @@ export class ConversationService {
   // a permission mode when the stage reports it (see rememberMode). With no agent running, only
   // remembered, from what the last chat stage offered.
   async setOption(id: string, option: ChatOption, value: string): Promise<void> {
+    return this.changeInitialTarget(id, () => this.changeOption(id, option, value))
+  }
+
+  private async changeOption(id: string, option: ChatOption, value: string): Promise<void> {
     const conversation = this.get(id)
     if (conversation.squadRunId || conversation.parentConversationId || conversation.workspaceReadOnly) throw new Rejection(conversation.profile ? 'profile-managed' : 'squad-managed', conversation.profile ? '本次运行沿用智能体配置' : '本次运行沿用团队配置')
     if (isHelper(conversation) && option === 'permissionMode' && !helperAllowsMode(value)) throw new Rejection('chat-option-invalid', '小助手不能只做规划')
@@ -1538,6 +1567,7 @@ export class ConversationService {
 
   // A retry may resume in a new stage; its ref still names the original message.
   async send(id: string, text: string, imageIds: readonly string[] = [], queue = false, steer = false, ref?: string, references?: ChatReference[]): Promise<void> {
+    this.requireInitialMessageSettled(id)
     const conversation = this.writable(id)
     this.squadGuard?.(conversation)
     if (adapterOf(conversation.agent).turns?.serialized) {
@@ -1555,12 +1585,14 @@ export class ConversationService {
       if (ref && this.sentRef(id, ref, 0)) return
       const current = this.get(id)
       if (current.sessionId && this.chats.sessionLost(id)) {
-        await this.stop(id)
+        await this.stop(id, true)
         await this.start(id, current.agent, '', false)
       }
       const note = this.switchNote(id)
       const message = note ? `${note}\n\n${text}` : text
-      await this.chats.send(id, message, await this.chatImages(imageIds), queue, steer, ref, chatReferencesFor(text, message, references))
+      const images = await this.chatImages(imageIds)
+      this.deletion.requireWritable(id)
+      await this.chats.send(id, message, images, queue, steer, ref, chatReferencesFor(text, message, references))
       if (note) this.store.setSwitchedBranches(id, {})
     } finally { const pending = (this.gitSending.get(id) ?? 1) - 1; if (pending) this.gitSending.set(id, pending); else this.gitSending.delete(id) }
   }
@@ -1576,6 +1608,127 @@ export class ConversationService {
       if (this.serialActions.get(id) === tail) this.serialActions.delete(id)
     }
   }
+
+  // Acceptance is durable before startup begins; a lost RPC reply is retried with the same ref.
+  async submit(id: string, input: { ref: string; text: string; images?: string[]; references?: ChatReference[]; retry?: boolean }): Promise<Conversation> {
+    if (this.initialMessagesClosed) throw new Rejection('core-closing')
+    const imageIds = [...new Set(input.images ?? [])]
+    const check = (): Conversation => {
+      const current = this.writable(id)
+      if (this.initialTargetChanges.has(id) || this.retiring.has(id)) throw new Rejection('conversation-running', '会话配置正在更新，请稍后重试')
+      if (current.helperOf) {
+        const parent = this.writable(current.helperOf)
+        if (this.retiring.has(parent.id) || !canHaveHelper(parent)) throw new Rejection('conversation-running', '主会话正在关闭，请稍后重试')
+      }
+      if (current.taskId || current.discussionId || current.squadRunId || current.routineId || current.parentConversationId) {
+        throw new Rejection('invalid-params', '此会话的消息由所属任务或讨论管理')
+      }
+      this.squadGuard?.(current)
+      const message = current.initialMessage
+      if (message) {
+        if (message.ref !== input.ref || message.text !== input.text || !isDeepStrictEqual(message.images.map((image) => image.id), imageIds) || !isDeepStrictEqual(message.references ?? [], input.references ?? [])) {
+          throw new Rejection('invalid-params', '首条消息已接收，请勿使用相同标识提交不同内容')
+        }
+      } else if (this.store.maxSequence(id) > 0 || this.store.stages(id).some((stage) => this.chats.items(this.chatStage(current, stage)).some((item) => item.kind === 'user'))) {
+        throw new Rejection('invalid-params', '此会话已有消息')
+      }
+      return current
+    }
+    let current = check()
+    if (current.initialMessage && !(input.retry && current.initialMessage.phase === 'failed')) return current
+    const images = await this.chatImages(imageIds)
+    // Image validation yields: a second client may have submitted in the meantime.
+    if (this.initialMessagesClosed) throw new Rejection('core-closing')
+    current = check()
+    if (current.initialMessage && !(input.retry && current.initialMessage.phase === 'failed')) return current
+    const accepted = this.changed(this.store.setInitialMessage(id, {
+      ref: input.ref, text: input.text, images, ...(input.references?.length ? { references: input.references } : {}),
+      at: current.initialMessage?.at ?? Date.now(), phase: 'accepted', error: null
+    }))
+    this.deliverInitialMessage(id)
+    return accepted
+  }
+
+  private requireInitialMessageSettled(id: string): void {
+    const phase = this.store.get(id)?.initialMessage?.phase
+    if (phase === 'accepted' || phase === 'starting' || phase === 'sending') {
+      throw new Rejection('conversation-running', '首条消息正在投递，请稍候')
+    }
+  }
+
+  // A setting accepted before submit may still be awaiting discovery or filesystem work.
+  private async changeInitialTarget<T>(id: string, change: () => Promise<T>): Promise<T> {
+    this.requireInitialMessageSettled(id)
+    this.initialTargetChanges.set(id, (this.initialTargetChanges.get(id) ?? 0) + 1)
+    try { return await change() } finally {
+      const remaining = (this.initialTargetChanges.get(id) ?? 1) - 1
+      if (remaining) this.initialTargetChanges.set(id, remaining)
+      else this.initialTargetChanges.delete(id)
+    }
+  }
+
+  private deliverInitialMessage(id: string): void {
+    if (this.initialMessagesClosed || this.initialDeliveries.has(id)) return
+    const work = Promise.resolve().then(async () => {
+      if (this.initialMessagesClosed) return
+      const message = this.store.get(id)?.initialMessage
+      if (!message || (message.phase !== 'accepted' && message.phase !== 'starting')) return
+      try {
+        this.writable(id)
+        this.changed(this.store.setInitialMessage(id, { ...message, phase: 'starting', error: null }))
+        await this.continue(id, undefined, undefined, true)
+        if (this.initialMessagesClosed) return
+        await this.chats.waitUntilReady(id)
+        if (this.initialMessagesClosed) return
+        const stage = this.store.activeStage(id)
+        if (!stage?.sessionId) throw new Rejection('chat-not-running')
+        if (!this.readySessions.has(stage.sessionId)) {
+          await adapterOf(stage.agent).launch?.ready(this.agentStage(id, stage))
+          if (this.initialMessagesClosed) return
+          this.readySessions.add(stage.sessionId)
+        }
+        this.writable(id)
+        this.changed(this.store.setInitialMessage(id, { ...message, phase: 'sending', error: null }))
+        await this.sendNow(id, message.text, message.images.map((image) => image.id), false, false, message.ref, message.references)
+        if (!this.initialMessagesClosed && this.store.get(id)) this.changed(this.store.setInitialMessage(id, { ...message, phase: 'sent', error: null }))
+      } catch (error) {
+        if (this.initialMessagesClosed || !this.store.get(id)) return
+        // An out record precedes the daemon write. Its existence cannot prove receipt.
+        const uncertain = this.sentRef(id, message.ref, 0)
+        const sessionId = this.store.get(id)?.sessionId
+        if (!uncertain && sessionId && !this.readySessions.has(sessionId)) {
+          // Reconciliation can reattach a process whose handshake or MCP startup failed.
+          await this.stop(id, true).catch((failure: unknown) => console.error('[conclave-core] stopping failed initial-message startup', failure))
+          if (this.initialMessagesClosed || !this.store.get(id)) return
+        }
+        this.changed(this.store.setInitialMessage(id, {
+          ...message, phase: uncertain ? 'uncertain' : 'failed',
+          error: uncertain ? '无法确认首条消息是否已送达，请检查会话后再决定是否重新发送。' : error instanceof Error ? error.message : String(error)
+        }))
+      }
+    }).catch((error: unknown) => console.error('[conclave-core] delivering initial message failed', error))
+      .finally(() => {
+        this.initialDeliveries.delete(id)
+        if (!this.initialMessagesClosed && this.store.get(id)?.initialMessage?.phase === 'accepted') this.deliverInitialMessage(id)
+      })
+    this.initialDeliveries.set(id, work)
+  }
+
+  // Called after daemon reconciliation, when surviving processes have been reattached.
+  recoverInitialMessages(): void {
+    if (this.initialMessagesClosed) return
+    for (const conversation of this.store.list()) {
+      if (this.initialDeliveries.has(conversation.id)) continue
+      const message = conversation.initialMessage
+      if (message?.phase === 'sending') {
+        this.changed(this.store.setInitialMessage(conversation.id, {
+          ...message, phase: 'uncertain', error: '投递时连接中断，无法确认首条消息是否已送达，请检查会话后再决定是否重新发送。'
+        }))
+      } else if (message?.phase === 'accepted' || message?.phase === 'starting') this.deliverInitialMessage(conversation.id)
+    }
+  }
+
+  closeInitialMessages(): void { this.initialMessagesClosed = true }
 
   // Whether a message with this ref went to the agent in a chat stage still open at `since` or later.
   // Goes on for a scheduled run, with nobody there to answer: a plan waiting for approval is
@@ -1766,6 +1919,7 @@ export class ConversationService {
   }
 
   async interrupt(id: string): Promise<void> {
+    this.requireInitialMessageSettled(id)
     const current = this.get(id)
     this.chats.cancelAsks(id)
     const grace = adapterOf(current.agent).turns?.stopAfterCancel
@@ -1843,7 +1997,8 @@ export class ConversationService {
     return { items: pages.flat(), before: index > 0 ? stages[index]!.id : null }
   }
 
-  async stop(id: string): Promise<Conversation> {
+  async stop(id: string, initialMessage = false): Promise<Conversation> {
+    if (!initialMessage) this.requireInitialMessageSettled(id)
     if (this.launching.has(id)) throw new Rejection('conversation-running')
     const current = this.get(id)
     if (!current.sessionId) return current
@@ -1902,6 +2057,9 @@ export class ConversationService {
   }
 
   async delete(id: string): Promise<void> {
+    this.requireInitialMessageSettled(id)
+    const helper = this.store.helper(id)
+    if (helper) this.requireInitialMessageSettled(helper.id)
     if (!this.store.get(id)) { await this.deletion.delete(id); return }
     this.free(id, true)
     await this.deletion.delete(id)
@@ -2031,6 +2189,7 @@ export class ConversationService {
   }
 
   handleExit(sessionId: string, exitCode: number): void {
+    this.readySessions.delete(sessionId)
     this.chats.handleExit(sessionId, exitCode)
     this.releaseLaunch(sessionId)
     const stopped = this.stopping.has(sessionId)

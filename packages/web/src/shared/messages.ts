@@ -1527,6 +1527,10 @@ export const MESSAGES = {
     "zh": "正在发送首条消息…",
     "en": "Sending first message…"
   },
+  "ChatComposer.firstMessageAccepted": {
+    "zh": "首条消息已接收，正在准备…",
+    "en": "First message received. Preparing…"
+  },
   "ChatComposer.starting": {
     "zh": "正在启动 {value1}…",
     "en": "Starting {value1}…"
@@ -3152,6 +3156,14 @@ export const MESSAGES = {
   "ConversationChat.firstMessageNotSent": {
     "zh": "首条消息未发送：{value1}",
     "en": "First message not sent: {value1}"
+  },
+  "ConversationChat.firstMessageUncertain": {
+    "zh": "首条消息的投递状态无法确认：{value1}",
+    "en": "First-message delivery could not be confirmed: {value1}"
+  },
+  "ConversationChat.firstMessageReceiptUnconfirmed": {
+    "zh": "首条消息是否已接收尚未确认：{value1}",
+    "en": "First-message receipt could not be confirmed: {value1}"
   },
   "ConversationChat.contextCompacted": {
     "zh": "上下文已压缩",

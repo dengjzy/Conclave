@@ -176,6 +176,22 @@ export class ChatHost {
     if (started) await this.withinStartTimeout(started, adapterOf(stage.agent).startTimeoutMs ?? START_TIMEOUT_MS)
   }
 
+  // A reattached process may still be in its startup handshake.
+  async waitUntilReady(conversationId: string): Promise<void> {
+    const live = this.running(conversationId)
+    if (live.driver.ready()) return
+    const failure = live.driver.failure()
+    if (failure) throw this.startFailure(live, failure)
+    const previous = live.started
+    const started = new Promise<void>((resolve, reject) => {
+      live.started = {
+        resolve: () => { previous?.resolve(); resolve() },
+        reject: (error) => { previous?.reject(error); reject(error) }
+      }
+    })
+    await this.withinStartTimeout(started, adapterOf(live.agent).startTimeoutMs ?? START_TIMEOUT_MS)
+  }
+
   // Drops a stage that never got going without logging its end.
   forget(sessionId: string, stageId: string): void {
     this.lives.delete(sessionId)

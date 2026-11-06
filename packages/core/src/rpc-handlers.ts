@@ -464,6 +464,7 @@ export function createRpcHandlers(
     'conversations.fork': ({ id, stageId, itemId }) => conversations.fork(id, stageId, itemId),
     'conversations.setOption': async ({ id, option, value }) => { profiles?.guardUser(id, true); squads?.guardUser(id, true); await conversations.setOption(id, option, value); return OK },
     'conversations.send': ({ id, text, images, queue, steer, ref, references }) => userActed(id, async () => { profiles?.guardUser(id, true); squads?.guardUser(id, true); await conversations.send(id, text, images, queue, steer, ref, references); return OK }),
+    'conversations.submit': ({ id, ...message }) => userActed(id, () => { profiles?.guardUser(id, true); squads?.guardUser(id, true); return conversations.submit(id, message) }),
     'conversations.cancelQueued': ({ id, ref }) => { conversations.cancelQueued(id, ref); return OK },
     'conversations.sendQueued': ({ id, ref, now }) => userActed(id, async () => { await conversations.sendQueued(id, ref, now); return OK }),
     'conversations.setUsageLimitAutoContinue': ({ id, stageId, itemId, autoContinue }) => {

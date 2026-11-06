@@ -104,7 +104,8 @@ const UsageParams = z.object({ windowKinds: z.array(z.string()).optional() })
 // suggests what to fill it with (projects.suggestConfig).
 // conversation-references: history_read resolves explicit conclave://conversation/<id> references.
 // chat-references: user messages and queues retain the composer's explicit reference targets.
-export const CORE_FEATURES = ['conversation-session-cleanup', 'chat-references', 'conversation-references', 'agent-profiles', 'direct-agent-calls', 'plugins', 'plugin-recommendations', 'chat-options', 'chat-images', 'task-start', 'worktrees', 'conversation-branches', 'conversation-commit-push', 'find-file', 'conversation-projects', 'browser', 'keep-awake', 'terminal-commands', 'bookmarks', 'usage-limit', 'agent-stats', 'conversation-stats', 'prompt-suggestions', 'environment', 'conversation-pin', 'schedules', 'chat-commands', 'file-mentions', 'plan-modes', 'agent-terminals', 'schedule-images', 'dashboard', 'task-conversation-summaries', 'routines', 'ports', 'conversation-fork', 'conversation-configuration', 'conversation-commit-steps', 'conversation-worktrees', 'conversation-start-branch', 'wire-log', 'file-preview', 'deferred-conversation-start', 'agent-cli-installation', 'agent-cli-maintenance', 'task-launch-options', 'git-management', 'git-commit-branches', 'task-handoff', 'handoff-model', 'handoff-mode', 'task-launch', 'discussions', 'discussion-summary-choice', 'discussion-members', 'discussion-projects', 'discussion-topics', 'discussion-requirements', 'task-cancel', 'task-redo-in-place', 'conversation-archive', 'discussion-archive', 'translate', 'commit-message', 'squads', 'squad-leader-planning', 'conversation-todos', 'knowledge-base', 'knowledge-base-kind', 'skills-library', 'skills-search', 'skills-activation', 'mcp-servers', 'source-investigate', 'todo-overview', 'conversation-helper', 'small-model-stats', 'terminal-color-prompt', 'git-commit-actions', 'file-editor', 'project-config', 'project-config-edit', 'model-providers', 'git-update', 'git-push-target', 'task-auto-run', 'session-import', 'agent-accounts', 'usage-analytics', 'task-references', 'release-idle-chats', 'project-star', 'git-favorites', 'project-files'] as const
+// durable-initial-message: core saves the first message before starting its agent (conversations.submit).
+export const CORE_FEATURES = ['conversation-session-cleanup', 'chat-references', 'conversation-references', 'agent-profiles', 'direct-agent-calls', 'plugins', 'plugin-recommendations', 'chat-options', 'chat-images', 'task-start', 'worktrees', 'conversation-branches', 'conversation-commit-push', 'find-file', 'conversation-projects', 'browser', 'keep-awake', 'terminal-commands', 'bookmarks', 'usage-limit', 'agent-stats', 'conversation-stats', 'prompt-suggestions', 'environment', 'conversation-pin', 'schedules', 'chat-commands', 'file-mentions', 'plan-modes', 'agent-terminals', 'schedule-images', 'dashboard', 'task-conversation-summaries', 'routines', 'ports', 'conversation-fork', 'conversation-configuration', 'conversation-commit-steps', 'conversation-worktrees', 'conversation-start-branch', 'wire-log', 'file-preview', 'deferred-conversation-start', 'agent-cli-installation', 'agent-cli-maintenance', 'task-launch-options', 'git-management', 'git-commit-branches', 'task-handoff', 'handoff-model', 'handoff-mode', 'task-launch', 'discussions', 'discussion-summary-choice', 'discussion-members', 'discussion-projects', 'discussion-topics', 'discussion-requirements', 'task-cancel', 'task-redo-in-place', 'conversation-archive', 'discussion-archive', 'translate', 'commit-message', 'squads', 'squad-leader-planning', 'conversation-todos', 'knowledge-base', 'knowledge-base-kind', 'skills-library', 'skills-search', 'skills-activation', 'mcp-servers', 'source-investigate', 'todo-overview', 'conversation-helper', 'small-model-stats', 'terminal-color-prompt', 'git-commit-actions', 'file-editor', 'project-config', 'project-config-edit', 'model-providers', 'git-update', 'git-push-target', 'task-auto-run', 'session-import', 'agent-accounts', 'usage-analytics', 'task-references', 'release-idle-chats', 'project-star', 'git-favorites', 'project-files', 'durable-initial-message'] as const
 // session-import: core lists the sessions agents ran outside Conclave and imports them as conversations (sessionImports.*).
 // agent-accounts: Claude and Codex sign in to several accounts, one active each, and a usage limit
 // moves the agent to the next with quota (accounts.*); usage readings name their account.
@@ -445,6 +446,17 @@ export const rpcMethods = {
       references: z.array(ChatReference).max(1000).optional()
     }).refine((params) => params.text !== '' || (params.images?.length ?? 0) > 0, { message: 'a message needs text or an image' }),
     result: Ok
+  },
+  // Saves a new conversation's first message and returns before starting its agent.
+  'conversations.submit': {
+    params: ConversationRef.extend({
+      ref: z.string().uuid(),
+      text: z.string().trim().max(100000),
+      images: z.array(AttachmentId).max(MAX_CHAT_IMAGES).optional(),
+      references: z.array(ChatReference).max(1000).optional(),
+      retry: z.boolean().optional()
+    }).refine((params) => params.text !== '' || (params.images?.length ?? 0) > 0, { message: 'a message needs text or an image' }),
+    result: Conversation
   },
   // Drops a waiting message (the ref from state.queue), or every one without a ref.
   'conversations.cancelQueued': { params: ConversationRef.extend({ ref: z.string().optional() }), result: Ok },

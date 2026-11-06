@@ -6,6 +6,7 @@ import { createRpcClient, type Conversation, type ConversationConfiguration, typ
 import { useCore } from '../core-store'
 import { composerDraft, EMPTY_DRAFT, saveComposerDraft } from '../composer-drafts'
 import { useInitialMessages } from '../initial-messages'
+import { useChat } from '../chat-state'
 import { newConversationFrom, sendToNewConversation } from './ConversationActions'
 import { ConversationDraft } from './ConversationDraft'
 import { ConversationView } from './ConversationView'
@@ -39,7 +40,10 @@ function connect(features = ['conversation-configuration', 'chat-options']) {
   return { rpc, sent }
 }
 
-beforeEach(() => useCore.setState(useCore.getInitialState(), true))
+beforeEach(() => {
+  useCore.setState(useCore.getInitialState(), true)
+  useChat.setState({}, true)
+})
 afterEach(() => {
   useInitialMessages.setState({}, true)
   saveComposerDraft(source.id, EMPTY_DRAFT)
@@ -124,6 +128,28 @@ describe('send to a new conversation', () => {
     expect(useInitialMessages.getState()[created.id]).toMatchObject({ text: 'next task', images: [image] })
     await vi.waitFor(() => expect(sent[2]).toMatchObject({ method: 'conversations.continue', params: { id: created.id } }))
     expect(JSON.stringify(sent.slice(1))).not.toContain(source.id)
+    reply(2, { ...created, sessionId: 'new-session' })
+    await vi.waitFor(() => expect(sent[3]?.method).toBe('conversations.send'))
+    reply(3, { ok: true })
+    await vi.waitFor(() => expect(useInitialMessages.getState()[created.id]).toBeUndefined())
+  })
+
+  it('opens immediately and submits for durable acceptance without waiting for agent startup', async () => {
+    const { rpc, sent } = connect(['conversation-configuration', 'deferred-conversation-start', 'durable-initial-message'])
+    const reply = (index: number, result: unknown) => rpc.receive(JSON.stringify({ jsonrpc: '2.0', id: sent[index]?.id, result }))
+    const sending = sendToNewConversation(source, 'next task', [image])
+    reply(0, configuration)
+    await vi.waitFor(() => expect(sent[1]?.method).toBe('conversations.create'))
+    expect(sent[1]).toMatchObject({ params: { deferStart: true } })
+    reply(1, created)
+    expect(await sending).toBe(true)
+    expect(useCore.getState().selectedConversationId).toBe(created.id)
+    expect(sent[2]).toMatchObject({ method: 'conversations.submit', params: { id: created.id, text: 'next task', images: [image.id] } })
+    const initialMessage = useInitialMessages.getState()[created.id]!
+    reply(2, { ...created, initialMessage: { ...initialMessage, phase: 'accepted' } })
+    await vi.waitFor(() => expect(useInitialMessages.getState()[created.id]).toBeUndefined())
+    expect(useCore.getState().conversations[created.id]?.initialMessage?.phase).toBe('accepted')
+    expect(sent).toHaveLength(3)
   })
 
   it('sends nothing for a conversation whose settings cannot be reused, and stays put when core refuses', async () => {
@@ -137,4 +163,54 @@ describe('send to a new conversation', () => {
     expect(useCore.getState().selectedConversationId).toBe(source.id)
   })
 
+})
+
+describe('initial message status in a reopened conversation', () => {
+  const initialMessage = { ref: '33333333-3333-4333-8333-333333333333', text: 'durable first message', images: [], at: 1000, error: null }
+  const show = (phase: NonNullable<Conversation['initialMessage']>['phase'], logged = false) => {
+    connect(['durable-initial-message'])
+    const conversation: Conversation = { ...source, sessionId: null, chat: null, initialMessage: { ...initialMessage, phase, error: phase === 'uncertain' ? 'connection lost' : null } }
+    useCore.setState({ conversations: { [source.id]: conversation } })
+    useChat.setState({ [source.id]: { items: logged ? [{ ...initialMessage, kind: 'user', id: `u:${initialMessage.ref}`, stageId: 'stage', revision: 0 }] : [], before: null } })
+    saveComposerDraft(source.id, { ...EMPTY_DRAFT, text: 'follow-up message' })
+    return renderToStaticMarkup(createElement(ConversationView, { id: source.id }))
+  }
+
+  it('shows persisted accepted and failed messages without any local copy', () => {
+    const accepted = show('accepted')
+    expect(accepted).toContain('durable first message')
+    expect(accepted).toContain('首条消息已接收')
+    expect(accepted.match(/<button[^>]*aria-label="发送[^>]*>/)?.[0]).toContain('disabled=""')
+    const failed = show('failed')
+    expect(failed).toContain('首条消息未发送')
+    expect(failed).toContain('>重试</button>')
+  })
+
+  it('keeps an uncertain warning beside an out-log message, with no retry and a usable composer', () => {
+    const html = show('uncertain', true)
+    expect(html.match(/durable first message/g)).toHaveLength(1)
+    expect(html).toContain('首条消息的投递状态无法确认')
+    expect(html).toContain('connection lost')
+    expect(html).not.toContain('>重试</button>')
+    const send = html.match(/<button[^>]*aria-label="发送[^>]*>/)?.[0]
+    expect(send).toBeDefined()
+    expect(send).not.toContain('disabled=""')
+  })
+
+  it('offers a safe retry when the submit receipt was lost before core status arrived', () => {
+    connect(['durable-initial-message'])
+    useInitialMessages.setState({ [source.id]: { ...initialMessage, phase: 'failed', durable: true, error: 'connection closed' } })
+    const html = renderToStaticMarkup(createElement(ConversationView, { id: source.id }))
+    expect(html).toContain('首条消息是否已接收尚未确认')
+    expect(html).toContain('>重试</button>')
+    expect(html).not.toContain('首条消息未发送')
+  })
+
+  it('hides the optimistic copy after a sent receipt', () => {
+    useInitialMessages.setState({ [source.id]: { ...initialMessage, phase: 'sending', durable: true } })
+    const html = show('sent', true)
+    expect(html.match(/durable first message/g)).toHaveLength(1)
+    expect(html).not.toContain('正在发送首条消息')
+    expect(html).not.toContain('chat-initial-error')
+  })
 })

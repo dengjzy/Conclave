@@ -27,7 +27,8 @@ import { composerDraft, EMPTY_DRAFT, saveComposerDraft, subscribeDraftAppend } f
 import { useOccludesBrowser } from '../browser-occlusion'
 import { sendWayKeys, sendWays, type SendWay } from '../chat-send-ways'
 import { sendToNewConversation, useReuseConversationSupported } from './ConversationActions'
-import { useInitialMessages } from '../initial-messages'
+import { keepInitialMessage, sendInitialMessage, useInitialMessage } from '../initial-messages'
+import { confirmQuota } from './AgentQuota'
 
 // Enter sends and Shift+Enter breaks the line; Enter while an input method is composing picks a
 // candidate instead.
@@ -193,7 +194,7 @@ function SendCardRows({ rows, note }: { rows: readonly SendRow[]; note: string |
 // the running stage's, for the options row.
 export function ChatComposer({ conversation, state, compact = false }: { conversation: Conversation; state: StateItem | null; compact?: boolean }) {
   const { id } = conversation
-  const initialMessage = useInitialMessages((messages) => messages[id])
+  const initialMessage = useInitialMessage(conversation)
   const surface = useChatSurface()
   const beginRelay = useContext(ChatMessageRelay)
   const [draft] = useState(() => composerDraft(id))
@@ -232,8 +233,9 @@ export function ChatComposer({ conversation, state, compact = false }: { convers
   // An older core takes a message only between turns.
   const queueable = optionsSupported && working
   const stopped = !running
-  const starting = Boolean(conversation.starting) || (stopped && busy) || Boolean(initialMessage)
-  const initialHint = initialMessage ? initialMessage.phase === 'failed' ? t('ChatComposer.retryTheFirstMessageAboveFirst') : initialMessage.phase === 'sending' ? t('ChatComposer.sendingFirstMessage') : t('ChatComposer.starting', { value1: agentLabel(conversation.agent) }) : null
+  const initialPending = initialMessage && initialMessage.phase !== 'uncertain'
+  const starting = Boolean(conversation.starting) || (stopped && busy) || Boolean(initialPending)
+  const initialHint = initialPending ? initialMessage.phase === 'failed' ? t('ChatComposer.retryTheFirstMessageAboveFirst') : initialMessage.phase === 'accepted' ? t('ChatComposer.firstMessageAccepted') : initialMessage.phase === 'sending' ? t('ChatComposer.sendingFirstMessage') : t('ChatComposer.starting', { value1: agentLabel(conversation.agent) }) : null
   const canTake = (idle || queueable || stopped) && !busy && !starting && !surface.sendBlocker && !conversation.delegation?.writing && attached.uploading === 0
   const canSend = canTake && (text.trim() !== '' || attached.images.length > 0 || quotes.length > 0)
   // What the agent guesses comes next, as Claude Code shows it: grey in the empty input, Tab or →
@@ -310,6 +312,18 @@ export function ChatComposer({ conversation, state, compact = false }: { convers
     const quoting = quotes.length > 0 && !message.trim().startsWith('/')
     const composed = quoting ? composeMessage(quotes, message) : message.trim()
     if (!canTake || (composed === '' && attached.images.length === 0) || (steer && !canSteer)) return
+    const rpc = useCore.getState().rpc
+    // Selection can create an empty helper before its composer receives the first message.
+    if (conversation.helperOf && stopped && !conversation.lastExit && !conversation.initialMessage && rpc?.features.includes('durable-initial-message')) {
+      if (!confirmQuota(conversation.agent, conversation.chatOptions?.model)) return
+      keepInitialMessage(id, composed, attached.images, messageReferences(writtenMessage, composed))
+      setText('')
+      attached.setImages([])
+      if (quoting) setQuotes(id, [])
+      saveComposerDraft(id, EMPTY_DRAFT)
+      void sendInitialMessage(id, rpc)
+      return
+    }
     setBusy(true)
     const images = attached.images
     // Getting ready resolves once the agent can take it; if that fails, the text stays to try again.

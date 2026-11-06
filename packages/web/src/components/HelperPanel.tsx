@@ -68,7 +68,7 @@ export function HelperPanel({ parent }: { parent: Conversation }) {
   const page = useChat((state) => helper ? state[helper.id] : undefined)
   const reset = async () => {
     if (!helper || busy) return
-    const hasContent = Boolean(quotes.length || composerDraft(helper.id).text.trim() || helper.sessionId || helper.lastExit || helper.starting || page?.items.some((item) => item.kind === 'user'))
+    const hasContent = Boolean(quotes.length || composerDraft(helper.id).text.trim() || helper.sessionId || helper.lastExit || helper.starting || helper.initialMessage || page?.items.some((item) => item.kind === 'user'))
     if (hasContent) {
       const confirmed = await askConfirm({
         title: t('ConfirmDialog.warning'),

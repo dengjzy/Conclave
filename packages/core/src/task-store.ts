@@ -372,7 +372,8 @@ export const MIGRATIONS = [
      conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
      agent TEXT NOT NULL, provider_session_id TEXT NOT NULL, cwd TEXT NOT NULL, account TEXT, home TEXT, native TEXT,
      PRIMARY KEY (conversation_id, agent, provider_session_id, cwd)
-   );`
+   );`,
+  `ALTER TABLE conversations ADD COLUMN initial_message TEXT;`
 ]
 
 
