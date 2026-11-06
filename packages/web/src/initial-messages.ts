@@ -1,3 +1,4 @@
+import { nodeStorage } from './remote/node-storage'
 import { t } from './i18n'
 import { create } from 'zustand'
 import { z } from 'zod'
@@ -22,12 +23,12 @@ export function restoredInitialMessages(raw: string | null): Record<string, Init
 }
 
 function load(): Record<string, InitialMessage> {
-  try { return restoredInitialMessages(localStorage.getItem(STORAGE_KEY)) } catch { return {} }
+  try { return restoredInitialMessages(nodeStorage.getItem(STORAGE_KEY)) } catch { return {} }
 }
 
 export const useInitialMessages = create<Record<string, InitialMessage>>()(load)
 useInitialMessages.subscribe((messages) => {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(messages)) } catch { /* Keep the in-memory copy. */ }
+  try { nodeStorage.setItem(STORAGE_KEY, JSON.stringify(messages)) } catch { /* Keep the in-memory copy. */ }
 })
 
 export function keepInitialMessage(id: string, text: string, images: readonly ChatImage[], references?: ChatReference[]): void {

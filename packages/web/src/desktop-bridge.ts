@@ -1,4 +1,5 @@
 import { t } from './i18n'
+import { isRemoteDesktopNode } from './remote/desktop-node-mode'
 import { z } from 'zod'
 import { AgentKind, BookmarkFields } from '@conclave/protocol'
 import type { ActionableTarget, Notice } from './attention'
@@ -75,10 +76,11 @@ export async function appVersion(): Promise<string | null> {
 }
 
 export function canPickFolder(): boolean {
-  return true
+  return !isRemoteDesktopNode()
 }
 
 export async function pickFolder(defaultPath?: string, title?: string): Promise<string | null> {
+  if (isRemoteDesktopNode()) return null
   if (window.conclave?.pickFolder) {
     const picked = await window.conclave.pickFolder(defaultPath, title)
     return typeof picked === 'string' && picked !== '' ? picked : null
@@ -97,14 +99,15 @@ export async function pickFolder(defaultPath?: string, title?: string): Promise<
 }
 
 export function canRevealFile(): boolean {
-  return window.conclave?.revealFile !== undefined
+  return !isRemoteDesktopNode() && window.conclave?.revealFile !== undefined
 }
 
 export function canOpenFile(): boolean {
-  return true
+  return !isRemoteDesktopNode()
 }
 
 export async function openFile(path: string): Promise<string | null> {
+  if (isRemoteDesktopNode()) return '请在节点电脑上打开此文件'
   if (window.conclave?.openFile) {
     const error = await window.conclave.openFile(path)
     return typeof error === 'string' ? error || null : t('desktopBridge.thisClientCannotOpenFilesWithTheSystem')
@@ -119,11 +122,12 @@ const OpenWithApp = z.object({ id: z.string(), name: z.string(), kind: z.enum(['
 export type OpenWithApp = z.infer<typeof OpenWithApp>
 
 export function canOpenWith(): boolean {
-  return true
+  return !isRemoteDesktopNode()
 }
 
 let openWithApps: Promise<OpenWithApp[]> | null = null
 export function installedOpenWithApps(): Promise<OpenWithApp[]> {
+  if (isRemoteDesktopNode()) return Promise.resolve([])
   if (window.conclave?.openWithApps) {
     openWithApps ??= (window.conclave.openWithApps().catch(() => [])).then((found) => z.array(OpenWithApp).catch([]).parse(found), () => [])
     return openWithApps
@@ -134,6 +138,7 @@ export function installedOpenWithApps(): Promise<OpenWithApp[]> {
 }
 
 export async function openWith(path: string, app: string): Promise<string | null> {
+  if (isRemoteDesktopNode()) return '请在节点电脑上使用编辑器或终端'
   if (window.conclave?.openWith) {
     const error = await window.conclave.openWith(path, app)
     return typeof error === 'string' ? error || null : t('desktopBridge.thisClientCannotOpenFilesWithOtherApps')
@@ -147,6 +152,7 @@ export async function openWith(path: string, app: string): Promise<string | null
 }
 
 export async function revealFile(candidates: readonly string[]): Promise<string | null> {
+  if (isRemoteDesktopNode()) return null
   if (window.conclave?.revealFile) {
     const shown = await window.conclave.revealFile([...candidates])
     return typeof shown === 'string' ? shown : null
@@ -161,7 +167,7 @@ export function canNotify(): boolean {
 const notificationListeners = new Set<(target: Notice['target']) => void>()
 
 export function notify(notice: Notice): void {
-  if (window.conclave?.notify) {
+  if (!isRemoteDesktopNode() && window.conclave?.notify) {
     void window.conclave.notify(notice).catch(() => {})
     return
   }
@@ -199,7 +205,7 @@ const Target = z.union([
 ])
 
 export function onNotificationClick(listener: (target: Notice['target']) => void): () => void {
-  if (window.conclave?.onNotificationClick) {
+  if (!isRemoteDesktopNode() && window.conclave?.onNotificationClick) {
     return window.conclave.onNotificationClick((target) => {
       const parsed = Target.safeParse(target)
       if (parsed.success) listener(parsed.data)
@@ -210,58 +216,68 @@ export function onNotificationClick(listener: (target: Notice['target']) => void
 }
 
 export function canShowRequestPopup(): boolean {
-  return window.conclave?.requestPopup !== undefined
+  return !isRemoteDesktopNode() && window.conclave?.requestPopup !== undefined
 }
 
 export function wantRequestPopup(wanted: boolean): void {
+  if (isRemoteDesktopNode()) return
   void window.conclave?.requestPopup?.(wanted).catch(() => {})
 }
 
 export function onRequestPopupWanted(listener: (wanted: boolean) => void): () => void {
+  if (isRemoteDesktopNode()) return () => {}
   return window.conclave?.onRequestPopupWanted?.(listener) ?? (() => {})
 }
 
 export function layoutRequestPopup(visible: boolean, height: number): void {
+  if (isRemoteDesktopNode()) return
   window.conclave?.requestPopupLayout?.({ visible, height })
 }
 
 export function openFromRequestPopup(target: ActionableTarget): void {
+  if (isRemoteDesktopNode()) return
   void window.conclave?.openFromRequestPopup?.(target).catch(() => {})
 }
 
 export function canShowNativeBrowser(): boolean {
-  return window.conclave?.browserShow !== undefined
+  return !isRemoteDesktopNode() && window.conclave?.browserShow !== undefined
 }
 
 export function showNativeBrowserTab(tabId: string | null): void {
+  if (isRemoteDesktopNode()) return
   void window.conclave?.browserShow?.(tabId).catch(() => {})
 }
 
 export function reportBrowserBounds(rect: { x: number; y: number; width: number; height: number }): void {
+  if (isRemoteDesktopNode()) return
   window.conclave?.browserBounds?.({ x: rect.x, y: rect.y, width: rect.width, height: rect.height })
 }
 
 export function setBrowserOccluded(occluded: boolean): void {
+  if (isRemoteDesktopNode()) return
   void window.conclave?.browserOccluded?.(occluded).catch(() => {})
 }
 
 export function canImportBookmarks(): boolean {
-  return window.conclave?.bookmarkSources !== undefined
+  return !isRemoteDesktopNode() && window.conclave?.bookmarkSources !== undefined
 }
 
 const BookmarkSource = z.object({ id: z.string(), browser: z.string(), profile: z.string(), count: z.number() })
 export type BookmarkSource = z.infer<typeof BookmarkSource>
 
 export async function bookmarkSources(): Promise<BookmarkSource[]> {
+  if (isRemoteDesktopNode()) return []
   const found = await window.conclave?.bookmarkSources?.().catch(() => [])
   return z.array(BookmarkSource).catch([]).parse(found ?? [])
 }
 
 export async function readBookmarks(id: string): Promise<BookmarkFields[]> {
+  if (isRemoteDesktopNode()) return []
   return z.array(BookmarkFields).parse(await window.conclave?.readBookmarks?.(id))
 }
 
 export async function pickBookmarksFile(): Promise<BookmarkFields[] | null> {
+  if (isRemoteDesktopNode()) return null
   const picked = await window.conclave?.pickBookmarksFile?.()
   return picked === null || picked === undefined ? null : z.array(BookmarkFields).parse(picked)
 }
@@ -269,6 +285,7 @@ export async function pickBookmarksFile(): Promise<BookmarkFields[] | null> {
 const Focused = z.object({ tabId: z.string(), focused: z.boolean() })
 
 export function onBrowserFocused(listener: (tabId: string, focused: boolean) => void): () => void {
+  if (isRemoteDesktopNode()) return () => {}
   return (
     window.conclave?.onBrowserFocused?.((event) => {
       const parsed = Focused.safeParse(event)
@@ -280,6 +297,7 @@ export function onBrowserFocused(listener: (tabId: string, focused: boolean) => 
 const Shortcut = z.object({ kind: z.enum(['toggle-browser', 'settings']) })
 
 export function onBrowserShortcut(listener: (kind: 'toggle-browser' | 'settings') => void): () => void {
+  if (isRemoteDesktopNode()) return () => {}
   return (
     window.conclave?.onBrowserShortcut?.((event) => {
       const parsed = Shortcut.safeParse(event)
@@ -296,6 +314,7 @@ export function setNativeTheme(theme: 'system' | 'light' | 'dark'): void {
 }
 
 export async function pickPlugin(kind: 'directory' | 'zip'): Promise<string | null> {
+  if (isRemoteDesktopNode()) return null
   const picked = await window.conclave?.pickPlugin?.(kind)
   return typeof picked === 'string' && picked ? picked : null
 }

@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { defaultStartMode, modeLabel, startModes } from './components/ChatOptionsBar'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { defaultStartMode, modeLabel, modeOptions, startModes } from './components/ChatOptionsBar'
 import { handoffMode } from './components/ChatHandoff'
 
 const model = (autoMode?: boolean) => ({ id: 'opus', label: 'Opus', description: null, efforts: [], isDefault: true, ...(autoMode === undefined ? {} : { autoMode }) })
@@ -34,5 +34,22 @@ describe('handoffMode', () => {
     // Cursor has no accept-edits mode: the handoff shows it going to Cursor's default instead.
     expect(handoffMode('cursor', cursor, undefined, 'acceptEdits')).toBe('ask')
     expect(handoffMode('codex', startModes('codex', model()), 'auto', null)).toBe('acceptEdits')
+  })
+})
+
+
+describe('remote permission choices', () => {
+  beforeEach(() => vi.stubGlobal('window', { location: { search: '?node=saved-computer' } }))
+  afterEach(() => vi.unstubAllGlobals())
+  it('offers only protocol-approved modes even when the model supports auto and bypass', () => {
+    expect(startModes('codex', model(true))).toEqual(['ask', 'plan', 'readOnly'])
+    expect(startModes('claude', model(true))).toEqual(['ask', 'plan'])
+    expect(modeOptions('claude', ['acceptEdits', 'auto', 'bypass', 'ask', 'plan']).map((option) => option.value)).toEqual(['ask', 'plan'])
+  })
+  it('never falls back to a forbidden descriptor default or persisted handoff mode', () => {
+    expect(defaultStartMode('codex', startModes('codex', model()))).toBe('ask')
+    expect(defaultStartMode('claude', startModes('claude', model(true)))).toBe('ask')
+    expect(defaultStartMode('codex', ['acceptEdits', 'plan'])).toBe('plan')
+    expect(handoffMode('codex', startModes('codex', model()), 'bypass', 'acceptEdits')).toBe('ask')
   })
 })

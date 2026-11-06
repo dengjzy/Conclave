@@ -1,3 +1,4 @@
+import { RemoteAccessStatus, RemoteInvitation, RemoteTaskPage, RemoteConversationPage, RemotePermissionMode, RemoteAgentPresets, RemoteProject } from './remote-access'
 import { z } from 'zod'
 import { ChatReference } from './chat-reference'
 import { AgentProfile, AgentProfileFields, AgentCall, AgentCallTarget } from './agent-profile'
@@ -105,7 +106,7 @@ const UsageParams = z.object({ windowKinds: z.array(z.string()).optional() })
 // conversation-references: history_read resolves explicit conclave://conversation/<id> references.
 // chat-references: user messages and queues retain the composer's explicit reference targets.
 // durable-initial-message: core saves the first message before starting its agent (conversations.submit).
-export const CORE_FEATURES = ['conversation-session-cleanup', 'chat-references', 'conversation-references', 'agent-profiles', 'direct-agent-calls', 'plugins', 'plugin-recommendations', 'chat-options', 'chat-images', 'task-start', 'worktrees', 'conversation-branches', 'conversation-commit-push', 'find-file', 'conversation-projects', 'browser', 'keep-awake', 'terminal-commands', 'bookmarks', 'usage-limit', 'agent-stats', 'conversation-stats', 'prompt-suggestions', 'environment', 'conversation-pin', 'schedules', 'chat-commands', 'file-mentions', 'plan-modes', 'agent-terminals', 'schedule-images', 'dashboard', 'task-conversation-summaries', 'routines', 'ports', 'conversation-fork', 'conversation-configuration', 'conversation-commit-steps', 'conversation-worktrees', 'conversation-start-branch', 'wire-log', 'file-preview', 'deferred-conversation-start', 'agent-cli-installation', 'agent-cli-maintenance', 'task-launch-options', 'git-management', 'git-commit-branches', 'task-handoff', 'handoff-model', 'handoff-mode', 'task-launch', 'discussions', 'discussion-summary-choice', 'discussion-members', 'discussion-projects', 'discussion-topics', 'discussion-requirements', 'task-cancel', 'task-redo-in-place', 'conversation-archive', 'discussion-archive', 'translate', 'commit-message', 'squads', 'squad-leader-planning', 'conversation-todos', 'knowledge-base', 'knowledge-base-kind', 'skills-library', 'skills-search', 'skills-activation', 'mcp-servers', 'source-investigate', 'todo-overview', 'conversation-helper', 'small-model-stats', 'terminal-color-prompt', 'git-commit-actions', 'file-editor', 'project-config', 'project-config-edit', 'model-providers', 'git-update', 'git-push-target', 'task-auto-run', 'session-import', 'agent-accounts', 'usage-analytics', 'task-references', 'release-idle-chats', 'project-star', 'git-favorites', 'project-files', 'durable-initial-message'] as const
+export const CORE_FEATURES = ['remote-access-experiment', 'conversation-session-cleanup', 'chat-references', 'conversation-references', 'agent-profiles', 'direct-agent-calls', 'plugins', 'plugin-recommendations', 'chat-options', 'chat-images', 'task-start', 'worktrees', 'conversation-branches', 'conversation-commit-push', 'find-file', 'conversation-projects', 'browser', 'keep-awake', 'terminal-commands', 'bookmarks', 'usage-limit', 'agent-stats', 'conversation-stats', 'prompt-suggestions', 'environment', 'conversation-pin', 'schedules', 'chat-commands', 'file-mentions', 'plan-modes', 'agent-terminals', 'schedule-images', 'dashboard', 'task-conversation-summaries', 'routines', 'ports', 'conversation-fork', 'conversation-configuration', 'conversation-commit-steps', 'conversation-worktrees', 'conversation-start-branch', 'wire-log', 'file-preview', 'deferred-conversation-start', 'agent-cli-installation', 'agent-cli-maintenance', 'task-launch-options', 'git-management', 'git-commit-branches', 'task-handoff', 'handoff-model', 'handoff-mode', 'task-launch', 'discussions', 'discussion-summary-choice', 'discussion-members', 'discussion-projects', 'discussion-topics', 'discussion-requirements', 'task-cancel', 'task-redo-in-place', 'conversation-archive', 'discussion-archive', 'translate', 'commit-message', 'squads', 'squad-leader-planning', 'conversation-todos', 'knowledge-base', 'knowledge-base-kind', 'skills-library', 'skills-search', 'skills-activation', 'mcp-servers', 'source-investigate', 'todo-overview', 'conversation-helper', 'small-model-stats', 'terminal-color-prompt', 'git-commit-actions', 'file-editor', 'project-config', 'project-config-edit', 'model-providers', 'git-update', 'git-push-target', 'task-auto-run', 'session-import', 'agent-accounts', 'usage-analytics', 'task-references', 'release-idle-chats', 'project-star', 'git-favorites', 'project-files', 'durable-initial-message'] as const
 // session-import: core lists the sessions agents ran outside Conclave and imports them as conversations (sessionImports.*).
 // agent-accounts: Claude and Codex sign in to several accounts, one active each, and a usage limit
 // moves the agent to the next with quota (accounts.*); usage readings name their account.
@@ -143,6 +144,13 @@ const BrowserConversationRef = z.object({ conversationId: z.string().uuid() })
 const BrowserTabRef = BrowserConversationRef.extend({ tabId: BrowserTabId })
 
 export const rpcMethods = {
+  'remote.status': { params: z.object({}), result: RemoteAccessStatus },
+  'remote.start': { params: z.object({ web: z.boolean().optional() }), result: RemoteAccessStatus },
+  'remote.stop': { params: z.object({}), result: RemoteAccessStatus },
+  'remote.startWeb': { params: z.object({}), result: RemoteAccessStatus },
+  'remote.stopWeb': { params: z.object({}), result: RemoteAccessStatus },
+  'remote.createInvitation': { params: z.object({}), result: RemoteInvitation },
+  'remote.revokeDevice': { params: z.object({ deviceId: z.string().uuid() }), result: RemoteAccessStatus },
   'plugins.recommended': { params: z.object({}), result: z.array(RecommendedPlugin) },
   'plugins.installRecommended': { params: z.object({ id: PluginId }), result: PluginInfo },
   'plugins.list': { params: z.object({}), result: z.array(PluginInfo) },
@@ -810,6 +818,7 @@ export const rpcMethods = {
 } as const
 
 export const rpcNotifications = {
+  'remote.changed': z.object({ status: RemoteAccessStatus }),
   'usage.analyticsChanged': z.object({}),
   'git.changed': z.object({}),
   'system.awakeChanged': z.object({ status: ComputerAwakeStatus }),
@@ -922,6 +931,8 @@ export const RpcRequest = z.object({
   params: z.unknown().optional()
 })
 
+export type RpcRequest = z.infer<typeof RpcRequest>
+
 // Order matters: z.unknown() accepts a missing key, so the error shape must be
 // tried before the result shape or every error would parse as a result.
 export const RpcFrame = z.union([
@@ -961,3 +972,124 @@ export function coreUrl(endpoint: Pick<CoreEndpoint, 'port' | 'token'>): string 
   }
   return `ws://127.0.0.1:${endpoint.port}/?token=${encodeURIComponent(endpoint.token)}`
 }
+
+
+// A separate, bounded remote surface. Management, arbitrary files and credentials stay local.
+const RemotePageParams = z.object({
+  offset: z.number().int().min(0).max(1_000_000).default(0), limit: z.number().int().min(1).max(20).default(20),
+  filter: z.enum(['all', 'attention', 'running']).default('all'), query: z.string().trim().max(200).default(''),
+  project: z.string().min(1).max(32768).optional()
+})
+const RemoteHandoffFields = {
+  agent: AgentKind, note: z.string().max(10000), permissionMode: RemotePermissionMode.optional(),
+  model: z.string().trim().min(1).max(200).optional(), effort: z.string().trim().min(1).max(200).optional()
+}
+export const remoteOperations = {
+  'catalog': { params: z.object({}).strict(), result: z.object({
+    projects: z.array(z.string()),
+    agents: z.array(z.object({ id: AgentKind, name: z.string(), permissionModes: z.array(RemotePermissionMode).optional(), agentPresets: RemoteAgentPresets.optional() })),
+    capabilities: z.array(z.string()).optional(), methods: z.array(z.string()).optional()
+  }) },
+  'projects.list': { params: z.object({}).strict(), result: z.array(RemoteProject).max(100) },
+  'tasks.page': { params: RemotePageParams.strict(), result: RemoteTaskPage },
+  'tasks.get': { ...rpcMethods['tasks.get'], params: rpcMethods['tasks.get'].params.strict() },
+  'tasks.create': {
+    params: rpcMethods['tasks.create'].params.pick({ title: true, details: true, repos: true, agent: true }).extend({
+      details: z.string().max(10000).optional(), repos: z.array(z.string().trim().min(1).max(32768)).min(1).max(MAX_TASK_REPOS), agent: AgentKind
+    }).strict(), result: Task
+  },
+  'tasks.start': { params: TaskRef.strict(), result: Task },
+  'tasks.resumeChat': { params: TaskRef.strict(), result: Task },
+  'tasks.handoff': { params: TaskRef.extend(RemoteHandoffFields).strict(), result: Task },
+  'conversations.page': { params: RemotePageParams.extend({ archived: z.boolean().default(false) }).strict(), result: RemoteConversationPage },
+  'conversations.get': { ...rpcMethods['conversations.get'], params: ConversationRef.strict() },
+  'conversations.create': {
+    params: z.object({
+      agent: AgentKind, projectPaths: z.array(z.string().trim().min(1).max(32768)).max(MAX_TASK_REPOS),
+      profileId: z.string().uuid().optional(), permissionMode: RemotePermissionMode.optional(),
+      model: z.string().trim().min(1).max(200).optional(), effort: z.string().trim().min(1).max(200).optional(),
+      agentPreset: z.string().trim().min(1).max(100).optional()
+    }).strict(), result: Conversation
+  },
+  'conversations.continue': { params: ConversationRef.strict(), result: Conversation },
+  'conversations.configuration': { ...rpcMethods['conversations.configuration'], params: ConversationRef.strict() },
+  'conversations.chatCatalog': { ...rpcMethods['conversations.chatCatalog'], params: rpcMethods['conversations.chatCatalog'].params.strict() },
+  'conversations.setOption': {
+    params: rpcMethods['conversations.setOption'].params.strict().refine((value) => value.option !== 'permissionMode' || RemotePermissionMode.safeParse(value.value).success, { message: 'Remote permission modes must keep approval or read-only checks' }), result: Ok
+  },
+  'conversations.stages': { ...rpcMethods['conversations.stages'], params: ConversationRef.strict(), result: z.array(ConversationStage).max(200) },
+  'conversations.handoff': { params: ConversationRef.extend({ ...RemoteHandoffFields, stopRunning: z.boolean() }).strict(), result: Conversation },
+  'agentProfiles.list': { params: z.object({}).strict(), result: z.array(AgentProfile).max(100) },
+  'agentProfiles.available': { params: ConversationRef.strict(), result: z.array(AgentProfile).max(100) },
+  'agentCalls.list': { params: ConversationRef.strict(), result: z.array(AgentCall).max(100) },
+  'agentCalls.dispatch': {
+    params: ConversationRef.extend({ profileId: z.string().uuid().optional(), target: AgentCallTarget.strict().optional(), instruction: z.string().trim().min(1).max(10000), ref: z.string().uuid() }).strict()
+      .refine((value) => Boolean(value.profileId) !== Boolean(value.target), { message: 'Choose a saved role or a direct target', path: ['target'] }), result: AgentCall
+  },
+  'agentCalls.cancel': { ...rpcMethods['agentCalls.cancel'], params: rpcMethods['agentCalls.cancel'].params.strict() },
+  'chat.page': { params: ConversationRef.extend({ before: z.string().uuid().optional() }).strict(), result: ChatPage },
+  'conversations.send': {
+    params: z.object({ id: z.string().uuid(), text: z.string().trim().min(1).max(10000), ref: z.string().uuid() }).strict(), result: Ok
+  },
+  'conversations.interrupt': { params: ConversationRef.strict(), result: Ok },
+  'conversations.respond': { params: rpcMethods['conversations.respond'].params.omit({ mode: true }).strict(), result: Ok }
+} as const
+
+export type RemoteMethod = keyof typeof remoteOperations
+export type RemoteParams<M extends RemoteMethod> = z.input<(typeof remoteOperations)[M]['params']>
+export type RemoteParsedParams<M extends RemoteMethod> = z.output<(typeof remoteOperations)[M]['params']>
+export type RemoteResult<M extends RemoteMethod> = z.output<(typeof remoteOperations)[M]['result']>
+export const remoteOperationSchemas: { [M in RemoteMethod]: { params: z.ZodType<RemoteParsedParams<M>>; result: z.ZodType<RemoteResult<M>> } } = remoteOperations
+
+export const RemoteOperation = z.discriminatedUnion('method', [
+  z.object({ method: z.literal('catalog'), params: remoteOperations['catalog'].params }).strict(),
+  z.object({ method: z.literal('projects.list'), params: remoteOperations['projects.list'].params }).strict(),
+  z.object({ method: z.literal('tasks.page'), params: remoteOperations['tasks.page'].params }).strict(),
+  z.object({ method: z.literal('tasks.get'), params: remoteOperations['tasks.get'].params }).strict(),
+  z.object({ method: z.literal('tasks.create'), params: remoteOperations['tasks.create'].params }).strict(),
+  z.object({ method: z.literal('tasks.start'), params: remoteOperations['tasks.start'].params }).strict(),
+  z.object({ method: z.literal('tasks.resumeChat'), params: remoteOperations['tasks.resumeChat'].params }).strict(),
+  z.object({ method: z.literal('tasks.handoff'), params: remoteOperations['tasks.handoff'].params }).strict(),
+  z.object({ method: z.literal('conversations.page'), params: remoteOperations['conversations.page'].params }).strict(),
+  z.object({ method: z.literal('conversations.get'), params: remoteOperations['conversations.get'].params }).strict(),
+  z.object({ method: z.literal('conversations.create'), params: remoteOperations['conversations.create'].params }).strict(),
+  z.object({ method: z.literal('conversations.continue'), params: remoteOperations['conversations.continue'].params }).strict(),
+  z.object({ method: z.literal('conversations.configuration'), params: remoteOperations['conversations.configuration'].params }).strict(),
+  z.object({ method: z.literal('conversations.chatCatalog'), params: remoteOperations['conversations.chatCatalog'].params }).strict(),
+  z.object({ method: z.literal('conversations.setOption'), params: remoteOperations['conversations.setOption'].params }).strict(),
+  z.object({ method: z.literal('conversations.stages'), params: remoteOperations['conversations.stages'].params }).strict(),
+  z.object({ method: z.literal('conversations.handoff'), params: remoteOperations['conversations.handoff'].params }).strict(),
+  z.object({ method: z.literal('agentProfiles.list'), params: remoteOperations['agentProfiles.list'].params }).strict(),
+  z.object({ method: z.literal('agentProfiles.available'), params: remoteOperations['agentProfiles.available'].params }).strict(),
+  z.object({ method: z.literal('agentCalls.list'), params: remoteOperations['agentCalls.list'].params }).strict(),
+  z.object({ method: z.literal('agentCalls.dispatch'), params: remoteOperations['agentCalls.dispatch'].params }).strict(),
+  z.object({ method: z.literal('agentCalls.cancel'), params: remoteOperations['agentCalls.cancel'].params }).strict(),
+  z.object({ method: z.literal('chat.page'), params: remoteOperations['chat.page'].params }).strict(),
+  z.object({ method: z.literal('conversations.send'), params: remoteOperations['conversations.send'].params }).strict(),
+  z.object({ method: z.literal('conversations.interrupt'), params: remoteOperations['conversations.interrupt'].params }).strict(),
+  z.object({ method: z.literal('conversations.respond'), params: remoteOperations['conversations.respond'].params }).strict()
+])
+export type RemoteOperation = z.infer<typeof RemoteOperation>
+export const REMOTE_WRITE_METHODS: readonly RemoteMethod[] = ['tasks.create', 'tasks.start', 'tasks.resumeChat', 'tasks.handoff', 'conversations.create', 'conversations.continue', 'conversations.setOption', 'conversations.handoff', 'agentCalls.dispatch', 'agentCalls.cancel', 'conversations.send', 'conversations.interrupt', 'conversations.respond']
+const RemoteRequestId = z.string().min(1).max(64)
+const RemoteSecret = z.string().regex(/^[A-Za-z0-9_-]{43}$/)
+export const RemoteWireRequest = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('pair'), id: RemoteRequestId, ticket: RemoteSecret, deviceName: z.string().trim().min(1).max(80) }).strict(),
+  z.object({ kind: z.literal('resume'), id: RemoteRequestId, deviceId: z.string().uuid(), deviceToken: RemoteSecret }).strict(),
+  z.object({ kind: z.literal('ping'), id: RemoteRequestId }).strict(),
+  z.object({ kind: z.literal('desktop'), id: RemoteRequestId }).strict(),
+  z.object({ kind: z.literal('rpc'), requestId: z.string().uuid().optional(), request: RpcRequest }).strict(),
+  z.object({ kind: z.literal('operation'), id: RemoteRequestId, requestId: z.string().uuid().optional(), operation: RemoteOperation }).strict()
+])
+export type RemoteWireRequest = z.infer<typeof RemoteWireRequest>
+
+export const RemoteWireResponse = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('paired'), id: z.string(), deviceId: z.string().uuid(), deviceToken: z.string(), nodeId: z.string().uuid().optional(), nodeName: z.string().min(1).max(80).optional() }),
+  z.object({ kind: z.literal('resumed'), id: z.string(), deviceId: z.string().uuid(), nodeId: z.string().uuid().optional(), nodeName: z.string().min(1).max(80).optional() }),
+  z.object({ kind: z.literal('desktop'), id: z.string(), protocolVersion: z.number().int(), methods: z.array(z.string()) }),
+  z.object({ kind: z.literal('rpc'), frame: RpcFrame }),
+  z.object({ kind: z.literal('pong'), id: z.string(), now: z.number() }),
+  z.object({ kind: z.literal('operation'), id: z.string(), result: z.unknown() }),
+  z.object({ kind: z.literal('error'), id: z.string().optional(), code: z.string(), message: z.string() })
+])
+export type RemoteWireResponse = z.infer<typeof RemoteWireResponse>

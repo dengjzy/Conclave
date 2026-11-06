@@ -62,6 +62,8 @@ import { ProjectConfigDialog, projectConfigSummary } from './ProjectConfigDialog
 import { useOccludesBrowser } from '../browser-occlusion'
 import { UpdateSettings } from './UpdateNotice'
 import { AppearanceSettings } from './AppearanceSettings'
+import { isRemoteDesktopNode } from '../remote/desktop-node-mode'
+import { RemoteSettings } from './RemoteSettings'
 import './settings-page.css'
 
 function NotificationSettings() {
@@ -696,6 +698,17 @@ const DEBUG_SECTION: Section = localized(() => ({
   Body: DebugSettings
 }))
 
+const REMOTE_SECTION: Section = localized(() => ({
+  id: 'remote',
+  group: t('ChatFontPicker.other'),
+  title: t('RemoteSettings.title'),
+  description: t('RemoteSettings.description'),
+  keywords: ['remote', 'Tailcat', 'phone', 'mobile', 'QR', '手机', '扫码', '远程', '配对', '实验'],
+  Icon: GlobeIcon,
+  Body: RemoteSettings,
+  grouped: true
+}))
+
 // The user's local notes, on a core that hands them to agents; it sits before the browser.
 const KNOWLEDGE_SECTION: Section = localized(() => ({
   id: 'knowledge',
@@ -758,9 +771,12 @@ export function SettingsPage() {
   const accounts = useAccountsSupported()
   const chatCommands = useChatCommandsSupported()
   const wireLog = useWireLogSupported()
+  const remote = useCore((state) => state.rpc?.features.includes('remote-access-experiment') ?? false)
   const run = useRunSettingsShown()
   const permissions = usePermissionSettingsShown()
+  const remoteNode = isRemoteDesktopNode()
   const sections = useMemo(() => {
+    if (remoteNode) return SECTIONS.filter((section) => ['appearance', 'usage', 'notifications', 'support', 'about'].includes(section.id) && (section.id !== 'notifications' || canNotify()))
     const information = SECTIONS.filter((section) => section.id === 'support' || section.id === 'about')
     const own = SECTIONS.filter((section) => section.id !== 'about' && section.id !== 'support' && (section.id !== 'notifications' || canNotify() || canShowRequestPopup()))
       .flatMap((section) => (section.id === 'agents' ? [
@@ -768,8 +784,8 @@ export function SettingsPage() {
         CONVERSATION_SECTION, ...(chatCommands ? [CHAT_COMMANDS_SECTION] : []), ...(sessionImport ? [SESSION_IMPORT_SECTION] : []),
         ...(skills ? [SKILLS_SECTION] : []), ...(mcp ? [MCP_SECTION] : [])
       ] : [section]))
-    return [...own, ...(plugins ? [PLUGINS_SECTION] : []), ...sourceSections(sources ?? []), ...(knowledge ? [KNOWLEDGE_SECTION] : []), ...(wireLog ? [DEBUG_SECTION] : []), ...information]
-  }, [sources, knowledge, skills, mcp, sessionImport, accounts, modelProviders, chatCommands, wireLog, plugins, run, permissions, locale])
+    return [...own, ...(plugins ? [PLUGINS_SECTION] : []), ...sourceSections(sources ?? []), ...(knowledge ? [KNOWLEDGE_SECTION] : []), ...(wireLog ? [DEBUG_SECTION] : []), ...(remote ? [REMOTE_SECTION] : []), ...information]
+  }, [sources, knowledge, skills, mcp, sessionImport, accounts, modelProviders, chatCommands, wireLog, remote, plugins, run, permissions, locale, remoteNode])
   const activeId = useCore((state) => state.settingsSection) ?? SECTIONS[0]?.id ?? ''
   const [query, setQuery] = useState('')
   useEffect(() => { setQuery('') }, [activeId])

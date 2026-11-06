@@ -2,6 +2,7 @@ import { getLocale, localized, t, tr } from '../i18n'
 import { useCallback, useEffect, useState, useRef, type KeyboardEvent } from 'react'
 import { itemKey, type PlanItem } from '../chat-state'
 import { composeFeedback, setQuotes, useQuotes } from '../chat-quotes'
+import { isRemoteDesktopNode } from '../remote/desktop-node-mode'
 import { planMarkdownFilename } from '../plan-markdown'
 import { QuoteCards } from './ChatQuoteCards'
 import { PlanComments } from './PlanComments'
@@ -152,6 +153,7 @@ const PREVIEW_LINES = 12
 
 export function ChatPlanCard({ conversationId, item, modes }: { conversationId: string; item: PlanItem; modes: readonly string[] }) {
   const surface = useChatSurface()
+  const remote = isRemoteDesktopNode()
   const { busy, respond } = useResponder(conversationId, item.requestId)
   const [note, setNote] = useState('')
   const [saving, setSaving] = useState(false)
@@ -160,12 +162,13 @@ export function ChatPlanCard({ conversationId, item, modes }: { conversationId: 
   // Not in a routine's chat, whose follow-ups nobody is told of (ChatComposer).
   const routine = useCore((s) => Boolean(s.conversations[conversationId]?.routineId || s.conversations[conversationId]?.helperOf))
   const agent = useCore((s) => s.conversations[conversationId]?.agent ?? 'claude')
-  const schedulable = useSchedulesSupported() && agentDescriptor(agent).capabilities.unattended && !savePlan && !routine
+  const schedulesSupported = useSchedulesSupported()
+  const schedulable = !remote && schedulesSupported && agentDescriptor(agent).capabilities.unattended && !savePlan && !routine
   const runModes = RUN_MODES.filter((mode) => (item.runModes ?? modes).includes(mode))
   const picked = usePreferences((s) => s.planRunMode)
   const runMode: RunMode = runModes.includes(picked) ? picked : runModes.includes('auto') ? 'auto' : runModes[0] ?? 'ask'
   const modesSupported = usePlanModesSupported() && runModes.length > 0
-  const choices: PlanChoice[] = squadStart ? (savePlan ? ['squad', 'save', 'revise', 'stop'] : ['squad', 'revise', 'stop']) : savePlan ? ['save', 'revise', 'stop'] : modesSupported ? ['run', 'revise', 'stop'] : ['allow', 'allowForSession', 'revise', 'stop']
+  const choices: PlanChoice[] = remote ? (savePlan || squadStart || !item.decisions.includes('allow') ? ['revise', 'stop'] : ['allow', 'revise', 'stop']) : squadStart ? (savePlan ? ['squad', 'save', 'revise', 'stop'] : ['squad', 'revise', 'stop']) : savePlan ? ['save', 'revise', 'stop'] : modesSupported ? ['run', 'revise', 'stop'] : ['allow', 'allowForSession', 'revise', 'stop']
   const [choice, setChoice] = useState<PlanChoice>(choices[0] ?? 'revise')
   const noteInput = useRef<HTMLInputElement>(null)
   const preview = useRef<HTMLDivElement>(null)
@@ -188,7 +191,7 @@ export function ChatPlanCard({ conversationId, item, modes }: { conversationId: 
     setSaving(false)
   }
   const submit = async () => {
-    if (busy || saving) return
+    if (busy || saving || !choices.includes(choice)) return
     if (choice === 'stop') {
       await stop()
     } else if (choice === 'squad') {
@@ -241,10 +244,10 @@ export function ChatPlanCard({ conversationId, item, modes }: { conversationId: 
     <div className="chat-request chat-plan" data-waiting onKeyDown={onKeyDown}>
       <div className="chat-request-title">{tr('ChatPlan.planAwaitingYourApproval', { value1: inView
           ? <span className="chat-plan-aside">{t('ChatPlan.fullPlanOnTheRight')}</span>
-          : <button type="button" className="link-button" onClick={() => surface.showPlan(key)}>{t('ChatPlan.viewFullPlanInInspector')}</button>, value2: surface.handoffPlan && <button type="button" className="link-button" disabled={busy || saving} onClick={() => surface.handoffPlan?.(item)}>{t('ChatPlan.assignToSquad')}</button>, value3: schedulable && <SchedulePlanButton conversationId={conversationId} />, value4: null })}</div>
-      {squadStart
+          : <button type="button" className="link-button" onClick={() => surface.showPlan(key)}>{t('ChatPlan.viewFullPlanInInspector')}</button>, value2: !remote && surface.handoffPlan && <button type="button" className="link-button" disabled={busy || saving} onClick={() => surface.handoffPlan?.(item)}>{t('ChatPlan.assignToSquad')}</button>, value3: schedulable && <SchedulePlanButton conversationId={conversationId} />, value4: null })}</div>
+      {!remote && (squadStart
         ? <p className="chat-request-detail muted">{tr('ChatPlan.afterApprovalTheLeaderAssignsWorkToMembers', { value1: squadStart.name })}</p>
-        : savePlan && <p className="chat-request-detail muted">{t('ChatPlan.dependenciesAreUnfinishedSaveThePlanNowThen')}</p>}
+        : savePlan && <p className="chat-request-detail muted">{t('ChatPlan.dependenciesAreUnfinishedSaveThePlanNowThen')}</p>)}
       {item.detail && !inView && (
         <div className="chat-plan-preview" ref={preview} data-clipped={(long && !open) || undefined}>
           <ChatMarkdown text={item.detail} />

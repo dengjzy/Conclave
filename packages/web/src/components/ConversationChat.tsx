@@ -12,6 +12,7 @@ import { isCompaction, noticeSummary, readableNotice } from '../chat-notices'
 import { parseQuotes, withoutQuoteMarkers } from '../chat-quotes'
 import { formatTokens, isSubagent, thoughtFor, workedFor } from '../chat-tools'
 import { perform, useCore } from '../core-store'
+import { isRemoteDesktopNode } from '../remote/desktop-node-mode'
 import { shownAccountName } from '../agent-accounts'
 import { ChatSurfaceContext, conversationSurface, useChatSurface, type ChatSurface } from './chat-surface'
 import { forkConversation } from './ConversationActions'
@@ -251,9 +252,11 @@ function UserMessage({ item, pending = false }: { item: UserItem; pending?: bool
 
 function InitialMessageEntry({ id, agent, message, showMessage }: { id: string; agent: AgentKind; message: InitialMessage; showMessage: boolean }) {
   const rpc = useCore((state) => state.rpc)
+  const persisted = useCore((state) => Boolean(state.conversations[id]?.initialMessage))
+  const retryOnHost = isRemoteDesktopNode() && (persisted || message.durable) && !rpc?.features.includes('durable-initial-message')
   const [retrying, setRetrying] = useState(false)
   const retry = async () => {
-    if (!rpc || retrying) return
+    if (!rpc || retrying || retryOnHost) return
     setRetrying(true)
     try { await sendInitialMessage(id, rpc, true) } finally { setRetrying(false) }
   }
@@ -265,7 +268,9 @@ function InitialMessageEntry({ id, agent, message, showMessage }: { id: string; 
       {message.phase === 'failed' || message.phase === 'uncertain' ? (
         <div className="chat-initial-error chat-notice" data-level="error" role="alert">
           <span>{tr(message.phase === 'uncertain' ? 'ConversationChat.firstMessageUncertain' : message.durable ? 'ConversationChat.firstMessageReceiptUnconfirmed' : 'ConversationChat.firstMessageNotSent', { value1: message.error })}</span>
-          {message.phase === 'failed' && <button type="button" className="button ghost" disabled={!rpc || retrying} onClick={() => void retry()}>{t('ChatContextMenu.retry')}</button>}
+          {message.phase === 'failed' && (retryOnHost
+            ? <span>{t('ConversationChat.firstMessageRetryOnHost')}</span>
+            : <button type="button" className="button ghost" disabled={!rpc || retrying} onClick={() => void retry()}>{t('ChatContextMenu.retry')}</button>)}
         </div>
       ) : (
         <div className="chat-working" role="status">

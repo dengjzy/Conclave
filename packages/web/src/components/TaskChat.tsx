@@ -1,3 +1,4 @@
+import { isRemoteDesktopNode } from '../remote/desktop-node-mode'
 import { useAgentCallsSupported } from '../agent-calls'
 import { getLocale, t, tr } from '../i18n'
 import { useHelperSupported } from '../helper-conversations'
@@ -62,7 +63,7 @@ function taskSurface(task: Task, dependencies: readonly Task[], planOnly: boolea
     prepareSend: async (stopped) => {
       if (!stopped && task.status === 'running') return true
       if (stopped && task.agent && !confirmQuota(task.agent)) return false
-      const allowBypass = bypassable ? { allowBypass: true } : {}
+      const allowBypass = bypassable && !isRemoteDesktopNode() ? { allowBypass: true } : {}
       return Boolean(await perform((rpc) => rpc.call('tasks.resumeChat', { id: task.id, ...allowBypass })))
     },
     sendBlocker: blocker && reasonText(blocker, blocker),

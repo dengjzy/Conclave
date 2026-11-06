@@ -20,11 +20,13 @@
     "dev:daemon": "pnpm --filter @conclave/daemon run dev",
     "dev:core": "pnpm --filter @conclave/core run dev",
     "dev:web": "pnpm --filter @conclave/web run dev",
-    "build": "node scripts/build-plugins.mjs && pnpm --filter @conclave/web run build",
+    "build": "node scripts/build-plugins.mjs && pnpm --filter @conclave/web run build && node scripts/build-remote-web.mjs",
     "typecheck": "pnpm --filter @conclave/plugin-sdk build && pnpm -r run typecheck",
     "test": "pnpm --filter @conclave/plugin-sdk build && vitest run",
     "verify:plugin-sdk": "node scripts/verify-plugin-sdk.mjs",
-    "test:dsh-runtime": "node --import tsx scripts/smoke-dsh-runtime.mjs"
+    "test:dsh-runtime": "node --import tsx scripts/smoke-dsh-runtime.mjs",
+    "build:android": "pnpm --filter @conclave/mobile android:debug",
+    "build:remote": "pnpm --filter @conclave/web run build && node scripts/build-remote-web.mjs"
   },
   "devDependencies": {
     "@types/node": "catalog:",

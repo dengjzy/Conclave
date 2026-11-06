@@ -1,0 +1,19 @@
+{
+  "appId": "io.conclave.agentsgo",
+  "appName": "agents-go",
+  "webDir": "dist",
+  "server": {
+    "hostname": "localhost",
+    "androidScheme": "https",
+    "cleartext": false,
+    "errorPath": "unsupported.html"
+  },
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": false,
+    "minWebViewVersion": 123,
+    "adjustMarginsForEdgeToEdge": "auto"
+  },
+  "loggingBehavior": "none"
+}

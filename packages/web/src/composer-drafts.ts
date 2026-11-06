@@ -1,3 +1,4 @@
+import { nodeStorage } from './remote/node-storage'
 import { z } from 'zod'
 import { ChatImage, ChatReference } from '@conclave/protocol'
 import type { MentionedText } from './chat-mentions'
@@ -25,7 +26,7 @@ function keyOf(conversationId: string | null): string {
 
 function load(): Record<string, ComposerDraft> {
   try {
-    const parsed = Drafts.safeParse(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}'))
+    const parsed = Drafts.safeParse(JSON.parse(nodeStorage.getItem(STORAGE_KEY) ?? '{}'))
     return parsed.success ? parsed.data : {}
   } catch {
     return {}
@@ -36,7 +37,7 @@ let drafts = load()
 
 function persist(): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(drafts))
+    nodeStorage.setItem(STORAGE_KEY, JSON.stringify(drafts))
   } catch {
     // Storage full or blocked: the in-memory draft still survives page changes in this window.
   }

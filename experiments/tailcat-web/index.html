@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Conclave · 远程连接实验</title>
+  <link rel="stylesheet" href="./tokens.css">
+  <link rel="stylesheet" href="./experiment.css">
+</head>
+<body>
+  <main>
+    <header><a href="/" aria-label="Conclave">Conclave</a><span>远程连接实验</span></header>
+    <section id="host" hidden>
+      <h1>添加测试设备</h1>
+      <p>通过 Tailcat 连接独立测试实例。此页面只在本机开放。</p>
+      <button id="invite">生成一次性二维码</button>
+      <div id="invitation" hidden>
+        <div id="qr" aria-label="一次性配对二维码"></div>
+        <p id="expiry"></p>
+        <a id="pair-link" target="_blank" rel="noreferrer">在本机打开配对页 ↗</a>
+        <p id="invite-note" class="muted">本机实验地址，手机暂不可直接访问。二维码与口令均不写入日志。</p>
+      </div>
+      <h2>已配对设备</h2>
+      <ul id="devices"></ul>
+    </section>
+    <section id="client" hidden>
+      <h1>连接这台电脑</h1>
+      <p>一次配对，验证浏览器与 Conclave 的真实通信。</p>
+      <label for="device-name">设备名称</label>
+      <input id="device-name" value="浏览器测试设备" maxlength="80" autocomplete="off">
+      <div class="actions"><button id="connect" disabled>加载网络组件…</button><button id="disconnect" class="secondary" disabled>断开</button></div>
+      <div id="connected" hidden>
+        <dl><div><dt>通道</dt><dd>Tailcat · DERP 中继</dd></div><div><dt>服务器</dt><dd id="core-version">—</dd></div><div><dt>测试任务</dt><dd id="task-count">—</dd></div><div><dt>最近往返</dt><dd id="latency">—</dd></div></dl>
+        <div class="actions"><button id="probe">验证 Conclave</button><button id="ping" class="secondary">测量往返</button></div>
+        <label for="echo-text">发送一条测试消息</label><input id="echo-text" value="你好，Conclave 👋" maxlength="1000"><button id="echo" class="secondary">发送并验证回传</button>
+      </div>
+      <p class="muted">测试实例仅提供版本和任务列表查询。网关重启后需重新配对。</p>
+    </section>
+    <p id="status" role="status" aria-live="polite">准备中…</p>
+    <ol id="events" aria-label="连接记录"></ol>
+  </main>
+  <script src="./assets/wasm_exec.js"></script>
+  <script type="module" src="./app.mjs"></script>
+</body>
+</html>

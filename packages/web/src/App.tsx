@@ -36,6 +36,7 @@ import { GuideView } from './components/GuideView'
 import { SetupGuide } from './components/SetupGuide'
 import { useFirstRunSetup } from './setup-controller'
 import { WindowBrand } from './components/WindowBrand'
+import { DesktopNodeDialog, DesktopNodeNotice } from './components/DesktopNodeSwitcher'
 import { ErrorToast } from './components/ErrorToast'
 import { TaskLaunchDialog } from './components/TaskLaunchDialog'
 import { usePreferences } from './preferences'
@@ -280,6 +281,7 @@ export function App() {
           aria-hidden="true"
         />
       )}
+      <DesktopNodeNotice />
       <main className="workspace" data-utility-maximized={maximizedUtility}>
         {settingsOpen ? (
           <SettingsPage />
@@ -346,6 +348,7 @@ export function App() {
       {loginOpen && <SourceLoginDialog />}
       <ProjectTrustDialog />
       <ConfirmDialog />
+      <DesktopNodeDialog />
       {error && !newTaskOpen && !taskLaunchId && <ErrorToast message={error} />}
     </div>
   )

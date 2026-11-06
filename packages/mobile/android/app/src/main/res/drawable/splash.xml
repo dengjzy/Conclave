@@ -1,0 +1,3 @@
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/agents_mark" /><item android:drawable="@drawable/agents_mark" android:gravity="center" />
+</layer-list>

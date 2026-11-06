@@ -1,3 +1,4 @@
+import { nodeRpcSupports } from '../remote/node-rpc'
 import { localized, t, tr } from '../i18n'
 import { useRef, useState } from 'react'
 import { openGuide, setAwakeMode, setSchedulesOpen, setSettingsOpen, setWorktreesOpen, toggleBrowserPanel, toggleFilesPanel, togglePortsPanel, toggleTerminalPanel, useAwakeSupported, useBrowserSupported, useCore, useSchedulesOpen, useSchedulesSupported, useWorktreesSupported, type ConnectionState } from '../core-store'
@@ -94,11 +95,14 @@ function HelpButton() {
 }
 
 function FilesButton() {
+  const allowed = useCore((state) => !state.rpc || nodeRpcSupports(state.rpc, 'files.list'))
   const open = useCore((s) => s.filesPanelOpen)
   return (
     <button
       type="button"
       className="tool-button statusbar-files"
+      disabled={!allowed}
+      title={allowed ? undefined : '请在节点电脑上查看文件'}
       aria-label={t('FilesPanel.files')}
       aria-pressed={open}
       data-tooltip={`${open ? t('FilesPanel.hideFiles') : t('FilesPanel.files')} ${PRIMARY_KEY_LABEL}⇧E`}
@@ -111,12 +115,15 @@ function FilesButton() {
 }
 
 function TerminalButton() {
+  const allowed = useCore((state) => !state.rpc || nodeRpcSupports(state.rpc, 'terminals.open'))
   const open = useCore((s) => s.terminalPanelOpen)
   const count = useCore((s) => s.terminals.length)
   return (
     <button
       type="button"
       className="tool-button statusbar-terminal"
+      disabled={!allowed}
+      title={allowed ? undefined : '请在节点电脑上使用终端'}
       aria-label={t('SettingsPage.terminal')}
       aria-pressed={open}
       data-tooltip={open ? t('StatusBar.hideTerminalCtrl') : t('StatusBar.terminalCtrl')}

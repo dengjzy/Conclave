@@ -1,3 +1,4 @@
+import { isRemoteDesktopNode } from '../remote/desktop-node-mode'
 import { t, tr } from '../i18n'
 import { useCallback, useState, type FormEvent } from 'react'
 import { MAX_TASK_REPOS, type TaskRepo } from '@conclave/protocol'
@@ -78,7 +79,7 @@ function ProjectMenu({
                   <span className="menu-item-name">{projectName(projectPath)}</span>
                   <span className="menu-item-path mono">{projectPath}</span>
                 </button>
-                <button
+                {!isRemoteDesktopNode() && <button
                   type="button"
                   className="icon-button"
                   title={t('ProjectPicker.removeFromRecentProjectsExistingTasksAndConversations')}
@@ -86,13 +87,14 @@ function ProjectMenu({
                   onClick={() => onForget(projectPath)}
                 >
                   ×
-                </button>
+                </button>}
               </li>
             ))}
           </ul>
           <div className="menu-separator" />
         </>
       )}
+      {!isRemoteDesktopNode() ? <>
       <button type="button" className="menu-item" onClick={onBrowse}>
         🖥️ 打开本地文件夹 (系统窗口)
       </button>
@@ -101,6 +103,7 @@ function ProjectMenu({
       </button>
       <div className="menu-separator" />
       <PathForm onSubmit={onAdd} />
+      </> : <p className="menu-note">仅可选择节点已有项目，新增项目请在节点主机操作。</p>}
     </Popover>
   )
 }

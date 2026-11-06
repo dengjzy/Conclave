@@ -53,6 +53,7 @@ import { focusBrowserConversation, focusBrowserTab, receiveBrowserTabs } from '.
 import type { InspectorTab } from './components/Inspector'
 import type { ChatEdit, InspectorFile } from './inspector-file'
 import { resolveCoreEndpoint } from './core-endpoint'
+import { nodeRpcMethods, nodeRpcSupports } from './remote/node-rpc'
 import { reasonText } from './labels'
 import { askProjectTrust } from './project-trust'
 import { receiveTodos } from './conversation-todos'
@@ -525,6 +526,8 @@ export function showTerminal(id: string): void {
 
 // Opening the panel with nothing in it starts a shell right away.
 export async function toggleTerminalPanel(): Promise<void> {
+  const rpc = useCore.getState().rpc
+  if (rpc && !nodeRpcSupports(rpc, 'terminals.open')) { showError('请在节点电脑上使用终端'); return }
   const { terminalPanelOpen, terminals } = useCore.getState()
   const open = !terminalPanelOpen
   useCore.setState((s) => (open ? shownUtilityPanel(s, 'terminal') : hiddenUtilityPanel(s, 'terminal')))
@@ -593,6 +596,8 @@ export function setFilesMaximized(maximized: boolean): void {
 }
 
 export function toggleFilesPanel(): void {
+  const rpc = useCore.getState().rpc
+  if (rpc && !nodeRpcSupports(rpc, 'files.list')) { showError('请在节点电脑上查看文件'); return }
   useCore.setState((s) => (s.filesPanelOpen ? hiddenUtilityPanel(s, 'files') : shownUtilityPanel(s, 'files')))
 }
 
@@ -1333,7 +1338,11 @@ export async function perform<T>(action: (rpc: RpcConnection) => Promise<T>): Pr
     return null
   }
   try {
-    return await withProjectTrust(rpc, action)
+    const client: RpcConnection = nodeRpcMethods(rpc) ? { ...rpc, async call(method, params) {
+      if (!nodeRpcSupports(rpc, method)) throw new RpcError('当前远程连接未开放此操作，请在节点电脑上完成', -32601, 'remote-method-denied')
+      return rpc.call(method, params)
+    } } : rpc
+    return await withProjectTrust(client, action)
   } catch (error) {
     if (error === DECLINED) return null
     const message =
@@ -1379,19 +1388,32 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 // One loop for the app's lifetime; survives core restarts (new port and token). The card of
 // waiting requests needs only tasks and chats: it asks for nothing else, and starts nothing (the
 // browser host) that the main window already does.
-export function startCoreConnection(scope: 'app' | 'requests' = 'app'): void {
+export function startCoreConnection(scope: 'app' | 'requests' = 'app', connector?: () => Promise<RpcConnection | null>): () => void {
   const full = scope === 'app'
+  let active = true
+  let currentRpc: RpcConnection | null = null
+  const connect = connector ?? (async () => {
+    const endpoint = await resolveCoreEndpoint()
+    return endpoint ? connectRpc(coreUrl(endpoint)) : null
+  })
   void (async () => {
-    for (;;) {
-      const endpoint = await resolveCoreEndpoint()
-      if (!endpoint) {
-        useCore.setState({ connection: 'waiting-for-core', rpc: null })
-        await sleep(RETRY_MS)
-        continue
-      }
+    while (active) {
       try {
         useCore.setState({ connection: 'connecting' })
-        const rpc = await connectRpc(coreUrl(endpoint))
+        const rpc = await connect()
+        if (!active) { rpc?.close(); return }
+        if (!rpc) {
+          useCore.setState({ connection: 'waiting-for-core', rpc: null })
+          await sleep(RETRY_MS)
+          continue
+        }
+        currentRpc = rpc
+        const publish = (patch: Partial<CoreState> | ((state: CoreState) => Partial<CoreState>)) => {
+          if (active && currentRpc === rpc) useCore.setState(patch)
+        }
+        const on: RpcConnection['on'] = (method, listener) => rpc.on(method, (params) => {
+          if (active && currentRpc === rpc) listener(params)
+        })
         let initialized = false
         const taskChanges = new Map<string, Task | null>()
         const conversationChanges = new Map<string, Conversation | null>()
@@ -1400,110 +1422,110 @@ export function startCoreConnection(scope: 'app' | 'requests' = 'app'): void {
         const runChanges = new Map<string, SquadRun | null>()
         const squadChanges = new Map<string, Squad | null>()
         const profileChanges = new Map<string, AgentProfile | null>()
-        rpc.on('agentProfiles.changed', ({ profile }) => {
+        on('agentProfiles.changed', ({ profile }) => {
           if (!initialized) profileChanges.set(profile.id, profile)
-          useCore.setState((state) => ({ agentProfiles: { ...state.agentProfiles, [profile.id]: profile } }))
+          publish((state) => ({ agentProfiles: { ...state.agentProfiles, [profile.id]: profile } }))
         })
         const discussionChanges = new Map<string, Discussion | null>()
-        useCore.setState({ attentionSummaryLoading: true, attentionSummaryError: null, agentCli: {} })
-        rpc.on('squads.changed', ({ squad }) => {
+        publish({ attentionSummaryLoading: true, attentionSummaryError: null, agentCli: {} })
+        on('squads.changed', ({ squad }) => {
           if (!initialized) squadChanges.set(squad.id, squad)
-          useCore.setState((state) => ({ squads: { ...state.squads, [squad.id]: squad } }))
+          publish((state) => ({ squads: { ...state.squads, [squad.id]: squad } }))
         })
-        rpc.on('squads.runChanged', ({ run }) => {
+        on('squads.runChanged', ({ run }) => {
           if (!initialized) runChanges.set(run.id, run)
-          useCore.setState((state) => ({ squadRuns: { ...state.squadRuns, [run.id]: run } }))
+          publish((state) => ({ squadRuns: { ...state.squadRuns, [run.id]: run } }))
         })
-        rpc.on('git.changed', () => useCore.setState((s) => ({ gitRevision: s.gitRevision + 1 })))
-        rpc.on('tasks.changed', ({ task }) => {
+        on('git.changed', () => publish((s) => ({ gitRevision: s.gitRevision + 1 })))
+        on('tasks.changed', ({ task }) => {
           if (!initialized) taskChanges.set(task.id, task)
-          useCore.setState((s) => ({ tasks: { ...s.tasks, [task.id]: task } }))
+          publish((s) => ({ tasks: { ...s.tasks, [task.id]: task } }))
         })
-        rpc.on('tasks.deleted', ({ id }) => {
+        on('tasks.deleted', ({ id }) => {
           if (!initialized) taskChanges.set(id, null)
-          useCore.setState((s) => {
+          publish((s) => {
             const { [id]: _removed, ...tasks } = s.tasks
             return { tasks, squadRuns: Object.fromEntries(Object.entries(s.squadRuns).filter(([, run]) => run.taskId !== id)), selectedId: s.selectedId === id ? null : s.selectedId }
           })
         })
-        rpc.on('conversations.changed', ({ conversation }) => {
+        on('conversations.changed', ({ conversation }) => {
           if (!initialized) conversationChanges.set(conversation.id, conversation)
-          useCore.setState((s) => ({
+          publish((s) => ({
             conversations: { ...s.conversations, [conversation.id]: conversation },
             ...(finishedUnseen(s, s.conversations[conversation.id], conversation) ? { unseen: { ...s.unseen, [conversation.id]: true } } : {})
           }))
         })
-        rpc.on('conversations.deleted', ({ id }) => {
+        on('conversations.deleted', ({ id }) => {
           forgetFileTabs(fileScopeKey({ conversationId: id, roots: [] }))
           // A column whose conversation went leaves the other on its own, in front where it was.
           const panes = savedPanes()
           const other = panes?.includes(id) ? closePane(panes, id) : null
           if (panes?.includes(id)) usePreferences.setState({ splitPanes: [], splitLast: [] })
           if (!initialized) conversationChanges.set(id, null)
-          useCore.setState((s) => {
+          publish((s) => {
             const { [id]: _removed, ...conversations } = s.conversations
             return { conversations, selectedConversationId: s.selectedConversationId === id ? other : s.selectedConversationId }
           })
         })
-        rpc.on('conversations.chatItems', ({ conversationId, items }) => receiveChatItems(conversationId, items))
-        rpc.on('conversations.chatDelta', ({ conversationId, stageId, itemId, append }) => receiveChatDelta(conversationId, stageId, itemId, append))
-        rpc.on('browser.changed', ({ status }) => useCore.setState({ browser: status }))
-        rpc.on('system.awakeChanged', ({ status }) => useCore.setState({ awake: status }))
-        rpc.on('system.chatSettingsChanged', ({ settings }) => useCore.setState({ chatSettings: settings }))
-        rpc.on('system.agentCliChanged', ({ status }) => useCore.setState((s) => ({ agentCli: mergeCliStatuses(s.agentCli, [status]) })))
-        rpc.on('system.environmentChanged', ({ environment }) => useCore.setState({ environment }))
-        rpc.on('browser.tabsChanged', ({ conversationId, tabs }) => receiveBrowserTabs(conversationId, tabs))
-        rpc.on('usage.changed', ({ usage }) =>
-          useCore.setState((s) => withUsage([...s.accountUsage.filter((entry) => entry.agent !== usage.agent || usageAccount(entry) !== usageAccount(usage)), usage], s.accounts))
+        on('conversations.chatItems', ({ conversationId, items }) => receiveChatItems(conversationId, items))
+        on('conversations.chatDelta', ({ conversationId, stageId, itemId, append }) => receiveChatDelta(conversationId, stageId, itemId, append))
+        on('browser.changed', ({ status }) => publish({ browser: status }))
+        on('system.awakeChanged', ({ status }) => publish({ awake: status }))
+        on('system.chatSettingsChanged', ({ settings }) => publish({ chatSettings: settings }))
+        on('system.agentCliChanged', ({ status }) => publish((s) => ({ agentCli: mergeCliStatuses(s.agentCli, [status]) })))
+        on('system.environmentChanged', ({ environment }) => publish({ environment }))
+        on('browser.tabsChanged', ({ conversationId, tabs }) => receiveBrowserTabs(conversationId, tabs))
+        on('usage.changed', ({ usage }) =>
+          publish((s) => withUsage([...s.accountUsage.filter((entry) => entry.agent !== usage.agent || usageAccount(entry) !== usageAccount(usage)), usage], s.accounts))
         )
-        rpc.on('accounts.changed', ({ accounts }) => useCore.setState((s) => ({
+        on('accounts.changed', ({ accounts }) => publish((s) => ({
           accounts,
           // A reading of an account removed goes with it.
           ...withUsage(s.accountUsage.filter((entry) => !accountsSupported(entry.agent) || accounts.accounts.some((each) => each.agent === entry.agent && each.id === usageAccount(entry))), accounts)
         })))
-        rpc.on('sources.listChanged', ({ sources }) => useCore.setState({ sources }))
+        on('sources.listChanged', ({ sources }) => publish({ sources }))
         // The last shell exiting puts the panel away, as closing the last tab would.
-        rpc.on('terminals.changed', ({ terminals }) =>
-          useCore.setState((s) => ({
+        on('terminals.changed', ({ terminals }) =>
+          publish((s) => ({
             terminals,
             activeTerminalId: activeAmong(s.activeTerminalId, terminals),
             ...(terminals.length === 0 && s.terminalPanelOpen ? hiddenUtilityPanel(s, 'terminal') : {})
           }))
         )
-        rpc.on('terminalCommands.changed', ({ commands }) => useCore.setState({ terminalCommands: commands }))
-        rpc.on('bookmarks.changed', ({ bookmarks }) => useCore.setState({ bookmarks }))
-        rpc.on('chatCommands.changed', ({ commands }) => useCore.setState({ chatCommands: commands }))
-        rpc.on('skills.changed', ({ repos }) => useCore.setState({ skillRepos: repos }))
-        rpc.on('mcpServers.changed', ({ servers }) => useCore.setState({ mcpServers: servers }))
-        rpc.on('modelProviders.changed', ({ providers }) => useCore.setState({ modelProviders: providers }))
-        rpc.on('schedules.changed', ({ runs }) => {
+        on('terminalCommands.changed', ({ commands }) => publish({ terminalCommands: commands }))
+        on('bookmarks.changed', ({ bookmarks }) => publish({ bookmarks }))
+        on('chatCommands.changed', ({ commands }) => publish({ chatCommands: commands }))
+        on('skills.changed', ({ repos }) => publish({ skillRepos: repos }))
+        on('mcpServers.changed', ({ servers }) => publish({ mcpServers: servers }))
+        on('modelProviders.changed', ({ providers }) => publish({ modelProviders: providers }))
+        on('schedules.changed', ({ runs }) => {
           if (!initialized) changedSchedules = runs
-          useCore.setState({ schedules: runs })
+          publish({ schedules: runs })
         })
-        rpc.on('routines.changed', ({ routines }) => {
+        on('routines.changed', ({ routines }) => {
           if (!initialized) changedRoutines = routines
-          useCore.setState({ routines })
+          publish({ routines })
         })
-        rpc.on('discussions.changed', ({ discussion }) => {
+        on('discussions.changed', ({ discussion }) => {
           if (!initialized) discussionChanges.set(discussion.id, discussion)
-          useCore.setState((s) => ({ discussions: { ...s.discussions, [discussion.id]: discussion } }))
+          publish((s) => ({ discussions: { ...s.discussions, [discussion.id]: discussion } }))
         })
-        rpc.on('discussions.deleted', ({ id }) => {
+        on('discussions.deleted', ({ id }) => {
           if (!initialized) discussionChanges.set(id, null)
           forgetDiscussionPosts(id)
-          useCore.setState((s) => {
+          publish((s) => {
             const { [id]: _removed, ...discussions } = s.discussions
             return { discussions, selectedDiscussionId: s.selectedDiscussionId === id ? null : s.selectedDiscussionId }
           })
         })
-        rpc.on('discussions.posts', ({ discussionId, posts }) => receiveDiscussionPosts(discussionId, posts))
-        rpc.on('todos.changed', ({ conversationId, groups }) => receiveTodos(conversationId, groups))
-        rpc.on('sources.inboxChanged', ({ inbox }) =>
-          useCore.setState((s) => ({ inboxes: { ...s.inboxes, [inboxKey(inbox)]: inbox } }))
+        on('discussions.posts', ({ discussionId, posts }) => receiveDiscussionPosts(discussionId, posts))
+        on('todos.changed', ({ conversationId, groups }) => receiveTodos(conversationId, groups))
+        on('sources.inboxChanged', ({ inbox }) =>
+          publish((s) => ({ inboxes: { ...s.inboxes, [inboxKey(inbox)]: inbox } }))
         )
-        rpc.on('sources.loginPrompt', ({ flowId, promptId, prompt }) => patchLogin(flowId, () => ({ prompt: { promptId, prompt } })))
-        rpc.on('sources.loginNotice', ({ flowId, notice }) => patchLogin(flowId, (login) => ({ notices: [...login.notices, notice] })))
-        rpc.on('sources.loginFinished', ({ flowId, account, problem }) =>
+        on('sources.loginPrompt', ({ flowId, promptId, prompt }) => patchLogin(flowId, () => ({ prompt: { promptId, prompt } })))
+        on('sources.loginNotice', ({ flowId, notice }) => patchLogin(flowId, (login) => ({ notices: [...login.notices, notice] })))
+        on('sources.loginFinished', ({ flowId, account, problem }) =>
           patchLogin(flowId, () => ({ prompt: null, result: { account, problem } }))
         )
         const tasks = await rpc.call('tasks.list', {})
@@ -1521,24 +1543,25 @@ export function startCoreConnection(scope: 'app' | 'requests' = 'app'): void {
         const terminals = full ? await rpc.call('terminals.list', {}).catch(() => []) : []
         const terminalCommands = full && rpc.features.includes('terminal-commands') ? await rpc.call('terminalCommands.list', {}).catch(() => []) : []
         // Asked only of a core that has one, and never waited for: it starts the host when it is down.
-        if (full && rpc.features.includes('browser')) void rpc.call('browser.status', {}).then((status) => useCore.setState({ browser: status })).catch(() => {})
-        if (full && rpc.features.includes('bookmarks')) void rpc.call('bookmarks.list', {}).then((bookmarks) => useCore.setState({ bookmarks })).catch(() => {})
-        if (full && rpc.features.includes('keep-awake')) void rpc.call('system.awakeStatus', {}).then((awake) => useCore.setState({ awake })).catch(() => {})
+        if (full && rpc.features.includes('browser')) void rpc.call('browser.status', {}).then((status) => publish({ browser: status })).catch(() => {})
+        if (full && rpc.features.includes('bookmarks')) void rpc.call('bookmarks.list', {}).then((bookmarks) => publish({ bookmarks })).catch(() => {})
+        if (full && rpc.features.includes('keep-awake')) void rpc.call('system.awakeStatus', {}).then((awake) => publish({ awake })).catch(() => {})
         // What is left to do everywhere, for the overview; todos.changed keeps it current.
         if (full && rpc.features.includes('todo-overview')) void rpc.call('todos.open', {}).then((open) => open.forEach(({ conversationId, groups }) => receiveTodos(conversationId, groups))).catch(() => {})
-        if (full && rpc.features.includes('prompt-suggestions')) void rpc.call('system.chatSettings', {}).then((chatSettings) => useCore.setState({ chatSettings })).catch(() => {})
+        if (full && rpc.features.includes('prompt-suggestions')) void rpc.call('system.chatSettings', {}).then((chatSettings) => publish({ chatSettings })).catch(() => {})
         const schedules = full && rpc.features.includes('schedules') ? await rpc.call('schedules.list', {}).catch(() => []) : []
         const routines = full && rpc.features.includes('routines') ? await rpc.call('routines.list', {}).catch(() => []) : []
         const activeSquadRuns = full && rpc.features.includes('squads') ? await rpc.call('squads.activeRuns', {}) : []
         const agentProfiles = full && rpc.features.includes('agent-profiles') ? await rpc.call('agentProfiles.list', {}) : []
         const squads = full && rpc.features.includes('squads') ? await rpc.call('squads.list', {}) : []
         const discussions = full && rpc.features.includes('discussions') ? await rpc.call('discussions.list', {}).catch(() => []) : []
-        if (full && rpc.features.includes('chat-commands')) void rpc.call('chatCommands.list', {}).then((chatCommands) => useCore.setState({ chatCommands })).catch(() => {})
-        if (full && rpc.features.includes('skills-library')) void rpc.call('skills.list', {}).then((skillRepos) => useCore.setState({ skillRepos })).catch(() => {})
-        if (full && rpc.features.includes('mcp-servers')) void rpc.call('mcpServers.list', {}).then((mcpServers) => useCore.setState({ mcpServers })).catch(() => {})
+        if (full && rpc.features.includes('chat-commands')) void rpc.call('chatCommands.list', {}).then((chatCommands) => publish({ chatCommands })).catch(() => {})
+        if (full && rpc.features.includes('skills-library')) void rpc.call('skills.list', {}).then((skillRepos) => publish({ skillRepos })).catch(() => {})
+        if (full && rpc.features.includes('mcp-servers')) void rpc.call('mcpServers.list', {}).then((mcpServers) => publish({ mcpServers })).catch(() => {})
         const accounts = full && rpc.features.includes('agent-accounts') ? await rpc.call('accounts.list', {}).catch(() => null) : null
-        if (full && rpc.features.includes('environment')) void rpc.call('system.environment', {}).then((environment) => useCore.setState({ environment })).catch(() => {})
-        useCore.setState((s) => ({
+        if (full && rpc.features.includes('environment')) void rpc.call('system.environment', {}).then((environment) => publish({ environment })).catch(() => {})
+        if (!active || currentRpc !== rpc) { rpc.close(); return }
+        publish((s) => ({
           rpc,
           connection: 'connected',
           tasks: replaySummaryChanges(tasks, taskChanges),
@@ -1567,11 +1590,20 @@ export function startCoreConnection(scope: 'app' | 'requests' = 'app'): void {
         conversationChanges.clear()
         await rpc.closed
       } catch {
-        // Fall through to retry; the badge already shows we're not connected.
+        // Retry only the injected connector; a remote failure must never select the local core.
       }
+      currentRpc?.close()
+      currentRpc = null
+      if (!active) return
       // A sign-in belongs to the connection that started it; core has dropped it.
       useCore.setState({ rpc: null, connection: 'connecting', login: null, environment: null })
       await sleep(RETRY_MS)
     }
   })()
+  return () => {
+    active = false
+    currentRpc?.close()
+    currentRpc = null
+    useCore.setState({ rpc: null, connection: 'waiting-for-core', login: null, environment: null })
+  }
 }

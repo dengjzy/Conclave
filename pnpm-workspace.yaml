@@ -5,6 +5,7 @@ packages:
   - packages/dsh-runtime
   - packages/plugin-sdk
   - packages/web
+  - packages/mobile
 
 catalog:
   '@types/node': 26.6.2

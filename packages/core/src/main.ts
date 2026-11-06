@@ -1,3 +1,5 @@
+import { RemoteAccessService } from './remote-access'
+import { createRemoteActions } from './remote-actions'
 import { AgentProfileStore } from './agent-profile-store'
 import { AgentProfileService } from './agent-profile-service'
 import { AgentCliMaintenance } from './agent-cli-maintenance'
@@ -522,7 +524,7 @@ try {
 }
 
 let targetPort = 43551
-let targetHost = process.env.CONCLAVE_HOST ?? '0.0.0.0'
+let targetHost = process.env.CONCLAVE_HOST ?? '127.0.0.1'
 for (let i = 2; i < process.argv.length; i++) {
   if (process.argv[i] === '--port' && process.argv[i + 1]) {
     targetPort = Number(process.argv[i + 1])
@@ -541,15 +543,20 @@ if (process.env.CONCLAVE_PORT) {
 const sessionImports = new SessionImports(conversationsStore, conversations, paths.home)
 conversations.setSessionImports(sessionImports)
 
-server = await startRpcServer({
-  host: targetHost,
-  port: targetPort,
-  token,
-  handlers: createRpcHandlers(service, conversations, projects, gitFavorites, daemon, usage, sources, {
+const remote: RemoteAccessService = new RemoteAccessService({
+  home: paths.home,
+  call: createRemoteActions({ tasks: service, environment, handlers: () => handlers }),
+  openDesktop: (send) => {
+    if (!server) throw new Error('RPC server is not ready')
+    return server.openRemote(send, createRemoteActions({ tasks: service, environment, handlers: () => handlers }))
+  },
+  changed: (status) => server?.broadcast('remote.changed', { status })
+})
+const handlers = createRpcHandlers(service, conversations, projects, gitFavorites, daemon, usage, sources, {
     store: attachments,
     uploads: new AttachmentUploads(attachments)
-  }, terminals, worktrees, browser, awake, terminalCommands, limits, runs, turns, chatSettings, environment, schedules, chatCommands, routines, discussions, wire, () => server?.broadcast('git.changed', {}), squads, todos, plugins, skills, mcpServers, smallModels, projectConfigs, modelProviders, sessionImports, accounts, cliMaintenance, analytics, automation, new ProjectStar(sources), profiles, bookmarks)
-})
+  }, terminals, worktrees, browser, awake, terminalCommands, limits, runs, turns, chatSettings, environment, schedules, chatCommands, routines, discussions, wire, () => server?.broadcast('git.changed', {}), squads, todos, plugins, skills, mcpServers, smallModels, projectConfigs, modelProviders, sessionImports, accounts, cliMaintenance, analytics, automation, new ProjectStar(sources), profiles, bookmarks, remote)
+server = await startRpcServer({ host: targetHost, port: targetPort, token, handlers })
 await writeCoreEndpoint({ port: server.port, token, pid: process.pid, protocolVersion: PROTOCOL_VERSION, version: packageJson.version })
 daemon.start()
 await awake.start()
@@ -588,6 +595,7 @@ async function shutdown(): Promise<void> {
   }
   shuttingDown = true
   conversations.closeInitialMessages()
+  await remote.close()
   announcements.stop()
   await schedules.stop()
   await automation.close()

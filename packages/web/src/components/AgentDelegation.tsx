@@ -3,6 +3,7 @@ import { agentDescriptor, type AgentKind, type AgentProfile, type ChatItem, type
 import { agentCallForResult, openAgentCall, showAgentCalls, useAgentCalls, useAgentCallsSupported } from '../agent-calls'
 import { useAgentCatalog, type ModelChoice } from '../agent-models'
 import { useOccludesBrowser } from '../browser-occlusion'
+import { isRemoteDesktopNode } from '../remote/desktop-node-mode'
 import { useCore } from '../core-store'
 import { delegationAgent, delegationAgents, delegationInstruction, delegationReadOnly, delegationRoleFields, directDelegationAllowed, directDelegationTarget } from '../delegation-choice'
 import { discussionModelUnavailable } from '../discussion-model'
@@ -21,6 +22,9 @@ export function DelegationDialog({ conversation, onClose, onHistory }: { convers
   useOccludesBrowser()
   const dialog = useRef<HTMLDialogElement>(null)
   const titleId = useId()
+  const instructionLimitId = useId()
+  const remote = isRemoteDesktopNode()
+  const instructionLimit = remote ? 10000 : 20000
   const rpc = useCore((state) => state.rpc)
   const profiles = useCore((state) => state.agentProfiles)
   const environment = useCore((state) => state.environment)
@@ -70,7 +74,7 @@ export function DelegationDialog({ conversation, onClose, onHistory }: { convers
   const ready = direct ? Boolean(target) : Boolean(selected)
   const locked = busy || saving
   const saveRole = async () => {
-    if (!rpc || locked || !target || !roleName.trim()) return
+    if (remote || !rpc || locked || !target || !roleName.trim()) return
     setSaving(true)
     setError(null)
     try {
@@ -83,7 +87,7 @@ export function DelegationDialog({ conversation, onClose, onHistory }: { convers
     } catch (reason) { setError(String(reason)) } finally { setSaving(false) }
   }
   const dispatch = async () => {
-    if (!rpc || locked || !ready || !goal.trim() || instruction.length > 20000 || (conversation.archivedAt != null || Boolean(conversation.deletion))) return
+    if (!rpc || locked || !ready || !goal.trim() || instruction.length > instructionLimit || (conversation.archivedAt != null || Boolean(conversation.deletion))) return
     setBusy(true)
     setError(null)
     try {
@@ -113,18 +117,19 @@ export function DelegationDialog({ conversation, onClose, onHistory }: { convers
         <ChatPicker label={t('Delegation.access')} value={forcedReadOnly ? 'readOnly' : capability} placeholder="" size="field" placement="below" disabled={locked || forcedReadOnly} options={[{ value: 'readOnly', label: t('Delegation.readOnly') }, { value: 'develop', label: t('Delegation.develop') }]} onChange={(value) => { setCapability(value === 'develop' ? 'develop' : 'readOnly'); resetRef() }} />
         {(forcedReadOnly || readOnlyUnsupported) && <p className="delegation-hint muted" role={readOnlyUnsupported ? 'alert' : undefined}>{t(readOnlyUnsupported ? 'Delegation.readOnlyUnsupported' : 'Delegation.parentReadOnly')}</p>}
         {discussionModelUnavailable(catalog, choice) && <p className="modal-error" role="alert">{t('DiscussionDraft.modelUnavailable', { model: choice.model ?? '' })}</p>}
-        <details className="delegation-save"><summary>{t('Delegation.saveRole')}</summary><label className="delegation-field">{t('Delegation.roleName')}<input className="input" value={roleName} maxLength={60} disabled={locked} onChange={(event) => setRoleName(event.target.value)} /></label><p className="muted delegation-hint">{t('Delegation.saveHint')}</p><button type="button" className="button ghost" disabled={locked || !target || !roleName.trim()} onClick={() => void saveRole()}>{t('FileEditor.save')}</button></details>
+        {!remote && <details className="delegation-save"><summary>{t('Delegation.saveRole')}</summary><label className="delegation-field">{t('Delegation.roleName')}<input className="input" value={roleName} maxLength={60} disabled={locked} onChange={(event) => setRoleName(event.target.value)} /></label><p className="muted delegation-hint">{t('Delegation.saveHint')}</p><button type="button" className="button ghost" disabled={locked || !target || !roleName.trim()} onClick={() => void saveRole()}>{t('FileEditor.save')}</button></details>}
       </> : <>
         <div className="delegation-field"><ChatPicker label={t('Delegation.savedRole')} value={profileId} placeholder={t('AgentProfiles.chooseRole')} size="field" placement="below" disabled={locked || loading} options={available.map((item) => ({ value: item.id, label: item.name, description: item.description, icon: <AgentIcon agent={item.agent} /> }))} onChange={(value) => { setProfileId(value); resetRef() }} /></div>
         {!loading && !available.length && <p className="muted">{t('AgentProfiles.noAvailable')}</p>}
         {selected && <p className="muted delegation-hint">{[agentLabel(selected.agent), selected.model, t(selected.capability === 'readOnly' || forcedReadOnly ? 'Delegation.readOnly' : 'Delegation.develop')].filter(Boolean).join(' · ')}</p>}
       </>}
-      <label className="delegation-field">{t('AgentProfiles.goal')}<textarea className="input" autoFocus required rows={3} maxLength={10000} placeholder={t('AgentProfiles.goalPlaceholder')} value={goal} disabled={locked} onChange={(event) => { setGoal(event.target.value); resetRef() }} /></label>
-      <label className="delegation-field">{t('AgentProfiles.context')}<textarea className="input" rows={2} maxLength={9998} placeholder={t('AgentProfiles.contextPlaceholder')} value={context} disabled={locked} onChange={(event) => { setContext(event.target.value); resetRef() }} /></label>
+      <label className="delegation-field">{t('AgentProfiles.goal')}<textarea className="input" autoFocus required rows={3} maxLength={10000} placeholder={t('AgentProfiles.goalPlaceholder')} value={goal} aria-describedby={remote ? instructionLimitId : undefined} aria-invalid={instruction.length > instructionLimit || undefined} disabled={locked} onChange={(event) => { setGoal(event.target.value); resetRef() }} /></label>
+      <label className="delegation-field">{t('AgentProfiles.context')}<textarea className="input" rows={2} maxLength={9998} placeholder={t('AgentProfiles.contextPlaceholder')} value={context} aria-describedby={remote ? instructionLimitId : undefined} aria-invalid={instruction.length > instructionLimit || undefined} disabled={locked} onChange={(event) => { setContext(event.target.value); resetRef() }} /></label>
+      {remote && <p id={instructionLimitId} className={instruction.length > instructionLimit ? 'modal-error' : 'muted delegation-hint'} role={instruction.length > instructionLimit ? 'alert' : undefined}>{instruction.length} / {instructionLimit}</p>}
       <div className="delegation-handoff"><strong>{t('Delegation.sharedProjects')}</strong><ul>{(conversation.projectPaths.length ? conversation.projectPaths : [conversation.workspacePath]).map((path) => <li key={path}>{path}</li>)}</ul>{Boolean(conversation.referencePaths?.length) && <><strong>{t('Delegation.references')}</strong><ul>{conversation.referencePaths?.map((path) => <li key={path}>{path}</li>)}</ul></>}<p className="muted">{t('Delegation.historyHint')}</p></div>
       {instruction && <details className="delegation-preview"><summary>{t('Delegation.preview')}</summary><pre>{instruction}</pre></details>}
       {error && <p className="modal-error" role="alert">{error}</p>}
-      <footer className="modal-footer"><button type="button" className="link-button delegation-history" disabled={locked} onClick={() => { onHistory(); onClose() }}>{t('AgentProfiles.history')}</button><button type="button" className="button ghost" disabled={locked} onClick={onClose}>{t('ChatCommandSettings.cancel')}</button><button type="submit" className="button primary" disabled={locked || !ready || !goal.trim() || instruction.length > 20000 || (conversation.archivedAt != null || Boolean(conversation.deletion))}>{busy ? t('AgentProfiles.starting') : t('AgentProfiles.dispatch')}</button></footer>
+      <footer className="modal-footer"><button type="button" className="link-button delegation-history" disabled={locked} onClick={() => { onHistory(); onClose() }}>{t('AgentProfiles.history')}</button><button type="button" className="button ghost" disabled={locked} onClick={onClose}>{t('ChatCommandSettings.cancel')}</button><button type="submit" className="button primary" disabled={locked || !ready || !goal.trim() || instruction.length > instructionLimit || (conversation.archivedAt != null || Boolean(conversation.deletion))}>{busy ? t('AgentProfiles.starting') : t('AgentProfiles.dispatch')}</button></footer>
     </form>
   </dialog>
 }

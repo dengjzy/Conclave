@@ -1,4 +1,5 @@
 import { t, tr } from '../i18n'
+import { isRemoteDesktopNode } from '../remote/desktop-node-mode'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { create } from 'zustand'
 import type { AgentKind } from '@conclave/protocol'
@@ -68,6 +69,11 @@ export function TaskQuickAdd({ onCreated }: { onCreated: (id: string) => void })
   const draft = { title: title.trim(), repos: repos ?? [], agent: agent ?? null }
   const createTask = async () => {
     if (!draft.title || busy || !connected) return
+    if (isRemoteDesktopNode() && (!draft.agent || draft.repos.length === 0)) {
+      useQuickAdd.setState({ open: false })
+      setNewTaskOpen(true, draft)
+      return
+    }
     setBusy(true)
     const task = await perform((rpc) => rpc.call('tasks.create', { title: draft.title, repos: [...draft.repos], agent: draft.agent }))
     setBusy(false)

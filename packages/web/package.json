@@ -12,10 +12,10 @@
   },
   "dependencies": {
     "@fontsource-variable/geist-mono": "5.3.0",
-    "playwright-core": "catalog:"
+    "playwright-core": "catalog:",
+    "@capacitor/core": "7.6.10"
   },
   "devDependencies": {
-    "@conclave/protocol": "workspace:*",
     "@codemirror/commands": "6.11.1",
     "@codemirror/lang-markdown": "6.5.2",
     "@codemirror/language": "6.12.4",
@@ -23,10 +23,12 @@
     "@codemirror/search": "6.7.2",
     "@codemirror/state": "6.7.6",
     "@codemirror/view": "6.43.13",
+    "@conclave/protocol": "workspace:*",
     "@lezer/common": "1.5.2",
     "@lezer/highlight": "1.2.3",
     "@replit/codemirror-indentation-markers": "6.5.3",
     "@types/node": "catalog:",
+    "@types/qrcode": "1.5.6",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@types/ws": "catalog:",
@@ -36,6 +38,7 @@
     "lowlight": "3.3.0",
     "material-icon-theme": "5.39.0",
     "mermaid": "12.1.0",
+    "qrcode": "1.5.4",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-markdown": "10.1.0",

@@ -1,5 +1,6 @@
 import { getLocale, localized, t } from '../i18n'
-import { agentDescriptor, agentModeText, helperAllowsMode, isHelper, type AgentKind, type ChatContextUse, type ChatItem, type ChatModel, type ChatOption, type ChatPermissionMode, type Conversation } from '@conclave/protocol'
+import { isRemoteDesktopNode } from '../remote/desktop-node-mode'
+import { RemotePermissionMode, agentDescriptor, agentModeText, helperAllowsMode, isHelper, type AgentKind, type ChatContextUse, type ChatItem, type ChatModel, type ChatOption, type ChatPermissionMode, type Conversation } from '@conclave/protocol'
 import { perform, useCore } from '../core-store'
 import { usePreferences } from '../preferences'
 import { useAgentCatalog } from '../agent-models'
@@ -14,7 +15,7 @@ export function modeLabel(agent: AgentKind, mode: string): string {
 
 // The modes as the picker lists them; one the agent offers but cannot be picked now stays greyed.
 export function modeOptions(agent: AgentKind, modes: readonly string[], offered: readonly string[] = modes): PickerOption[] {
-  return modes.map((mode) => ({
+  return allowedModes(modes).map((mode) => ({
     value: mode,
     label: modeLabel(agent, mode),
     description: agentModeText(agent, mode, getLocale())?.description ?? null,
@@ -28,20 +29,25 @@ export function modeTone(mode: string | null): string | undefined {
 }
 
 export function defaultStartMode(agent: AgentKind, offered: readonly ChatPermissionMode[]): ChatPermissionMode {
+  offered = allowedModes(offered)
   const prefs = usePreferences.getState?.()
   const custom = prefs?.agentDefaultPermissions?.[agent]
   if (custom && offered.includes(custom as ChatPermissionMode)) return custom as ChatPermissionMode
   const globalMode = prefs?.globalDefaultPermission
   if (globalMode && offered.includes(globalMode as ChatPermissionMode)) return globalMode as ChatPermissionMode
   const { defaultStartMode: preferred, startModes } = agentDescriptor(agent)
-  return offered.includes(preferred) ? preferred : startModes[0]!
+  return offered.includes(preferred) ? preferred : isRemoteDesktopNode() ? offered.find((mode) => mode === 'ask') ?? offered[0] ?? 'ask' : startModes[0]!
 }
 
 // What a new conversation can start in, with auto where the model takes it (as the agent's catalog
 // says) and bypass where the agent has it, in the order a running chat lists them.
 export function startModes(agent: AgentKind, model: ChatModel | undefined): ChatPermissionMode[] {
   const { startModes, capabilities } = agentDescriptor(agent)
-  return [...startModes, ...(model?.autoMode && capabilities.autoMode ? ['auto' as const] : []), ...(capabilities.bypass ? ['bypass' as const] : [])]
+  return allowedModes([...startModes, ...(model?.autoMode && capabilities.autoMode ? ['auto' as const] : []), ...(capabilities.bypass ? ['bypass' as const] : [])])
+}
+
+function allowedModes<T extends string>(modes: readonly T[]): T[] {
+  return modes.filter((mode) => !isRemoteDesktopNode() || RemotePermissionMode.safeParse(mode).success)
 }
 
 const EFFORT_LABEL: Record<string, string> = localized(() => ({
@@ -137,10 +143,10 @@ export function ChatOptionsBar({ conversation, state, compact = false }: { conve
   }
 
   const descriptor = agentDescriptor(agent)
-  const offered = (running && activeState || conversation.planOnly
+  const offered = allowedModes((running && activeState || conversation.planOnly
     ? (activeState?.permissionModes ?? startModes(agent, currentModel))
     : [...(activeState?.permissionModes ?? startModes(agent, currentModel)).filter((mode) => mode !== 'bypass'), ...(descriptor.capabilities.bypass ? ['bypass'] : [])]
-  ).filter((mode) => !isHelper(conversation) || helperAllowsMode(mode))
+  ).filter((mode) => !isHelper(conversation) || helperAllowsMode(mode)))
 
   const permissionMode = (running && activeState)
     ? activeState.permissionMode

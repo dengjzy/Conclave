@@ -1,3 +1,4 @@
+import { nodeStorage } from '../remote/node-storage'
 import { useEffect, useRef, useState } from 'react'
 import { appendDraft } from '../composer-drafts'
 import { t } from '../i18n'
@@ -5,7 +6,7 @@ import { pullReference, readPull, type PullData } from '../pull-request'
 
 export function PullRequestPanel({ conversationId, initialUrl = '' }: { conversationId: string; initialUrl?: string }) {
   const [url, setUrl] = useState(() => {
-    try { return localStorage.getItem(`conclave.pull-url:${conversationId}`) ?? initialUrl } catch { return initialUrl }
+    try { return nodeStorage.getItem(`conclave.pull-url:${conversationId}`) ?? initialUrl } catch { return initialUrl }
   })
   const [data, setData] = useState<PullData | null>(null)
   const [problem, setProblem] = useState(false)
@@ -17,7 +18,7 @@ export function PullRequestPanel({ conversationId, initialUrl = '' }: { conversa
   const stale = problem || reference?.url !== data?.reference.url
   async function load() {
     if (!reference) return
-    try { localStorage.setItem(`conclave.pull-url:${conversationId}`, reference.url) } catch { /* URL stays in memory. */ }
+    try { nodeStorage.setItem(`conclave.pull-url:${conversationId}`, reference.url) } catch { /* URL stays in memory. */ }
     pending.current?.abort()
     const controller = new AbortController()
     pending.current = controller

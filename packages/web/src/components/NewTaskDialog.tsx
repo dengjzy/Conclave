@@ -1,3 +1,4 @@
+import { isRemoteDesktopNode } from '../remote/desktop-node-mode'
 import { t, tr } from '../i18n'
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { AgentKind, IMAGE_MIME_TYPES, type TaskImage } from '@conclave/protocol'
@@ -28,6 +29,7 @@ function PaperclipIcon() {
 
 export function NewTaskDialog() {
   useOccludesBrowser()
+  const remote = isRemoteDesktopNode()
   const tasks = useCore((s) => s.tasks)
   const connected = useCore((s) => s.connection === 'connected')
   const error = useCore((s) => s.error)
@@ -58,10 +60,12 @@ export function NewTaskDialog() {
   const [busy, setBusy] = useState(false)
   // State lags a render behind; the ref stops a double press from creating twice.
   const submitting = useRef(false)
-  const canSubmit = title.trim() !== '' && connected && !busy && uploading === 0
+  const missingRemoteChoice = remote && (!agent || repos.length === 0)
+  const canSubmit = title.trim() !== '' && connected && !busy && uploading === 0 && !missingRemoteChoice
 
   // Images go up as soon as they are added; the task only names them on creation.
   const addImages = async (files: File[]) => {
+    if (remote) return
     setUploading((count) => count + files.length)
     const added = await uploadImageFiles(files)
     setUploading((count) => count - files.length)
@@ -229,7 +233,7 @@ export function NewTaskDialog() {
               label={t('NewTaskDialog.assignee')}
               value={squadId ? `squad:${squadId}` : agent ?? ''}
               placeholder={squadId ? t('NewTaskDialog.developmentSquad') : t('AgentPicker.chooseAgent')}
-              options={executorOptions(installed, squads, squadId, recommended)}
+              options={executorOptions(installed, remote ? {} : squads, squadId, recommended).filter((option) => !remote || option.value !== '')}
               size="large"
               placement="below"
               onChange={(value) => {
@@ -240,7 +244,7 @@ export function NewTaskDialog() {
               }}
             />
           </span>
-          <span className="menu-anchor">
+          {!remote && <span className="menu-anchor">
             <button type="button" className="new-task-property-chip" aria-label={t('NewTaskDialog.moreOptions')} aria-haspopup="dialog" aria-expanded={moreOpen} onClick={() => setMoreOpen((open) => !open)}>
               <MoreIcon />
             </button>
@@ -253,7 +257,7 @@ export function NewTaskDialog() {
                 </div>
               </Popover>
             )}
-          </span>
+          </span>}
           {dependsOn.length > 0 && <span className="new-task-dependency-count">{tr('NewTaskDialog.dependencies_1266', { value1: dependsOn.length })}</span>}
         </div>
         {viewing !== null && images.length > 0 && (
@@ -266,6 +270,7 @@ export function NewTaskDialog() {
           />
         )}
 
+        {missingRemoteChoice && <p className="muted">请选择 Agent 和节点已有项目；新增项目请在节点主机操作。</p>}
         {/* The app's toast renders below the modal's top layer, so errors show here instead. */}
         {error && (
           <p className="modal-error" role="alert">
@@ -274,7 +279,7 @@ export function NewTaskDialog() {
         )}
 
         <footer className="modal-footer new-task-footer">
-          <button type="button" className="new-task-attach" aria-label={t('ChatImages.addImages')} title={t('NewTaskDialog.addImagesOrPasteOrDragThemHere')} onClick={() => imageInput.current?.click()}>
+          <button type="button" disabled={remote} className="new-task-attach" aria-label={t('ChatImages.addImages')} title={t('NewTaskDialog.addImagesOrPasteOrDragThemHere')} onClick={() => imageInput.current?.click()}>
             <PaperclipIcon />
           </button>
           <input

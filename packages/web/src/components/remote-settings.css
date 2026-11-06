@@ -1,0 +1,19 @@
+.remote-note { margin: var(--space-4) 0; color: var(--text-muted); }
+.remote-problem { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding-bottom: var(--space-4); }
+.remote-problem p { margin: 0; color: var(--danger); overflow-wrap: anywhere; }
+.remote-device-state { margin-right: var(--space-2); }
+.remote-device-state[data-online] { color: var(--status-done); }
+.remote-invitation-dialog { width: min(calc(100vw - var(--space-8)), 440px); }
+.remote-qr { display: grid; place-items: center; margin: var(--space-6) 0; min-height: 240px; }
+.remote-qr canvas { display: block; width: min(100%, 320px); height: auto; color-scheme: light; color: var(--text); background: var(--surface); }
+.remote-qr canvas[hidden], .remote-qr[hidden] { display: none; }
+.remote-qr p, .remote-invitation-note { color: var(--text-muted); text-align: center; }
+.remote-invitation-note { margin: var(--space-4) 0 var(--space-6); }
+.remote-invitation-dialog .copy-button-text { gap: var(--space-2); }
+
+@media (max-width: 540px) {
+  .remote-problem { align-items: flex-start; flex-direction: column; }
+}
+
+.remote-web-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+.remote-invitation-dialog { max-height: calc(100dvh - var(--space-8)); overflow-y: auto; }

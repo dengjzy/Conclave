@@ -1,3 +1,4 @@
+import { nodeStorage } from './remote/node-storage'
 import { z } from 'zod'
 import { DEFAULT_INSTANCE, type SourceDescriptor, type SourceInbox } from '@conclave/protocol'
 
@@ -30,7 +31,7 @@ const Investigated = z.record(z.string(), z.array(z.string()))
 
 function loadInvestigated(): Record<string, string[]> {
   try {
-    return Investigated.safeParse(JSON.parse(localStorage.getItem(INVESTIGATED_IN) ?? '{}')).data ?? {}
+    return Investigated.safeParse(JSON.parse(nodeStorage.getItem(INVESTIGATED_IN) ?? '{}')).data ?? {}
   } catch {
     return {}
   }
@@ -45,7 +46,7 @@ export function investigationProjects(key: string): string[] {
 export function rememberInvestigationProjects(key: string, paths: readonly string[]): void {
   investigated = { ...investigated, [key]: [...paths] }
   try {
-    localStorage.setItem(INVESTIGATED_IN, JSON.stringify(investigated))
+    nodeStorage.setItem(INVESTIGATED_IN, JSON.stringify(investigated))
   } catch {
     // Storage full or blocked: this window still remembers.
   }

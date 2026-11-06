@@ -1,3 +1,4 @@
+import { nodeStorage } from './remote/node-storage'
 import { t } from './i18n'
 import { z } from 'zod'
 import { create } from 'zustand'
@@ -23,7 +24,7 @@ const keyOf = (taskId: string, field: Field) => `${taskId}:${field}`
 
 function load(): Record<string, Edit> {
   try {
-    const parsed = z.record(z.string(), Edit).safeParse(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}'))
+    const parsed = z.record(z.string(), Edit).safeParse(JSON.parse(nodeStorage.getItem(STORAGE_KEY) ?? '{}'))
     return parsed.success ? parsed.data : {}
   } catch {
     return {}
@@ -38,7 +39,7 @@ const useUnsavedEdits = create<{ edits: Record<string, Edit>; states: Record<str
 useUnsavedEdits.subscribe((next, previous) => {
   if (next.edits === previous.edits) return
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next.edits))
+    nodeStorage.setItem(STORAGE_KEY, JSON.stringify(next.edits))
   } catch {
     // Storage full or blocked: the edit is still retried for as long as this window lives.
   }

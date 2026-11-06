@@ -1,3 +1,4 @@
+import { nodeStorage } from './remote/node-storage'
 import { attentionCount, noticesBetween } from './attention'
 import { openUsageCard, selectConversation, selectTask, setRoutinesOpen, useCore } from './core-store'
 import { canNotify, canShowRequestPopup, notify, onNotificationClick, setBadge, wantRequestPopup } from './desktop-bridge'
@@ -59,7 +60,7 @@ const sentAdvice = loadSentAdvice()
 
 function loadSentAdvice(): Set<string> {
   try {
-    const saved: unknown = JSON.parse(localStorage.getItem(SENT_ADVICE_KEY) ?? '[]')
+    const saved: unknown = JSON.parse(nodeStorage.getItem(SENT_ADVICE_KEY) ?? '[]')
     return new Set(Array.isArray(saved) ? saved.filter((key) => typeof key === 'string') : [])
   } catch {
     return new Set()
@@ -68,7 +69,7 @@ function loadSentAdvice(): Set<string> {
 
 function saveSentAdvice(): void {
   try {
-    localStorage.setItem(SENT_ADVICE_KEY, JSON.stringify([...sentAdvice].slice(-SENT_ADVICE_MAX)))
+    nodeStorage.setItem(SENT_ADVICE_KEY, JSON.stringify([...sentAdvice].slice(-SENT_ADVICE_MAX)))
   } catch {
     // Storage is blocked or full; the set in memory still holds for this launch.
   }

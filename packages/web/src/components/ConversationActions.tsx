@@ -1,3 +1,6 @@
+import { isRemoteDesktopNode } from '../remote/desktop-node-mode'
+import { RemotePermissionMode } from '@conclave/protocol'
+import { defaultStartMode, startModes } from './ChatOptionsBar'
 import { editAgentProfile } from './AgentProfiles'
 import { t } from '../i18n'
 import { canReuseConversation, ChatPermissionMode, type AgentKind, type ChatReference, type ChatImage, type ChatItem, type Conversation } from '@conclave/protocol'
@@ -83,14 +86,15 @@ export async function sendToNewConversation(conversation: Conversation, text: st
   // A start on a provider spends its plan, not the agent's own quota.
   if (!modelProvider && !confirmQuota(agent)) return false
   const options = useCore.getState().rpc?.features.includes('chat-options') ?? false
-  const mode = ChatPermissionMode.safeParse(configuration.permissionMode)
+  const mode = (isRemoteDesktopNode() ? RemotePermissionMode : ChatPermissionMode).safeParse(configuration.permissionMode)
+  const permissionMode = mode.success ? mode.data : defaultStartMode(agent, startModes(agent, undefined))
   const deferred = deferredStartSupported()
   const created = await perform((rpc) => rpc.call('conversations.create', {
     agent,
     projectPaths,
     ...(deferred ? { deferStart: true } : {}),
     ...startOptions(),
-    ...(options ? { ...(mode.success ? { permissionMode: mode.data } : {}), ...(model ? { model } : {}), ...(effort ? { effort } : {}) } : {}),
+    ...(options ? { ...((mode.success || isRemoteDesktopNode()) ? { permissionMode } : {}), ...(model ? { model } : {}), ...(effort ? { effort } : {}) } : {}),
     ...(modelProvider ? { modelProvider } : {})
   }))
   return created ? openWithFirstMessage(created, text, images, deferred, references) : false
@@ -108,7 +112,7 @@ export async function forkConversation(id: string, item: ChatItem): Promise<void
 // What a start tells core: that it may offer bypass, which an older core does not take.
 export function startOptions(): { allowBypass?: boolean } {
   const options = useCore.getState().rpc?.features.includes('chat-options') ?? false
-  return options ? { allowBypass: true } : {}
+  return options && !isRemoteDesktopNode() ? { allowBypass: true } : {}
 }
 
 export function continueConversation(id: string) {

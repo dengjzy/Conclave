@@ -1,3 +1,4 @@
+import { nodeStorage, nodeStorageKey } from './remote/node-storage'
 import { AgentKind, LanguagePreference, TranslateLanguage } from '@conclave/protocol'
 import { z } from 'zod'
 import { create } from 'zustand'
@@ -119,7 +120,7 @@ const STORAGE_KEY = 'conclave.preferences'
 function load(): Preferences {
   let saved: unknown = {}
   try {
-    saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}')
+    saved = JSON.parse(nodeStorage.getItem(STORAGE_KEY) ?? '{}')
   } catch {
     // Unreadable storage: start from defaults.
   }
@@ -152,13 +153,13 @@ export const usePreferences = create<Preferences>()(() => load())
 // theme and settings); storage events come only from other windows.
 export function followPreferences(): void {
   window.addEventListener('storage', (event) => {
-    if (event.key === STORAGE_KEY) usePreferences.setState(load())
+    if (event.key === nodeStorageKey(STORAGE_KEY)) usePreferences.setState(load())
   })
 }
 
 usePreferences.subscribe((preferences) => {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(preferences))
+    nodeStorage.setItem(STORAGE_KEY, JSON.stringify(preferences))
   } catch {
     // Storage full or blocked: the change still applies for this session.
   }

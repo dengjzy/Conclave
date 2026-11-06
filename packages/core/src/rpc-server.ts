@@ -12,6 +12,7 @@ import {
   RpcRequest,
   isRpcMethod,
   rpcSchemas,
+  type RpcFrame,
   type RpcMethod,
   type RpcNotificationName,
   type RpcNotificationParams,
@@ -19,6 +20,8 @@ import {
   type RpcResult
 } from '@conclave/protocol'
 import { Rejection } from './rejection'
+import type { RemoteCall } from './remote-gateway'
+import { openRemoteRpcSession, type RemoteRpcSession } from './remote-rpc'
 
 export type Connection = {
   readonly attached: Set<string>
@@ -41,6 +44,7 @@ export type RpcServer = {
   host: string
   port: number
   connections: ReadonlySet<Connection>
+  openRemote(send: (frame: RpcFrame) => void, call: RemoteCall): RemoteRpcSession
   broadcast<N extends RpcNotificationName>(name: N, params: RpcNotificationParams<N>): void
   close(): Promise<void>
 }
@@ -105,6 +109,7 @@ export function startRpcServer(options: {
 }): Promise<RpcServer> {
   const { handlers, token } = options
   const connections = new Set<Connection>()
+  const remoteSessions = new Set<RemoteRpcSession>()
   let serverPort = options.port
 
   function dispatch<M extends RpcMethod>(method: M, raw: unknown, connection: Connection) {
@@ -284,9 +289,15 @@ export function startRpcServer(options: {
         host: targetHost,
         port,
         connections,
+        openRemote: (send, call) => {
+          const session = openRemoteRpcSession({ dispatch, call, connections, send, closed: () => remoteSessions.delete(session) })
+          remoteSessions.add(session)
+          return session
+        },
         broadcast: (name, params) => connections.forEach((c) => c.notify(name, params)),
         close: () =>
           new Promise((done) => {
+            for (const session of remoteSessions) session.close()
             wss.clients.forEach((client) => client.terminate())
             wss.close(() => {
               httpServer.close(() => done())

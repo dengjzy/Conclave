@@ -7,7 +7,7 @@ import { useCore } from '../core-store'
 import { composerDraft, EMPTY_DRAFT, saveComposerDraft } from '../composer-drafts'
 import { useInitialMessages } from '../initial-messages'
 import { useChat } from '../chat-state'
-import { newConversationFrom, sendToNewConversation } from './ConversationActions'
+import { newConversationFrom, sendToNewConversation, startOptions } from './ConversationActions'
 import { ConversationDraft } from './ConversationDraft'
 import { ConversationView } from './ConversationView'
 
@@ -206,6 +206,27 @@ describe('initial message status in a reopened conversation', () => {
     expect(html).not.toContain('首条消息未发送')
   })
 
+  it.each([true, false])('requires host retry only for remotely viewed durable failures (%s)', (persisted) => {
+    const original = window
+    vi.stubGlobal('window', { ...window, location: { search: '?node=saved-computer' } })
+    try {
+      const { sent } = connect(['deferred-conversation-start'])
+      const failed = { ...initialMessage, phase: 'failed' as const, error: 'startup failed' }
+      if (persisted) useCore.setState({ conversations: { [source.id]: { ...source, initialMessage: failed } } })
+      else useInitialMessages.setState({ [source.id]: failed })
+      const html = renderToStaticMarkup(createElement(ConversationView, { id: source.id }))
+      expect(html).toContain('startup failed')
+      if (persisted) {
+        expect(html).toContain('请在节点主机上重试首条消息')
+        expect(html).not.toContain('>重试</button>')
+      } else {
+        expect(html).not.toContain('请在节点主机上重试首条消息')
+        expect(html).toContain('>重试</button>')
+      }
+      expect(sent).toHaveLength(0)
+    } finally { vi.stubGlobal('window', original) }
+  })
+
   it('hides the optimistic copy after a sent receipt', () => {
     useInitialMessages.setState({ [source.id]: { ...initialMessage, phase: 'sending', durable: true } })
     const html = show('sent', true)
@@ -213,4 +234,20 @@ describe('initial message status in a reopened conversation', () => {
     expect(html).not.toContain('正在发送首条消息')
     expect(html).not.toContain('chat-initial-error')
   })
+})
+
+it('creates a remote follow-up with safe permissions and no bypass from an unsafe host configuration', async () => {
+  const original = window
+  vi.stubGlobal('window', { ...window, location: { search: '?node=saved-computer' } })
+  try {
+    const { rpc, sent } = connect(['conversation-configuration', 'chat-options', 'deferred-conversation-start'])
+    expect(startOptions()).toEqual({})
+    const sending = sendToNewConversation(source, 'remote follow-up', [])
+    rpc.receive(JSON.stringify({ jsonrpc: '2.0', id: sent[0]?.id, result: { ...configuration, permissionMode: 'acceptEdits' } }))
+    await vi.waitFor(() => expect(sent).toHaveLength(2))
+    expect(sent[1]).toMatchObject({ method: 'conversations.create', params: { agent: 'codex', deferStart: true, permissionMode: 'ask' } })
+    expect(sent[1]?.params).not.toHaveProperty('allowBypass')
+    rpc.receive(JSON.stringify({ jsonrpc: '2.0', id: sent[1]?.id, error: { code: -32000, message: 'fixture ends here' } }))
+    expect(await sending).toBe(false)
+  } finally { vi.stubGlobal('window', original) }
 })

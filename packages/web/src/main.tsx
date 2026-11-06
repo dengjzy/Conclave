@@ -1,55 +1,25 @@
-import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
-import '@fontsource-variable/geist-mono/wght.css'
-import '@xterm/xterm/css/xterm.css'
-import './styles.css'
-import { App } from './App'
-import { startAppearance } from './appearance'
-import { startBackgroundRest } from './background-rest'
-import { startCodeFont } from './code-font'
-import { followRequestPopupWanted, RequestPopup } from './components/RequestPopup'
-import { startCoreConnection, useCore } from './core-store'
-import { SettingsPage } from './components/SettingsPage'
-import { applyTitleBar } from './desktop-bridge'
-import { startNotifications } from './notifications'
-import { followPreferences } from './preferences'
-import { startUnsavedEditRetries } from './unsaved-edits'
-import { startUiLanguage } from './language'
-import { startWorktreeUpdates } from './worktree-store'
+import { clientLayout, localNodeAvailable } from './client-layout'
 
-// The card of waiting requests (main's request-popup.ts) is this page too, with only what it needs:
-// the main window alone tells the user things, counts on the dock and keeps worktrees current.
-const popup = location.hash === '#request-popup'
-const settingsPreview = import.meta.env.DEV && location.hash === '#settings'
-if (settingsPreview) useCore.setState({ settingsOpen: true, settingsSection: 'appearance' })
-
-startUiLanguage()
-followPreferences()
-
-// Outside React so StrictMode's double-mount can't start two loops.
-if (popup) {
-  document.documentElement.dataset.window = 'request-popup'
-  followRequestPopupWanted()
-  startCoreConnection('requests')
-  startAppearance()
-  startCodeFont()
-} else {
-  startCoreConnection()
-  startAppearance()
-  startBackgroundRest()
-  startCodeFont()
-  applyTitleBar()
-  startUnsavedEditRetries()
-  startWorktreeUpdates()
-  startNotifications()
+async function boot() {
+  const url = new URL(location.href)
+  const layout = clientLayout({ userAgent: navigator.userAgent, touchPoints: navigator.maxTouchPoints, desktopBridge: Boolean(window.conclave), override: url.searchParams.get('layout') })
+  if (layout === 'mobile') {
+    url.pathname = '/mobile.html'
+    url.searchParams.delete('node')
+    url.searchParams.delete('token')
+    url.searchParams.delete('port')
+    location.replace(url)
+    return
+  }
+  const publicClient = Boolean(document.querySelector('meta[name="conclave-remote-client"]')) || !localNodeAvailable(url.hostname, Boolean(window.conclave))
+  if ((publicClient || url.hash.startsWith('#pair=')) && !url.searchParams.has('node')) {
+    url.searchParams.set('node', 'connect')
+    history.replaceState(null, '', url)
+  }
+  const desktop = await import('./desktop-main')
+  await desktop.startDesktop()
 }
-
-const root = document.getElementById('root')
-if (!root) {
-  throw new Error('missing #root')
-}
-createRoot(root).render(
-  <StrictMode>
-    {settingsPreview ? <div className="app"><SettingsPage /></div> : popup ? <RequestPopup /> : <App />}
-  </StrictMode>
-)
+void boot().catch(() => {
+  const root = document.getElementById('root')
+  if (root) { const message = document.createElement('p'); message.setAttribute('role', 'alert'); message.textContent = 'Conclave 页面启动失败，请刷新后重试。'; root.replaceChildren(message) }
+})

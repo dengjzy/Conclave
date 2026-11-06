@@ -3,6 +3,7 @@ import { useEffect } from 'react'
 import { setPreference, usePreferences } from '../preferences'
 import { hasPrimaryModifier, PRIMARY_KEY_LABEL } from '../shortcut-keys'
 import { SidebarIcon } from './icons'
+import { DesktopNodeSwitcher } from './DesktopNodeSwitcher'
 
 export function toggleSidebar(): void {
   setPreference('sidebarHidden', !usePreferences.getState().sidebarHidden)
@@ -28,7 +29,7 @@ export function WindowBrand() {
   const label = hidden ? t('WindowBrand.expandSidebar') : t('WindowBrand.collapseSidebar')
   return (
     <div className="window-brand">
-      <span className="window-brand-name">Conclave</span>
+      <DesktopNodeSwitcher />
       <button
         type="button"
         className="icon-button window-brand-toggle"

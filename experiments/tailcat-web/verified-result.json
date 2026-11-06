@@ -1,0 +1,30 @@
+{
+  "checkedAt": "2026-11-05T17:56:55.526Z",
+  "mode": "real Chrome + public DERP + native Tailcat + isolated Conclave core",
+  "clientOrigin": "https://positive-companies-usd-allied.trycloudflare.com",
+  "protocolVersion": 18,
+  "checks": [
+    "QR image decodes to exact pairing URL",
+    "WASM paired through public DERP and read real system.hello + tasks.list",
+    "Pairing URL fragment removed after load",
+    "Unicode, multiline and 4 KiB payload echo round trips",
+    "Paired browser is still denied non-allowlisted core methods",
+    "Disconnect and reconnect using device credentials",
+    "Page reload reconnects without reusing pairing ticket",
+    "Second browser cannot reuse a consumed invitation",
+    "Revocation disconnects an active device and rejects reconnect",
+    "No direct browser-to-core access and no uncaught browser errors"
+  ],
+  "relayOrigins": [
+    "wss://tc302a.ipn.dev"
+  ],
+  "browserErrors": [],
+  "rttMs": [
+    667,
+    374,
+    366,
+    344,
+    356
+  ],
+  "status": "passed"
+}

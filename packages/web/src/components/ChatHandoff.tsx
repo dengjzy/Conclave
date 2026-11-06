@@ -1,3 +1,4 @@
+import { isRemoteDesktopNode } from '../remote/desktop-node-mode'
 import { t } from '../i18n'
 import { checkTaskHandoff, ChatPermissionMode, type ChatReference, type AgentKind, type ChatModel, type Conversation, type TaskLaunchOptions } from '@conclave/protocol'
 import { resolveModel, useAgentCatalog } from '../agent-models'
@@ -73,7 +74,7 @@ export function useComposerHandoff(conversation: Conversation): ComposerHandoff 
     model,
     modes,
     mode,
-    options: { ...(mode ? { permissionMode: mode } : {}), ...(modelsSupported ? { model: modelId ?? null, effort: effort ?? null } : {}) }
+    options: { ...(mode ? { permissionMode: mode } : {}), ...(modelsSupported ? isRemoteDesktopNode() ? { ...(modelId ? { model: modelId } : {}), ...(effort ? { effort } : {}) } : { model: modelId ?? null, effort: effort ?? null } : {}) }
   }
   const send = async (note: string, references?: ChatReference[]) => {
     if (!target || found) return false

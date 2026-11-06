@@ -1,0 +1,42 @@
+:root { --window-brand-end: calc(var(--window-brand-left) + 196px); }
+.desktop-node-switcher { display: inline-flex; align-items: center; gap: var(--space-1); min-width: 0; max-width: 168px; height: 32px; padding: var(--space-1); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); font: inherit; font-size: 12px; -webkit-app-region: no-drag; cursor: pointer; }
+.desktop-node-switcher:hover { background: var(--fill); }
+.desktop-node-switcher strong { font-weight: 600; }
+.desktop-node-switcher > svg { flex-shrink: 0; width: 12px; height: 12px; color: var(--text-muted); }
+.desktop-node-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); }
+.desktop-node-dot { flex: 0 0 6px; width: 6px; height: 6px; border-radius: var(--radius-full); background: var(--text-3); }
+.desktop-node-dot[data-online='true'] { background: var(--status-running); }
+.desktop-node-notice { display: flex; flex-shrink: 0; align-items: center; gap: var(--space-3); min-height: 40px; padding: var(--space-1) var(--space-4) var(--space-1) max(var(--space-4), var(--window-brand-end)); border-bottom: 1px solid var(--border); background: var(--surface); color: var(--text-muted); font-size: 12px; }
+.desktop-node-notice > span { display: flex; flex: 1; flex-wrap: wrap; gap: var(--space-2); min-width: 0; overflow-wrap: anywhere; }
+.desktop-node-notice strong { color: var(--text); font-weight: 500; }
+.desktop-node-notice > .button { flex-shrink: 0; }
+.desktop-node-dialog { width: min(480px, calc(100vw - var(--space-8))); max-height: calc(100dvh - var(--space-8)); overflow-y: auto; }
+.desktop-node-dialog .modal-header { justify-content: space-between; }
+.desktop-node-explanation { margin: var(--space-2) 0 var(--space-4); font-size: 13px; line-height: 1.5; color: var(--text-muted); }
+.desktop-node-list { margin-block: var(--space-4); }
+.desktop-node-row { display: flex; align-items: center; gap: var(--space-2); min-width: 0; border-bottom: 1px solid var(--border); }
+.desktop-node-row > button:first-child { display: flex; flex: 1; align-items: center; gap: var(--space-3); min-width: 0; padding: var(--space-3) var(--space-2); border: 0; border-radius: var(--radius); background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.desktop-node-row > button:first-child:hover, .desktop-node-row > button[aria-current='true'] { background: var(--fill); }
+.desktop-node-row > button > svg { width: 20px; height: 20px; flex-shrink: 0; color: var(--text-muted); }
+.desktop-node-row > button > span { flex: 1; min-width: 0; }
+.desktop-node-row strong, .desktop-node-row small { display: block; overflow-wrap: anywhere; }
+.desktop-node-row strong { font-size: 13px; font-weight: 500; }
+.desktop-node-row small { margin-top: var(--space-1); color: var(--text-muted); font-size: 12px; }
+.desktop-node-row > button > span:last-child:not(:nth-child(2)) { flex: 0 0 auto; color: var(--accent); }
+.desktop-node-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-block: var(--space-4); }
+.desktop-node-add { width: 100%; justify-content: center; margin-top: var(--space-2); }
+.desktop-node-form { margin-top: var(--space-4); padding-top: var(--space-4); border-top: 1px solid var(--border); }
+.desktop-node-form h3 { margin: 0 0 var(--space-3); font-size: 14px; font-weight: 600; }
+.desktop-node-form .modal-input { width: 100%; min-width: 0; }
+.desktop-node-form textarea { resize: vertical; }
+@media (max-width: 768px) {
+  .desktop-node-notice { padding: var(--space-2) var(--space-3); }
+  .desktop-node-notice button, .desktop-node-dialog button, .desktop-node-dialog .button { min-height: 44px; }
+  .desktop-node-dialog { width: calc(100vw - var(--space-4)); }
+}
+
+.desktop-node-form .modal-field { display: flex; flex-direction: column; gap: var(--space-2); margin: 0 0 var(--space-4); }
+.desktop-node-form .modal-label { margin: 0; }
+.desktop-node-form .modal-input { box-sizing: border-box; margin: 0; border: 1px solid var(--border-2); border-radius: var(--radius); padding: var(--space-2) var(--space-3); background: var(--surface); color: var(--text); font: inherit; font-size: 13px; line-height: 1.5; outline: none; box-shadow: none; }
+.desktop-node-form .modal-input:focus-visible { border-color: var(--accent); outline: 2px solid var(--focus); outline-offset: 1px; }
+.desktop-node-dialog :is(button, a):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }

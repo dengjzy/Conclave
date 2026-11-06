@@ -1,3 +1,4 @@
+import { isRemoteDesktopNode } from '../remote/desktop-node-mode'
 import { t } from '../i18n'
 import { useEffect, useRef, useState } from 'react'
 import { ChatPermissionMode, checkStart, checkStartMode, type AgentKind, type Task } from '@conclave/protocol'
@@ -28,19 +29,20 @@ export function TaskLaunchDialog({ taskId }: { taskId: string }) {
   const plan = useCore((state) => state.squadPlan)
   const [squad, setSquad] = useState(Boolean(task?.squadId || plan || useCore.getState().squadLaunch))
   useEffect(() => { if (!task) closeTaskLaunch() }, [task])
-  return task ? squad ? <SquadLaunchDialog task={task} onSingle={() => setSquad(false)} /> : <LaunchForm task={task} onSquad={() => setSquad(true)} /> : null
+  return task ? squad && !isRemoteDesktopNode() ? <SquadLaunchDialog task={task} onSingle={() => setSquad(false)} /> : <LaunchForm task={task} onSquad={() => setSquad(true)} /> : null
 }
 
 function LaunchForm({ task, onSquad }: { task: Task; onSquad(): void }) {
   useOccludesBrowser()
+  const remote = isRemoteDesktopNode()
   const dialog = useRef<HTMLDialogElement>(null)
   const installed = useInstalledAgents()
   const recommended = useRecommendation(installed)?.agent ?? null
   const [agent, setAgent] = useState<AgentKind | null>(task.agent)
   const agents = agent && !installed.includes(agent) ? [...installed, agent] : installed
   const rpc = useCore((s) => s.rpc)
-  const squadsSupported = rpc?.features.includes('squads') ?? false
-  const supported = rpc?.features.includes('task-launch-options') ?? false
+  const squadsSupported = !remote && (rpc?.features.includes('squads') ?? false)
+  const supported = !remote && (rpc?.features.includes('task-launch-options') ?? false)
   const error = useCore((s) => s.error)
   const tasks = useCore((s) => s.tasks)
   const dependencies = task.dependsOn.flatMap((id) => tasks[id] ? [tasks[id]] : [])
@@ -49,7 +51,7 @@ function LaunchForm({ task, onSquad }: { task: Task; onSquad(): void }) {
   const conversation = useCore((s) => s.conversations[task.conversationId ?? ''])
   // The provider the task runs on: settled with its conversation, picked here until it has one.
   const providers = useCore((s) => s.modelProviders)
-  const providersSupported = rpc?.features.includes('model-providers') ?? false
+  const providersSupported = !remote && (rpc?.features.includes('model-providers') ?? false)
   const providerFixed = Boolean(task.conversationId)
   const [providerId, setProviderId] = useState<string | null>(() => conversation?.modelProvider ?? task.launch.modelProvider ?? null)
   const provider = providerFor(providers, providerId, agent)
@@ -78,10 +80,11 @@ function LaunchForm({ task, onSquad }: { task: Task; onSquad(): void }) {
   const { model, modelId, effort } = resolveModel(catalog, choice)
   const offered = agent ? startModes(agent, model) : []
   const requestedMode = (agent ? modes[agent] : undefined) ?? 'plan'
-  const mode = supported && offered.includes(requestedMode) && !checkStartMode(dependencies, requestedMode) ? requestedMode : 'plan'
+  const mode = remote ? 'ask' : supported && offered.includes(requestedMode) && !checkStartMode(dependencies, requestedMode) ? requestedMode : 'plan'
   const options = agent ? modeOptions(agent, ['plan', ...offered.filter((each) => each !== 'plan')]) : []
-  const blocker = checkStart({ ...task, agent }, dependencies)
-  const label = mode === 'plan' ? t('SquadLaunchDialog.startPlanning') : mode === 'readOnly' ? t('TaskActions.startAnalysis') : t('TaskActions.startExecution')
+  const blocker = checkStart({ ...task, agent }, dependencies) ?? (remote ? checkStartMode(dependencies, 'ask') : null)
+  const needsHost = remote && (!task.agent || Boolean(task.squadId))
+  const label = remote ? '启动（逐次询问）' : mode === 'plan' ? t('SquadLaunchDialog.startPlanning') : mode === 'readOnly' ? t('TaskActions.startAnalysis') : t('TaskActions.startExecution')
   const choose = (next: ModelChoice) => {
     if (agent) setChoices((known) => ({ ...known, [agent]: next }))
   }
@@ -89,14 +92,14 @@ function LaunchForm({ task, onSquad }: { task: Task; onSquad(): void }) {
   // from then on is the app's, not the closed dialog's.
   const submit = async () => {
     // On a provider it spends the provider's plan, not the agent's own quota.
-    if (!agent || busy || blocker || (!provider && !confirmQuota(agent, modelText(model)))) return
+    if (!agent || busy || blocker || needsHost || (!provider && !confirmQuota(agent, modelText(model)))) return
     setBusy(true)
     dismissError()
     if ((agent !== task.agent || task.squadId) && !await updateTask(task.id, { agent, ...(task.squadId ? { squadId: null } : {}) })) {
       setBusy(false)
       return
     }
-    const params = {
+    const params = remote ? { id: task.id } : {
       id: task.id,
       ...(rpc?.features.includes('chat-options') ? { allowBypass: true } : {}),
       ...(supported ? { permissionMode: mode, model: modelId ?? null, effort: effort ?? null } : {}),
@@ -121,6 +124,8 @@ function LaunchForm({ task, onSquad }: { task: Task; onSquad(): void }) {
           <div className="task-launch-field"><span>Agent</span>
             <ChatPicker
               label="Agent"
+              disabled={remote}
+              title={remote ? '请在节点主机修改任务 Agent' : undefined}
               value={agent ?? ''}
               placeholder={t('AgentPicker.chooseAgent')}
               size="field"
@@ -159,16 +164,17 @@ function LaunchForm({ task, onSquad }: { task: Task; onSquad(): void }) {
           </>}
         </fieldset>
         <p className="task-launch-description muted">
-          {checkStartMode(dependencies, 'ask') ? t('TaskLaunchDialog.dependenciesAreUnfinishedOnlyPlanningIsAvailableNow') : options.find((each) => each.value === mode)?.description ?? t('TaskLaunchDialog.planFirstThenExecuteAfterApproval')}
+          {remote ? '远程启动使用逐次询问；Agent 和启动配置请在节点主机修改。' : checkStartMode(dependencies, 'ask') ? t('TaskLaunchDialog.dependenciesAreUnfinishedOnlyPlanningIsAvailableNow') : options.find((each) => each.value === mode)?.description ?? t('TaskLaunchDialog.planFirstThenExecuteAfterApproval')}
         </p>
         {inPlace && mode !== 'plan' && mode !== 'readOnly' && <p className="task-launch-description muted">{t('SquadLaunchDialog.thisProjectIsNotAGitRepositoryChanges')}</p>}
         <OtherProjectsHint agent={agent} projectCount={task.repos.length} />
         {agent && !provider && <AgentQuotaHint agent={agent} model={modelText(model)} />}
+        {needsHost && <p className="modal-error">请先在节点主机为任务配置单个 Agent。</p>}
         {blocker && <p className="modal-error">{reasonText(blocker, blocker)}</p>}
         {error && <p className="modal-error" role="alert">{error}</p>}
         <footer className="modal-footer">
           <button type="button" className="button ghost" disabled={busy} onClick={closeTaskLaunch}>{t('ChatCommandSettings.cancel')}</button>
-          <button type="submit" className="button primary" disabled={busy || !agent || blocker !== null}>{busy ? t('DiscussionDraft.starting') : label}</button>
+          <button type="submit" className="button primary" disabled={busy || !agent || blocker !== null || needsHost}>{busy ? t('DiscussionDraft.starting') : label}</button>
         </footer>
       </form>
     </dialog>

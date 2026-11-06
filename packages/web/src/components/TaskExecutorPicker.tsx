@@ -1,3 +1,4 @@
+import { isRemoteDesktopNode } from '../remote/desktop-node-mode'
 import { t } from '../i18n'
 import type { AgentKind, Squad, Task } from '@conclave/protocol'
 import { updateTask, useCore } from '../core-store'
@@ -41,7 +42,8 @@ export function TaskExecutorPicker({ task, size }: { task: Task; size?: PickerSi
         size={size}
         placement="below"
         align="end"
-        disabled={task.status !== 'pending'}
+        disabled={task.status !== 'pending' || isRemoteDesktopNode()}
+        title={isRemoteDesktopNode() ? '请在节点主机修改任务 Agent' : undefined}
         onChange={(picked) => {
           if (picked.startsWith('squad:')) void updateTask(task.id, { squadId: picked.slice(6) })
           else void updateTask(task.id, { squadId: null, agent: agents.find((agent) => agent === picked) ?? null })

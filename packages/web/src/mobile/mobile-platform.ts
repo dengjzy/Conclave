@@ -1,0 +1,1 @@
+export { createBrowserNodePlatform as createBrowserMobilePlatform, type NodePlatform as MobilePlatform, type NodeTunnel as MobileTunnel, type NodeCredentials as MobileCredentials, type NodePreferences as MobilePreferences } from '../remote/node-platform'
