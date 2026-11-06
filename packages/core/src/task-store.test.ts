@@ -23,6 +23,26 @@ describe('TaskStore migrations', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
+  it('adds artifact ownership without changing previously captured native sessions', () => {
+    const raw = new DatabaseSync(file)
+    const upgrade = MIGRATIONS.findIndex((sql) => sql.includes('conversation_native_sessions ADD COLUMN artifacts'))
+    applyLegacyMigrations(raw, MIGRATIONS.slice(0, upgrade))
+    const conversation = new ConversationStore(file)
+    const created = conversation.create('antigravity', '/project', ['/project'])
+    const native = { id: 'old', root: '/history', locator: '/history/brain/old', cwd: '/project' }
+    raw.prepare('INSERT INTO conversation_native_sessions (conversation_id,agent,provider_session_id,cwd,native) VALUES (?,?,?,?,?)')
+      .run(created.id, 'antigravity', 'old', '/project', JSON.stringify(native))
+    conversation.close()
+    raw.close()
+    const migrated = new TaskStore(file)
+    const kept = new ConversationStore(file)
+    try {
+      expect(kept.nativeSessions([created.id])).toEqual([{ agent: 'antigravity', providerSessionId: 'old', session: native }])
+      kept.rememberNativeTarget(created.id, 'antigravity', 'old', '/project', 'new', '/history', [{ root: '/new/brain', locator: '/new/brain/old' }])
+      expect(kept.nativeSessions([created.id])[0]?.session.artifacts).toHaveLength(2)
+    } finally { kept.close(); migrated.close() }
+  })
+
   it('upgrades old conversations and retains the first message and delivery state across restarts', () => {
     const id = '17cbb637-5668-4f53-9424-4449f2a2d63b'
     const raw = new DatabaseSync(file)

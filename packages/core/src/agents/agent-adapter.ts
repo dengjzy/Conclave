@@ -5,7 +5,7 @@ import type { ResetCreditUse, UsageSource } from '../usage-source'
 import type { QuickAnswer } from '../model-metering'
 import type { ProviderLaunch } from '../provider-launch'
 import type { TranscriptSource } from '../agent-transcripts'
-import type { NativeSessions, NativeSessionExecutor } from '../native-session'
+import type { NativeArtifact, NativeSessions, NativeSessionExecutor } from '../native-session'
 
 // What a chat stage's agent starts with, which its adapter turns into its own command line. The
 // stream carries every message, the handoff prompt included: none goes in argv.
@@ -47,18 +47,27 @@ export type AgentLaunch = {
   provider?: ProviderLaunch
   // The account to run on, other than the user's own: the variables pointing it at its folder.
   account?: { id: string; env: Record<string, string> }
+  // Explicitly registered artifacts of the native session being resumed.
+  sessionArtifacts?: readonly NativeArtifact[]
 }
 
 // How an agent signs in to more than one account (its descriptor's capabilities.accounts): each in
 // a folder of its own, which its process is pointed at. home: that folder; undefined, the user's.
 export type AccountSupport = {
+  // Its running processes can write cached credentials back over a replacement sign-in.
+  requiresIdleCredentials?: boolean
+  // History retained after sign-out is removed with its owning conversations.
+  preserveHistoryHome?: boolean
   env(home: string): Record<string, string>
   // Readies the folder for a start, sharing with the user's own what is not tied to the sign-in.
   prepare(home: string): Promise<void>
+  needsIdlePreparation?(home: string): Promise<boolean>
   identity(home: string | undefined): Promise<{ email: string | null }>
   // Its CLI's arguments to sign in, and out, in the folder its env names.
   login: readonly string[]
   logout: readonly string[]
+  loginCommand?(home?: string): Promise<AgentCommand>
+  logoutAccount?(home: string): Promise<void>
 }
 
 export type AgentDetection = Omit<EnvironmentCheck, 'tool'>
@@ -115,7 +124,7 @@ export interface AgentAdapter {
   readonly usageTranscripts?: { format: 'claude' | 'codex'; home(home?: string): string }
   readonly warmup?: { probe: QuickCommand; args(printed: string): string[] }
   // Its models without a chat to read them from; without it, a probe of its chat protocol.
-  catalog?(cwd: string, executor?: NativeSessionExecutor): Promise<ChatCatalog | null>
+  catalog?(cwd: string, executor?: NativeSessionExecutor, env?: Record<string, string>): Promise<ChatCatalog | null>
   // How the environment check finds it; without it, its kind on PATH, asked for --version.
   detect?(pathEnv: string, platform: NodeJS.Platform): Promise<AgentDetection>
   signedIn?(home?: string): Promise<boolean>

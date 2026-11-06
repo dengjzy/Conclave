@@ -2,12 +2,11 @@ import { z } from 'zod'
 import { randomUUID } from 'node:crypto'
 import { AgentKind, agentDescriptor, type Conversation } from '@conclave/protocol'
 import type { ConversationStore } from './conversation-store'
-import { nativeSessionKey, type NativeSession, type NativeSessionExecutor, type NativeSessions } from './native-session'
+import { NativeSession, mergeNativeSessions, nativeSessionKey, type NativeSessionTarget, type NativeSessionExecutor, type NativeSessions } from './native-session'
 import { Rejection } from './rejection'
 import { readOwnedNativeSessions, readStageOwnedSessions } from './owned-native-sessions'
 
-const Session = z.object({ id: z.string(), root: z.string(), locator: z.string(), cwd: z.string() })
-const Entry = z.object({ agent: AgentKind, session: Session, children: z.array(z.string()), removed: z.boolean() })
+const Entry = z.object({ agent: AgentKind, session: NativeSession, children: z.array(z.string()), removed: z.boolean() })
 export const ConversationDeletionJob = z.object({
   rootId: z.string(), conversationIds: z.array(z.string()), entries: z.array(Entry),
   collected: z.boolean(), localRemoved: z.boolean(), probe: z.boolean().optional(), ready: z.boolean().optional(), processSessionId: z.string().optional(), state: z.enum(['running', 'failed']), error: z.string().optional()
@@ -58,7 +57,12 @@ export class ConversationDeletion {
   }
   registerNative(agent: z.infer<typeof AgentKind>, session: NativeSession, processSessionId: string): void {
     const key = nativeSessionKey(agent, session)
-    if (this.store.deletions().some((job) => job.probe && job.entries.some((entry) => nativeSessionKey(entry.agent, entry.session) === key))) return
+    const previous = this.store.deletions().find((job) => job.probe && job.entries.some((entry) => nativeSessionKey(entry.agent, entry.session) === key))
+    if (previous) {
+      for (const entry of previous.entries) if (nativeSessionKey(entry.agent, entry.session) === key) entry.session = mergeNativeSessions(entry.session, session)
+      this.save(previous)
+      return
+    }
     this.save({ rootId: `native:${randomUUID()}`, conversationIds: [], entries: [{ agent, session, children: [], removed: false }],
       collected: false, localRemoved: true, probe: true, ready: false, processSessionId, state: 'running' })
   }
@@ -69,6 +73,7 @@ export class ConversationDeletion {
       collected: false, localRemoved: true, probe: true, state: 'running' as const
     }
     const activated: ConversationDeletionJob = { ...job, ready: true }
+    for (const entry of activated.entries) if (nativeSessionKey(entry.agent, entry.session) === key) entry.session = mergeNativeSessions(entry.session, session)
     this.save(activated)
     // A conversation start may be awaiting this probe while deletion waits for that start.
     const run = this.probes.catch(() => {}).then(() => this.run(activated.rootId))
@@ -137,7 +142,7 @@ export class ConversationDeletion {
       throw new Rejection('conversation-cleanup-failed', `会话清理未完成：${job.error}`)
     }
   }
-  private async targets(ids: readonly string[]): Promise<Array<{ agent: z.infer<typeof AgentKind>; providerSessionId: string; cwd: string; account: string | null; home?: string }>> {
+  private async targets(ids: readonly string[]): Promise<Array<NativeSessionTarget & { agent: z.infer<typeof AgentKind>; account: string | null }>> {
     const owned = await Promise.all(ids.map((id) => readOwnedNativeSessions(this.sessionsRoot, id)))
     const children = ids.flatMap((id) => {
       const conversation = this.store.get(id)
@@ -155,14 +160,16 @@ export class ConversationDeletion {
     const visited = new Set<string>()
     const visit = async (agent: z.infer<typeof AgentKind>, session: NativeSession): Promise<void> => {
       const key = nativeSessionKey(agent, session)
-      if (visited.has(key)) return
-      visited.add(key)
       const entry: z.infer<typeof Entry> = entries.get(key) ?? { agent, session, children: [], removed: false }
+      const previousScopes = entry.session.artifacts?.length ?? 0
+      entry.session = mergeNativeSessions(entry.session, session)
       entries.set(key, entry)
+      if (visited.has(key) && (entry.session.artifacts?.length ?? 0) === previousScopes) return
+      visited.add(key)
       const adapter = native.adapter(agent)
       if (!adapter) throw new Error(`${agentDescriptor(agent).label} 暂不支持原生会话清理`)
-      const children = await adapter.children(session)
-      entry.children = children.map((child) => nativeSessionKey(agent, child))
+      const children = await adapter.children(entry.session)
+      entry.children = [...new Set([...entry.children, ...children.map((child) => nativeSessionKey(agent, child))])]
       for (const child of children) await visit(agent, child)
     }
     for (const entry of [...entries.values()]) await visit(entry.agent, entry.session)

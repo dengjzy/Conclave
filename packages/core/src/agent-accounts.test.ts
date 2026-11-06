@@ -3,7 +3,10 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentAccounts, AgentUsage, Terminal } from '@conclave/protocol'
-import { AgentAccountStore } from './agent-accounts'
+import type { SessionInfo } from '@conclave/protocol/node'
+import { AgentAccountStore, type AccountDeps } from './agent-accounts'
+import { agentCliAccess } from './agent-cli-access'
+import { antigravityAccounts } from './agents/antigravity/antigravity-account'
 import { UsageService } from './usage-service'
 import type { UsageReading } from './usage-source'
 
@@ -12,6 +15,177 @@ const NOW = 1_790_000_000_000
 const usage = (account: string, usedPercent: number): AgentUsage => ({
   agent: 'claude', account, status: 'ok', plan: null, error: null, updatedAt: NOW, resetCredits: null,
   windows: [{ kind: 'session', model: null, usedPercent, windowMinutes: 300, resetsAt: NOW + 3_600_000 }]
+})
+
+describe('accounts whose running processes can write credentials', () => {
+  let root: string
+  let sessions: SessionInfo[]
+  let exits: Array<(code?: number) => void>
+  let changed: ReturnType<typeof vi.fn<AccountDeps['accountChanged']>>
+  const terminal: Terminal = { id: 'login', sessionId: 'login-process', cwd: '/tmp', title: 'login', createdAt: 0 }
+  let signIn: ReturnType<typeof vi.fn<() => Promise<Terminal>>>
+  let processes: ReturnType<typeof vi.fn<() => Promise<readonly SessionInfo[]>>>
+  const store = () => new AgentAccountStore(path.join(root, 'accounts.json'), path.join(root, 'accounts'), {
+    signIn,
+    waitForExit: () => new Promise((resolve) => exits.push((code = 0) => resolve(code))),
+    processes,
+    accountChanged: changed,
+    changed: () => {},
+    newId: () => 'work'
+  })
+  const process = (fields: Partial<SessionInfo>): SessionInfo => ({ sessionId: 'agent-process', exited: false, exitCode: null, io: 'pipe', ...fields })
+
+  beforeEach(() => {
+    root = mkdtempSync(path.join(os.tmpdir(), 'conclave-credential-guard-'))
+    vi.stubEnv('GEMINI_HOME', path.join(root, 'own'))
+    vi.spyOn(antigravityAccounts, 'loginCommand').mockResolvedValue({ command: 'login', args: [] })
+    sessions = []
+    exits = []
+    changed = vi.fn<AccountDeps['accountChanged']>()
+    signIn = vi.fn(async () => terminal)
+    processes = vi.fn(async () => sessions)
+  })
+
+  afterEach(async () => {
+    sessions = []
+    exits.splice(0).forEach((exit) => exit())
+    await vi.waitFor(() => expect(agentCliAccess.blocked('antigravity')).toBe(false))
+    vi.restoreAllMocks()
+    vi.unstubAllEnvs()
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it.each([
+    { agent: 'antigravity' as const },
+    { io: 'pipe' as const }
+  ])('refuses credential changes while a daemon process can still write them: %j', async (fields) => {
+    const accounts = store()
+    await accounts.load()
+    sessions = [process(fields)]
+    await expect(accounts.login('antigravity', 'default')).rejects.toMatchObject({ reason: 'account-credentials-active' })
+    expect(signIn).not.toHaveBeenCalled()
+    expect(agentCliAccess.blocked('antigravity')).toBe(false)
+    sessions = []
+    await accounts.login('antigravity', 'default')
+    expect(signIn).toHaveBeenCalledOnce()
+  })
+
+  it('holds the reservation through login and rejects launches, a second login and removal', async () => {
+    const accounts = store()
+    await accounts.load()
+    await accounts.add('antigravity', 'Work')
+    expect(agentCliAccess.blocked('antigravity')).toBe(true)
+    await expect(accounts.launch('antigravity', 'work')).rejects.toMatchObject({ reason: 'account-credentials-active' })
+    await expect(accounts.login('antigravity', 'work')).rejects.toMatchObject({ reason: 'account-credentials-active' })
+    await expect(accounts.remove('antigravity', 'work')).rejects.toMatchObject({ reason: 'account-credentials-active' })
+    expect(signIn).toHaveBeenCalledOnce()
+    exits.shift()?.(1)
+    await vi.waitFor(() => expect(changed).toHaveBeenCalledWith('antigravity', 'work', false))
+    expect(agentCliAccess.blocked('antigravity')).toBe(false)
+    await expect(accounts.launch('antigravity', 'work')).resolves.toMatchObject({ id: 'work' })
+    await accounts.remove('antigravity', 'work')
+    expect(accounts.list().accounts.some((account) => account.agent === 'antigravity' && account.id === 'work')).toBe(false)
+  })
+
+  it('refuses removal until existing daemon writers exit without dropping their credentials', async () => {
+    const accounts = store()
+    await accounts.load()
+    await accounts.add('antigravity', 'Work')
+    exits.shift()?.()
+    await vi.waitFor(() => expect(changed).toHaveBeenCalledOnce())
+    const file = path.join(root, 'accounts/antigravity/work/antigravity-acp/acp_token.json')
+    writeFileSync(file, '{"retained":true}')
+    sessions = [process({ agent: 'antigravity' })]
+    await expect(accounts.remove('antigravity', 'work')).rejects.toMatchObject({ reason: 'account-credentials-active' })
+    expect(existsSync(file)).toBe(true)
+    expect(agentCliAccess.blocked('antigravity')).toBe(false)
+    sessions = []
+    await accounts.remove('antigravity', 'work')
+    expect(existsSync(file)).toBe(false)
+  })
+
+  it('blocks a recovered login PTY after core restarts, while allowing normal agent processes', async () => {
+    const accounts = store()
+    await accounts.load()
+    sessions = [process({ agent: 'antigravity', io: 'pty' })]
+    await expect(accounts.launch('antigravity')).rejects.toMatchObject({ reason: 'account-credentials-active' })
+    sessions = [process({ agent: 'antigravity' }), process({ agent: 'claude', io: 'pty' })]
+    await expect(accounts.launch('antigravity')).resolves.toEqual({ id: 'default', env: null })
+    sessions = [process({ agent: 'antigravity', io: 'pty', exited: true, exitCode: 0 })]
+    await expect(accounts.launch('antigravity')).resolves.toEqual({ id: 'default', env: null })
+  })
+
+  it('migrates an old account home only after reserving launches and confirming its writers have exited', async () => {
+    const accounts = store()
+    await accounts.load()
+    await accounts.add('antigravity', 'Work')
+    exits.shift()?.()
+    await vi.waitFor(() => expect(changed).toHaveBeenCalledOnce())
+    vi.spyOn(antigravityAccounts, 'needsIdlePreparation').mockResolvedValue(true)
+    const prepare = vi.spyOn(antigravityAccounts, 'prepare').mockImplementation(async () => {
+      expect(agentCliAccess.blocked('antigravity')).toBe(true)
+    })
+    sessions = [process({ agent: 'antigravity' })]
+    await expect(accounts.launch('antigravity', 'work')).rejects.toMatchObject({ reason: 'account-credentials-active' })
+    await expect(accounts.login('antigravity', 'work')).rejects.toMatchObject({ reason: 'account-credentials-active' })
+    expect(prepare).not.toHaveBeenCalled()
+    expect(sessions).toHaveLength(1)
+    sessions = []
+    await expect(accounts.launch('antigravity', 'work')).resolves.toMatchObject({ id: 'work' })
+    expect(prepare).toHaveBeenCalledOnce()
+    expect(agentCliAccess.blocked('antigravity')).toBe(false)
+  })
+
+  it('removes credentials and the account registry while retaining history owned by its conversations', async () => {
+    const accounts = store()
+    await accounts.load()
+    await accounts.add('antigravity', 'Work')
+    exits.shift()?.()
+    await vi.waitFor(() => expect(changed).toHaveBeenCalledOnce())
+    const home = path.join(root, 'accounts/antigravity/work/antigravity-acp')
+    const artifact = path.join(home, 'brain', 'session', 'artifact.txt')
+    mkdirSync(path.dirname(artifact), { recursive: true })
+    writeFileSync(artifact, 'owned history')
+    writeFileSync(path.join(home, 'acp_token.json'), 'credential')
+    await accounts.remove('antigravity', 'work')
+    expect(existsSync(artifact)).toBe(true)
+    expect(existsSync(path.join(home, 'acp_token.json'))).toBe(false)
+    expect(accounts.list().accounts.some((account) => account.agent === 'antigravity' && account.id === 'work')).toBe(false)
+  })
+
+  it('keeps the reservation when closing a login tab settles before its process exits', async () => {
+    const accounts = store()
+    await accounts.load()
+    await accounts.login('antigravity', 'default')
+    sessions = [process({ sessionId: terminal.sessionId, agent: 'antigravity', io: 'pty' })]
+    exits.shift()?.()
+    await vi.waitFor(() => expect(processes.mock.calls.length).toBeGreaterThanOrEqual(2))
+    expect(agentCliAccess.blocked('antigravity')).toBe(true)
+    await expect(accounts.launch('antigravity')).rejects.toMatchObject({ reason: 'account-credentials-active' })
+    sessions = []
+    await vi.waitFor(() => expect(changed).toHaveBeenCalledOnce())
+    expect(agentCliAccess.blocked('antigravity')).toBe(false)
+  })
+
+  it('releases a failed login reservation so the user can retry', async () => {
+    const accounts = store()
+    await accounts.load()
+    signIn.mockRejectedValueOnce(new Error('spawn failed'))
+    await expect(accounts.login('antigravity', 'default')).rejects.toThrow('spawn failed')
+    expect(agentCliAccess.blocked('antigravity')).toBe(false)
+    await accounts.login('antigravity', 'default')
+    expect(signIn).toHaveBeenCalledTimes(2)
+  })
+
+  it('releases a reservation if the daemon cannot confirm existing processes', async () => {
+    const accounts = store()
+    await accounts.load()
+    processes.mockRejectedValueOnce(new Error('daemon unavailable'))
+    await expect(accounts.login('antigravity', 'default')).rejects.toThrow('daemon unavailable')
+    expect(agentCliAccess.blocked('antigravity')).toBe(false)
+    await accounts.login('antigravity', 'default')
+    expect(signIn).toHaveBeenCalledOnce()
+  })
 })
 
 describe('AgentAccountStore', () => {
@@ -42,6 +216,7 @@ describe('AgentAccountStore', () => {
     mkdirSync(own, { recursive: true })
     process.env.CLAUDE_CONFIG_DIR = own
     process.env.CODEX_HOME = path.join(root, 'own-codex')
+    vi.stubEnv('GEMINI_HOME', path.join(root, 'own-antigravity'))
     signIns = []
     exits = []
     changes = []
@@ -50,6 +225,7 @@ describe('AgentAccountStore', () => {
   })
 
   afterEach(() => {
+    vi.unstubAllEnvs()
     for (const [name, value] of [['CLAUDE_CONFIG_DIR', saved.claude], ['CODEX_HOME', saved.codex]] as const) {
       if (value === undefined) delete process.env[name]
       else process.env[name] = value
@@ -61,8 +237,8 @@ describe('AgentAccountStore', () => {
     const accounts = store()
     await accounts.load()
     expect(accounts.list()).toMatchObject({
-      accounts: [{ id: 'default', agent: 'claude', signedIn: false }, { id: 'default', agent: 'codex', signedIn: false }],
-      active: { claude: 'default', codex: 'default' },
+      accounts: [{ id: 'default', agent: 'claude', signedIn: false }, { id: 'default', agent: 'codex', signedIn: false }, { id: 'default', agent: 'antigravity', signedIn: false }],
+      active: { claude: 'default', codex: 'default', antigravity: 'default' },
       autoSwitch: true
     })
     expect(await accounts.launch('claude')).toEqual({ id: 'default', env: null })

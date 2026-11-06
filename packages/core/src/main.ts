@@ -383,7 +383,9 @@ terminals.onBeforeCloseUpgrade(() => cliMaintenance.reconcile())
 const accounts = new AgentAccountStore(paths.agentAccounts, paths.agentAccountHomes, {
   signIn: (argv, env, title, agent) => terminals.signIn(argv, env, title, agent),
   waitForExit: (id) => terminals.waitForExit(id),
+  processes: async () => (await daemon.request('list', {})).sessions,
   accountChanged: (agent, id, removed) => {
+    conversations.invalidateCli(agent)
     if (removed) usage.forget(agent, id)
     else void usage.readAccount(agent, id)
     void environment.check(true).catch(() => {})

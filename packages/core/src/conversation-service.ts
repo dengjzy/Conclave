@@ -16,7 +16,7 @@ import { ChatLog, type LoggedRecord } from './chat-log'
 import type { Transcript } from './agent-transcripts'
 import type { SessionHost } from './daemon-client'
 import { ConversationStore } from './conversation-store'
-import type { NativeSession } from './native-session'
+import { mergeNativeArtifacts, nativeSessionArtifacts, type NativeSession, type NativeSessionTarget } from './native-session'
 import { ConversationDeletion, type NativeSessionDeletion } from './conversation-deletion'
 import { NATIVE_SESSION_LOG_ENV, ownedSessionLog, readOwnedNativeSessions, readStageOwnedSessions } from './owned-native-sessions'
 import { folderChanges, folderDiff, folderHead } from './conversation-changes'
@@ -358,9 +358,9 @@ export class ConversationService {
 
   // The user's model providers, for a conversation started on one; without them none can be.
   private providers: ModelProviderStore | null = null
-  private accounts: Pick<AgentAccountStore, 'launch' | 'activeOf'> | null = null
+  private accounts: (Pick<AgentAccountStore, 'launch' | 'activeOf'> & Partial<Pick<AgentAccountStore, 'validateLaunch'>>) | null = null
   setModelProviders(providers: ModelProviderStore): void { this.providers = providers }
-  setAccounts(accounts: Pick<AgentAccountStore, 'launch' | 'activeOf'>): void { this.accounts = accounts }
+  setAccounts(accounts: Pick<AgentAccountStore, 'launch' | 'activeOf'> & Partial<Pick<AgentAccountStore, 'validateLaunch'>>): void { this.accounts = accounts }
 
   // What the agent's next stage here runs on (see decideRoute).
   private routeFor(conversation: Pick<Conversation, 'id' | 'modelProvider'>, agent: AgentKind): RouteDecision {
@@ -1230,6 +1230,10 @@ export class ConversationService {
     const agentLaunch: AgentLaunch = {
       instructions: this.roleInstructions(current),
       providerSessionId: stage.providerSessionId,
+      sessionArtifacts: mergeNativeArtifacts(...this.store.nativeSessions([id])
+        .filter((entry) => entry.agent === agent && entry.providerSessionId === stage.providerSessionId)
+        .reverse()
+        .map((entry) => nativeSessionArtifacts(entry.session))),
       resume,
       handoffPath: handoff?.path ?? null,
       extraProjects: options.extraDirs,
@@ -1255,6 +1259,7 @@ export class ConversationService {
     let sessionId: string
     this.preparing.add(stage.id)
     try {
+      await this.rememberNativeSession(stage.id)
       let env = command.env ?? {}
       if (launch) {
         const prepared = await launch.prepare(agentStage, options.mcp, agentLaunch)
@@ -1263,7 +1268,10 @@ export class ConversationService {
         if (prepared.env) env = { ...env, ...prepared.env }
       }
       this.wire?.record(id, stage.id, [{ dir: 'spawn', text: JSON.stringify({ command: command.command, args: command.args, cwd: current.workspacePath }) }])
-      const spawned = await agentCliAccess.use(agent, () => this.daemon.request('spawnPipe', { agent, command: command.command, args: command.args, cwd: current.workspacePath, env: { ...env, [PROCESS_OWNER_ENV]: processOwner({ kind: 'conversation', id }), [NATIVE_SESSION_LOG_ENV]: ownedSessionLog(this.sessionsRoot, id) } }))
+      const spawned = await agentCliAccess.use(agent, () => {
+        if (account) this.accounts?.validateLaunch?.(agent, account.id)
+        return this.daemon.request('spawnPipe', { agent, command: command.command, args: command.args, cwd: current.workspacePath, env: { ...env, [PROCESS_OWNER_ENV]: processOwner({ kind: 'conversation', id }), [NATIVE_SESSION_LOG_ENV]: ownedSessionLog(this.sessionsRoot, id) } })
+      })
       sessionId = spawned.sessionId
       this.launches.set(sessionId, { ...launched, at: Date.now() })
       this.preparing.delete(stage.id)
@@ -1503,12 +1511,17 @@ export class ConversationService {
     if (known) return known
     const found = this.freshCatalogs.has(agent) ? null : this.catalogFromStages(agent)
     const adapter = adapterOf(agent)
-    const catalog = found ? Promise.resolve(found) : agentCliAccess.use(agent, () => adapter.catalog ? adapter.catalog(this.sessionsRoot, this.nativeDeletion?.executor) : this.probeCatalog(agent)).catch(() => null)
+    const catalog = found ? Promise.resolve(found) : agentCliAccess.use(agent, async () => {
+      if (!adapter.catalog) return this.probeCatalog(agent)
+      const account = adapter.accounts ? await this.accounts?.launch(agent) : null
+      return adapter.catalog(this.sessionsRoot, this.nativeDeletion?.executor, account?.env ?? undefined)
+    }).catch(() => null)
     this.catalogs.set(agent, catalog)
     // A probe that failed is tried again next time rather than remembered.
     void catalog.then((result) => {
+      if (this.catalogs.get(agent) !== catalog) return
       if (result) this.freshCatalogs.delete(agent)
-      if (!result && this.catalogs.get(agent) === catalog) this.catalogs.delete(agent)
+      else this.catalogs.delete(agent)
     })
     return catalog
   }
@@ -1524,17 +1537,17 @@ export class ConversationService {
   }
 
   private catalogFromStages(agent: AgentKind): ChatCatalog | null {
-    const stage = this.store.latestChatStage(agent)
+    const stage = this.store.latestChatStage(agent, this.accounts?.activeOf(agent) ?? DEFAULT_ACCOUNT)
     const conversation = stage ? this.store.get(stage.conversationId) : null
     return stage && conversation ? catalogOf(this.chats.items(this.chatStage(this.withChat(conversation), stage))) : null
   }
 
-  // Only the agent's own catalog: one on a provider lists the provider's models.
+  // Only keep models for the active account. An old stage can keep running after a switch.
   private rememberCatalog(conversationId: string, items: readonly ChatItem[]): void {
-    if (this.store.activeStage(conversationId)?.route) return
+    const stage = this.store.activeStage(conversationId)
+    if (!stage || stage.route || (stage.account ?? DEFAULT_ACCOUNT) !== (this.accounts?.activeOf(stage.agent) ?? DEFAULT_ACCOUNT)) return
     const catalog = catalogOf(items)
-    const agent = this.store.get(conversationId)?.agent
-    if (catalog && agent) this.catalogs.set(agent, Promise.resolve(catalog))
+    if (catalog) this.catalogs.set(stage.agent, Promise.resolve(catalog))
   }
 
   // An idle chat agent goes after a while, so the ones open all day do not pile up; the next
@@ -2086,15 +2099,11 @@ export class ConversationService {
     const stage = this.store.stage(stageId)
     const conversation = stage ? this.store.get(stage.conversationId) : null
     if (!native || !stage?.providerSessionId || !conversation) return Promise.resolve()
-    if (this.store.nativeSessions([conversation.id]).some((entry) => entry.agent === stage.agent && entry.providerSessionId === stage.providerSessionId)) {
-      this.resolvedNativeStages.add(stageId)
-      return Promise.resolve()
-    }
     const adapter = native.adapter(stage.agent)
     if (!adapter) return Promise.resolve()
-    const initial = { providerSessionId: stage.providerSessionId, cwd: conversation.workspacePath, home: native.home(stage.agent, stage.account ?? null) }
+    const initial: NativeSessionTarget = { providerSessionId: stage.providerSessionId, cwd: conversation.workspacePath, home: native.home(stage.agent, stage.account ?? null) }
     const captured = adapter.capture?.(initial) ?? initial
-    const home = this.store.rememberNativeTarget(conversation.id, stage.agent, captured.providerSessionId, captured.cwd, stage.account ?? null, captured.home)
+    const home = this.store.rememberNativeTarget(conversation.id, stage.agent, captured.providerSessionId, captured.cwd, stage.account ?? null, captured.home, captured.artifacts)
     const target = { ...captured, ...(home ? { home } : {}) }
     const promise = adapter.resolve(target).then((session) => {
       if (!session || !this.store.get(conversation.id)) return
@@ -2109,7 +2118,7 @@ export class ConversationService {
     await this.waitForLaunch(id)
     if (this.store.get(id)?.sessionId) await this.stop(id)
     for (const stage of this.store.stages(id)) await this.rememberNativeSession(stage.id)
-    for (const target of this.store.nativeTargets([id])) this.store.rememberNativeTarget(parentId, target.agent, target.providerSessionId, target.cwd, target.account, target.home)
+    for (const target of this.store.nativeTargets([id])) this.store.rememberNativeTarget(parentId, target.agent, target.providerSessionId, target.cwd, target.account, target.home, target.artifacts)
     for (const entry of this.store.nativeSessions([id])) this.store.rememberNativeSession(parentId, entry.agent, entry.providerSessionId, entry.session.cwd, null, entry.session)
     const explicit = await readOwnedNativeSessions(this.sessionsRoot, id)
     const current = this.store.get(id)

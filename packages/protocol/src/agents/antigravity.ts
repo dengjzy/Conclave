@@ -31,7 +31,7 @@ export const antigravity: AgentDescriptor = {
   readOnlyMode: 'ask',
   // Signed in with a personal account, its file tools refuse anything outside its cwd.
   primaryOnlyFiles: true,
-  capabilities: { unattended: false, bypass: true, autoMode: false, pathMentions: false, optionsWhileBusy: false, skills: false, userMcp: true, modelProviders: [], accounts: false },
+  capabilities: { unattended: false, bypass: true, autoMode: false, pathMentions: false, optionsWhileBusy: false, skills: false, userMcp: true, modelProviders: [], accounts: true },
   environment: {
     role: '聊天界面运行 Google 的 Antigravity ACP 服务（Zed、JetBrains 扩展用的同一个），由 Conclave 下载到自己的目录；不需要 agy 或 Antigravity 编辑器。',
     install: '在 设置 → 外部智能体 里下载 Antigravity ACP 服务',

@@ -8,7 +8,7 @@ import {
   AGENT_KINDS, AgentAccountId, AgentKind, DEFAULT_ACCOUNT, accountsSupported, activeAccount, agentDescriptor, pickAccount, quotaVerdict, accountUsage,
   type AgentAccount, type AgentAccounts, type AgentUsage, type Terminal
 } from '@conclave/protocol'
-import { planLaunch, readJsonIfExists, writePrivateJson } from '@conclave/protocol/node'
+import { planLaunch, readJsonIfExists, writePrivateJson, type SessionInfo } from '@conclave/protocol/node'
 import { adapterOf } from './agents'
 import type { AccountSupport } from './agents/agent-adapter'
 import { Rejection } from './rejection'
@@ -31,11 +31,13 @@ const SavedFile = z.object({
 })
 
 const LOGOUT_TIMEOUT_MS = 30_000
+const LOGIN_EXIT_TIMEOUT_MS = 5_000
 
 export type AccountDeps = {
   // Signs in, in a terminal the user follows.
   signIn(argv: { command: string; args: readonly string[] }, env: Record<string, string>, title: string, agent?: AgentKind): Promise<Terminal>
   waitForExit(terminalId: string): Promise<number | null>
+  processes?(): Promise<readonly SessionInfo[]>
   // An account was signed in, or out, or removed: its usage is worth reading now, or no more.
   accountChanged(agent: AgentKind, id: string, removed: boolean): void
   changed(accounts: AgentAccounts): void
@@ -108,6 +110,9 @@ export class AgentAccountStore {
     return id === DEFAULT_ACCOUNT ? undefined : path.join(this.root, agent, id)
   }
 
+  // A selected account may have been removed while the stage prepared its other files.
+  validateLaunch(agent: AgentKind, id: string): void { this.require(agent, id) }
+
   // Where the agent's next process runs, its folder readied; null for an agent without accounts.
   async launch(agent: AgentKind, picked?: string): Promise<AccountLaunch | null> {
     const accounts = adapterOf(agent).accounts
@@ -115,9 +120,22 @@ export class AgentAccountStore {
     const id = picked ?? this.activeOf(agent)
     this.require(agent, id)
     const home = this.home(agent, id)
-    if (!home) return { id, env: null }
-    await accounts.prepare(home)
-    return { id, env: accounts.env(home) }
+    if (home && await accounts.needsIdlePreparation?.(home)) {
+      const release = await this.reserveCredentials(agent, true)
+      try {
+        this.require(agent, id)
+        await accounts.prepare(home)
+        return { id, env: accounts.env(home) }
+      } finally { release?.() }
+    }
+    const launch = async () => {
+      if (accounts.requiresIdleCredentials) await this.requireCredentialProcessesIdle(agent, true)
+      this.require(agent, id)
+      if (!home) return { id, env: null }
+      await accounts.prepare(home)
+      return { id, env: accounts.env(home) }
+    }
+    return accounts.requiresIdleCredentials ? agentCliAccess.use(agent, launch) : launch()
   }
 
   // Usage also reads the user's own login for agents without managed accounts.
@@ -140,10 +158,16 @@ export class AgentAccountStore {
     return this.serially(async () => {
       const id = this.deps.newId?.() ?? randomBytes(4).toString('hex')
       const home = this.home(agent, id)!
-      await accounts.prepare(home)
-      await this.write([...this.saved, { id, agent, label: label || null, email: null, plan: null, createdAt: Date.now() }])
-      const terminal = await this.signIn(agent, id)
-      return { account: this.require(agent, id), terminal }
+      const release = await this.reserveCredentials(agent)
+      try {
+        await accounts.prepare(home)
+        await this.write([...this.saved, { id, agent, label: label || null, email: null, plan: null, createdAt: Date.now() }])
+        const terminal = await this.signIn(agent, id, release)
+        return { account: this.require(agent, id), terminal }
+      } catch (error) {
+        release?.()
+        throw error
+      }
     })
   }
 
@@ -151,8 +175,14 @@ export class AgentAccountStore {
     const accounts = support(agent)
     this.require(agent, id)
     const home = this.home(agent, id)
-    if (home) await accounts.prepare(home)
-    return this.signIn(agent, id)
+    const release = await this.reserveCredentials(agent, Boolean(home && await accounts.needsIdlePreparation?.(home)))
+    try {
+      if (home) await accounts.prepare(home)
+      return await this.signIn(agent, id, release)
+    } catch (error) {
+      release?.()
+      throw error
+    }
   }
 
   async rename(agent: AgentKind, id: string, label: string | null): Promise<AgentAccount> {
@@ -172,18 +202,26 @@ export class AgentAccountStore {
     return this.serially(async () => {
       this.require(agent, id)
       const home = this.home(agent, id)!
-      await agentCliAccess.use(agent, () => (this.deps.signOut ?? runQuietly)(agentDescriptor(agent).cli, accounts.logout, accounts.env(home)))
-      const active = { ...this.active }
-      if (active[agent] === id) delete active[agent]
-      this.active = active
-      await this.write(this.saved.filter((each) => !(each.agent === agent && each.id === id)))
-      for (const name of await readdir(home).catch(() => [])) {
-        const entry = path.join(home, name)
-        if ((await lstat(entry)).isSymbolicLink()) await unlink(entry)
+      const release = await this.reserveCredentials(agent)
+      try {
+        const logout = () => accounts.logoutAccount ? accounts.logoutAccount(home) : (this.deps.signOut ?? runQuietly)(agentDescriptor(agent).cli, accounts.logout, accounts.env(home))
+        await (release ? logout() : agentCliAccess.use(agent, logout))
+        const active = { ...this.active }
+        if (active[agent] === id) delete active[agent]
+        this.active = active
+        await this.write(this.saved.filter((each) => !(each.agent === agent && each.id === id)))
+        if (!accounts.preserveHistoryHome) {
+          for (const name of await readdir(home).catch(() => [])) {
+            const entry = path.join(home, name)
+            if ((await lstat(entry)).isSymbolicLink()) await unlink(entry)
+          }
+          await rm(home, { recursive: true, force: true })
+        }
+        this.signedIn.delete(key(agent, id))
+        this.deps.accountChanged(agent, id, true)
+      } finally {
+        release?.()
       }
-      await rm(home, { recursive: true, force: true })
-      this.signedIn.delete(key(agent, id))
-      this.deps.accountChanged(agent, id, true)
     })
   }
 
@@ -198,7 +236,7 @@ export class AgentAccountStore {
   private setActive(agent: AgentKind, id: string): Promise<void> {
     if (this.activeOf(agent) === id) return Promise.resolve()
     this.active = { ...this.active, [agent]: id }
-    return this.serially(() => this.write(this.saved))
+    return this.serially(() => this.write(this.saved)).then(() => this.deps.accountChanged(agent, id, false))
   }
 
   async setAutoSwitch(autoSwitch: boolean): Promise<AgentAccounts> {
@@ -237,14 +275,63 @@ export class AgentAccountStore {
     void this.serially(() => this.write(this.upsert({ ...current, plan }))).catch(() => {})
   }
 
-  private async signIn(agent: AgentKind, id: string): Promise<Terminal> {
+  private async signIn(agent: AgentKind, id: string, reserved?: () => void): Promise<Terminal> {
     const accounts = support(agent)
     const home = this.home(agent, id)
     const name = this.require(agent, id)
     const title = `登录 ${agentDescriptor(agent).label}${name.label ? `（${name.label}）` : ''}`
-    const terminal = await agentCliAccess.use(agent, () => this.deps.signIn({ command: agentDescriptor(agent).cli, args: accounts.login }, home ? accounts.env(home) : {}, title, agent))
-    void this.deps.waitForExit(terminal.id).then(() => this.check(agent, id)).then(() => this.deps.accountChanged(agent, id, false))
-    return terminal
+    const release = reserved ?? await this.reserveCredentials(agent)
+    try {
+      const signIn = async () => {
+        const command = await accounts.loginCommand?.(home) ?? { command: agentDescriptor(agent).cli, args: accounts.login, env: {} }
+        return this.deps.signIn(command, { ...(home ? accounts.env(home) : {}), ...command.env }, title, agent)
+      }
+      const terminal = await (release ? signIn() : agentCliAccess.use(agent, signIn))
+      void this.deps.waitForExit(terminal.id)
+        .then(() => release ? this.waitForCredentialExit(terminal) : undefined)
+        .finally(release)
+        .then(() => this.check(agent, id))
+        .then(() => this.deps.accountChanged(agent, id, false))
+        .catch((error: unknown) => console.error('[conclave-core] cannot refresh signed-in account:', error))
+      return terminal
+    } catch (error) {
+      release?.()
+      throw error
+    }
+  }
+
+  private async reserveCredentials(agent: AgentKind, idlePreparation = false): Promise<(() => void) | undefined> {
+    if (!support(agent).requiresIdleCredentials && !idlePreparation) return undefined
+    const blocked = new Rejection('account-credentials-active', `${agentDescriptor(agent).label} 正在登录或更改账号，请完成后重试`)
+    let release: (() => void) | undefined
+    try {
+      release = agentCliAccess.reserve(agent, blocked)
+      await this.requireCredentialProcessesIdle(agent)
+      return release
+    } catch (error) {
+      release?.()
+      if (error instanceof Rejection && error.reason === 'agent-cli-active') throw new Rejection('account-credentials-active', `请先结束 ${agentDescriptor(agent).label} 的运行或登录，再更改账号`)
+      throw error
+    }
+  }
+
+  private async waitForCredentialExit(terminal: Terminal): Promise<void> {
+    if (!this.deps.processes) return
+    const deadline = Date.now() + LOGIN_EXIT_TIMEOUT_MS
+    while ((await this.deps.processes()).some((session) => session.sessionId === terminal.sessionId && !session.exited)) {
+      if (Date.now() >= deadline) throw new Rejection('account-credentials-active', '登录进程仍未退出，请稍后重试')
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+  }
+
+  private async requireCredentialProcessesIdle(agent: AgentKind, loginOnly = false): Promise<void> {
+    const processes = await this.deps.processes?.() ?? []
+    const busy = processes.some((session) => !session.exited && (loginOnly
+      ? session.agent === agent && session.io === 'pty'
+      : session.agent === agent || (!session.agent && session.io === 'pipe')))
+    if (busy) throw new Rejection('account-credentials-active', loginOnly
+      ? `${agentDescriptor(agent).label} 正在登录，请完成后重试`
+      : `请先结束 ${agentDescriptor(agent).label} 的运行或登录，再更改账号`)
   }
 
   async refresh(agent: AgentKind): Promise<void> {
