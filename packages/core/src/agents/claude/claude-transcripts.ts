@@ -1,10 +1,11 @@
-import { rm } from 'node:fs/promises'
 import path from 'node:path'
 import { CONTEXT_COMPACTED } from '@conclave/protocol'
 import { z } from 'zod'
 import { clip, type ChatItemBody } from '../../chat-items'
 import { findFiles, parseLine, readHead, readLines, SummaryCache, timeOf, titleOf, type Transcript, type TranscriptEntry, type TranscriptMessage, type TranscriptSource, type TranscriptSummary } from '../../agent-transcripts'
 import { claudeDefaultHome } from './claude-account'
+import { removeClaudeSession } from './claude-native-sessions'
+import { sessionStorageRoot } from '../../native-session-files'
 import { COMMAND_TOOLS, describeClaudeTool, HAND_BACK, HIDDEN_TOOLS, inputDiffs, inputText, resultDiffs, toolResult } from './claude-stream'
 
 // Claude Code keeps each session in projects/<its folder, dashed>/<session id>.jsonl, one record
@@ -241,9 +242,9 @@ export function claudeTranscripts(root: () => string = () => claudeProjectsRoot(
       return claudeTranscript(texts)
     },
     delete: async (file) => {
-      await rm(file, { force: true })
-      const dir = file.replace(/\.jsonl$/, '')
-      await rm(dir, { recursive: true, force: true }).catch(() => {})
+      const directory = root()
+      const storage = await sessionStorageRoot(directory)
+      await removeClaudeSession({ id: path.basename(file, '.jsonl'), root: storage, locator: path.join(storage, path.relative(directory, file)) })
     }
   }
 }

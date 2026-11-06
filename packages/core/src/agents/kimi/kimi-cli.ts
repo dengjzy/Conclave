@@ -3,7 +3,8 @@ import { promisify } from 'node:util'
 import type { AgentCliInstallation, ChatCatalog } from '@conclave/protocol'
 import { launchFile } from '@conclave/protocol/node'
 import { findOnPath, parseVersion } from '../../environment-check'
-import { probeChatCatalog } from '../../chat-catalog'
+import type { NativeSessionExecutor } from '../../native-session'
+import { kimiSessions } from './kimi-sessions'
 import { Rejection } from '../../rejection'
 import type { AgentDetection } from '../agent-adapter'
 import { AcpDriver } from '../acp/acp-driver'
@@ -42,8 +43,22 @@ export async function requireKimi(): Promise<string> {
 }
 
 // Session creation lists configured models without sending anything to the model or signing in.
-export async function kimiCatalog(cwd: string): Promise<ChatCatalog | null> {
-  return probeChatCatalog(new AcpDriver(kimiDialect, 'catalog', { cwd, extraDirs: [], resume: null }), { command: await requireKimi(), args: ['acp'] }, cwd)
+export async function kimiCatalog(cwd: string, executor?: NativeSessionExecutor): Promise<ChatCatalog | null> {
+  if (!executor?.catalog || !executor.cleanup || !executor.register) return null
+  const command = await requireKimi()
+  const driver = new AcpDriver(kimiDialect, 'catalog', { cwd, extraDirs: [], resume: null })
+  try {
+    return await executor.catalog(driver, { command, args: ['acp'] }, cwd, async (id, daemonSessionId) => {
+      const session = await kimiSessions().resolve({ providerSessionId: id, cwd })
+      if (session) await executor.register?.('kimi', session, daemonSessionId)
+    })
+  } finally {
+    const id = driver.providerSessionId()
+    if (id) {
+      const session = await kimiSessions().resolve({ providerSessionId: id, cwd })
+      if (session) await executor.cleanup('kimi', session)
+    }
+  }
 }
 
 export function kimiInstallation(platform: NodeJS.Platform): AgentCliInstallation {

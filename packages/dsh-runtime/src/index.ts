@@ -13,6 +13,7 @@ import type {} from '@deepseek-ai/dsh-agent-default-model'
 import { DSH_RUNTIME_VERSION, DSH_MODE_ENV, DshMode } from '@conclave/protocol'
 import { z } from 'zod'
 import { modes, runtimeConfig, toolRefusal } from './policy'
+import { recordSessionOwnership } from './session-ownership'
 
 export const name = 'conclave-acp'
 export const inject = ['agents', 'agentDefaultModel', 'llm', 'sessionPersistence', 'sessions', 'permissionPresets', 'planMode', 'tools', 'userQuestions']
@@ -24,6 +25,7 @@ const Answer = z.object({ outcome: z.object({ outcome: z.string(), answers: z.ar
 const PRESETS = { ask: 'workspace-write', acceptEdits: 'conclave-auto', plan: 'read-only', readOnly: 'read-only', bypass: 'danger-full-access' } as const
 
 export function apply(ctx: Context): void {
+  ctx.on('session/created', (session) => recordSessionOwnership(session.header))
   const config = runtimeConfig()
   const available = modes(config)
   let mode = config.lock ?? config.mode

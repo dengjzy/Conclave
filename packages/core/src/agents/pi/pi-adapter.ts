@@ -8,6 +8,7 @@ import { piProviderModels } from './pi-models'
 import { PI_MODES } from './pi-modes'
 import { PiRpc } from './pi-rpc'
 import { piTranscripts } from './pi-transcripts'
+import { piNativeSessions } from './pi-native-sessions'
 
 const readyFile = (stage: AgentStage) => mcpReadyFile(stage, 'pi')
 // Pi waits up to 10s for a server whose tools the model is to see; a slow one may take longer.
@@ -32,6 +33,7 @@ export const pi: AgentAdapter = {
   detect: detectPi,
   installation: piInstallation,
   transcripts: piTranscripts(),
+  nativeSessions: piNativeSessions(),
   // Conclave's MCP server and modes come with its extension, which this start writes. The server
   // reports once Pi has listed its tools, which the first message waits for.
   launch: {

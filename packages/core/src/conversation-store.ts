@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { z } from 'zod'
+import type { NativeSession } from './native-session'
+import { ConversationDeletionJob } from './conversation-deletion'
 import { AgentKind, AgentProfile, Conversation, ConversationMessage, ConversationStage, ProviderRoute, TaskSource } from '@conclave/protocol'
 
 const lastEnded = (column: string) => `(SELECT ${column} FROM conversation_stages
@@ -318,6 +320,9 @@ export class ConversationStore {
 
   setProviderSession(id: string, providerSessionId: string): void {
     this.db.prepare('UPDATE conversation_stages SET provider_session_id = ? WHERE id = ?').run(providerSessionId, id)
+    this.db.prepare(`INSERT OR IGNORE INTO conversation_native_sessions (conversation_id, agent, provider_session_id, cwd, account)
+      SELECT s.conversation_id, s.agent, ?, c.workspace_path, s.account FROM conversation_stages s
+      JOIN conversations c ON c.id = s.conversation_id WHERE s.id = ?`).run(providerSessionId, id)
   }
 
   messages(id: string, after = 0): ConversationMessage[] {
@@ -372,6 +377,90 @@ export class ConversationStore {
     this.db.prepare(`UPDATE conversation_messages SET complete = 1
       WHERE stage_id = ? AND role = 'user' AND complete = 0`).run(stageId)
   }
+
+  deletions(): ConversationDeletionJob[] {
+    return this.db.prepare('SELECT data FROM conversation_deletions ORDER BY rowid').all()
+      .map((row) => ConversationDeletionJob.parse(JSON.parse(String(row.data))))
+  }
+
+  deletionFor(id: string): ConversationDeletionJob | undefined {
+    return this.deletions().find((job) => !job.localRemoved && job.conversationIds.includes(id))
+  }
+
+  saveDeletion(job: ConversationDeletionJob): void {
+    this.db.prepare('INSERT INTO conversation_deletions (root_id, data) VALUES (?, ?) ON CONFLICT(root_id) DO UPDATE SET data = excluded.data')
+      .run(job.rootId, JSON.stringify(job))
+  }
+
+  deleteDeletion(id: string): void { this.db.prepare('DELETE FROM conversation_deletions WHERE root_id = ?').run(id) }
+
+  deletionTree(id: string): string[] {
+    const conversations = this.list()
+    const calls = this.db.prepare('SELECT parent_id, data FROM agent_calls').all()
+    const ids = new Set([id])
+    let previous = 0
+    while (previous !== ids.size) {
+      previous = ids.size
+      for (const conversation of conversations) {
+        if ((conversation.parentConversationId && ids.has(conversation.parentConversationId)) || (conversation.helperOf && ids.has(conversation.helperOf))) ids.add(conversation.id)
+      }
+      for (const call of calls) {
+        if (!ids.has(String(call.parent_id))) continue
+        const child = z.object({ conversationId: z.string() }).parse(JSON.parse(String(call.data)))
+        ids.add(child.conversationId)
+      }
+    }
+    return [...ids]
+  }
+
+  rememberNativeTarget(conversationId: string, agent: z.infer<typeof AgentKind>, providerSessionId: string, cwd: string, account: string | null, home?: string): string | undefined {
+    this.db.prepare(`INSERT INTO conversation_native_sessions (conversation_id, agent, provider_session_id, cwd, account, home)
+      VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(conversation_id, agent, provider_session_id, cwd)
+      DO UPDATE SET home = COALESCE(conversation_native_sessions.home, excluded.home)`)
+      .run(conversationId, agent, providerSessionId, cwd, account, home ?? null)
+    const saved = this.db.prepare(`SELECT home FROM conversation_native_sessions
+      WHERE conversation_id = ? AND agent = ? AND provider_session_id = ? AND cwd = ?`).get(conversationId, agent, providerSessionId, cwd)
+    return typeof saved?.home === 'string' ? saved.home : undefined
+  }
+
+  rememberNativeSession(conversationId: string, agent: z.infer<typeof AgentKind>, providerSessionId: string, cwd: string, account: string | null, native: NativeSession): void {
+    this.db.prepare(`INSERT INTO conversation_native_sessions (conversation_id, agent, provider_session_id, cwd, account, native)
+      VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(conversation_id, agent, provider_session_id, cwd)
+      DO UPDATE SET native = COALESCE(conversation_native_sessions.native, excluded.native)`)
+      .run(conversationId, agent, providerSessionId, cwd, account, JSON.stringify(native))
+  }
+
+  nativeSessions(ids: readonly string[]): Array<{ agent: z.infer<typeof AgentKind>; providerSessionId: string; session: NativeSession }> {
+    const selected = new Set(ids)
+    const Native = z.object({ id: z.string(), root: z.string(), locator: z.string(), cwd: z.string() })
+    return this.db.prepare('SELECT conversation_id, agent, provider_session_id, native FROM conversation_native_sessions WHERE native IS NOT NULL').all()
+      .filter((row) => selected.has(String(row.conversation_id)))
+      .map((row) => ({ agent: AgentKind.parse(row.agent), providerSessionId: String(row.provider_session_id), session: Native.parse(JSON.parse(String(row.native))) }))
+  }
+
+  nativeTargets(ids: readonly string[]): Array<{ agent: z.infer<typeof AgentKind>; providerSessionId: string; cwd: string; account: string | null; home?: string }> {
+    const NativeTarget = z.object({ agent: AgentKind, providerSessionId: z.string(), cwd: z.string(), account: z.string().nullable(), home: z.string().nullable().transform((value) => value ?? undefined) })
+    const selected = new Set(ids)
+    const resolved = new Set(this.nativeSessions(ids).map((entry) => JSON.stringify([entry.agent, entry.providerSessionId])))
+    const found = new Map<string, z.infer<typeof NativeTarget>>()
+    for (const conversation of this.list().filter((each) => selected.has(each.id))) {
+      const rows = this.db.prepare(`SELECT agent, provider_session_id AS providerSessionId, cwd, account, home
+        FROM conversation_native_sessions WHERE conversation_id = ?
+        UNION SELECT agent, provider_session_id AS providerSessionId, ? AS cwd, account, NULL AS home FROM conversation_stages
+          WHERE conversation_id = ? AND provider_session_id IS NOT NULL
+        UNION SELECT agent, provider_session_id AS providerSessionId, ? AS cwd, NULL AS account, NULL AS home FROM session_imports WHERE conversation_id = ?`)
+        .all(conversation.id, conversation.workspacePath, conversation.id, conversation.workspacePath, conversation.id)
+      for (const row of rows) {
+        const target = NativeTarget.parse(row)
+        if (resolved.has(JSON.stringify([target.agent, target.providerSessionId]))) continue
+        found.set(JSON.stringify([target.agent, target.providerSessionId, target.cwd, target.account, target.home]), target)
+      }
+    }
+    const captured = new Set([...found.values()].filter((target) => target.home !== undefined).map((target) => JSON.stringify([target.agent, target.providerSessionId, target.cwd])))
+    return [...found.values()].filter((target) => target.home !== undefined || !captured.has(JSON.stringify([target.agent, target.providerSessionId, target.cwd])))
+  }
+
+  deleteCalls(id: string): void { this.db.prepare('DELETE FROM agent_calls WHERE parent_id = ?').run(id) }
 
   delete(id: string): void {
     this.db.prepare('DELETE FROM conversations WHERE id = ?').run(id)

@@ -11,7 +11,7 @@ import { useChatSurface } from './chat-surface'
 import { ArchivedBar } from './ArchivedBar'
 import { ChatComposer } from './ChatComposer'
 import { AgentDelegation } from './AgentDelegation'
-import { archiveConversation } from './ConversationActions'
+import { archiveConversation, retryConversationDeletion } from './ConversationActions'
 import { ChatMessageList, type SentMessage } from './ChatMessageList'
 import { ChatPlanCard } from './ChatPlan'
 import { ChatProjects } from './ChatProjects'
@@ -128,6 +128,19 @@ function PaneReply({ conversationId, pane }: { conversationId: string; pane: Con
   )
 }
 
+function DeletionBar({ conversation }: { conversation: Conversation }) {
+  const [busy, setBusy] = useState(false)
+  const failed = conversation.deletion?.state === 'failed'
+  const retry = async () => {
+    setBusy(true)
+    try { await retryConversationDeletion(conversation.id) } finally { setBusy(false) }
+  }
+  return <div className="chat-archived" role="status">
+    <span className="chat-archived-note">{t(failed ? 'ConversationDeletion.failed' : 'ConversationDeletion.cleaning')}{conversation.deletion?.error ? `：${conversation.deletion.error}` : ''}</span>
+    {failed && <button type="button" className="button" disabled={busy} onClick={() => void retry()}>{t('ConversationDeletion.retry')}</button>}
+  </div>
+}
+
 // Everything that waits on the user sits here, above the composer, so it cannot scroll out of view.
 export function ChatDock({ conversation, state, pending, tools, finishedCalls, onPrevious, sent, onJump, compact = false }: {
   compact?: boolean
@@ -148,6 +161,7 @@ export function ChatDock({ conversation, state, pending, tools, finishedCalls, o
   // The column not in front keeps its composer, draft and all, behind a one-line way back to it.
   const pane = useConversationPane()
   const resting = pane !== null && !pane.active
+  if (conversation.deletion) return <div className="chat-dock"><DeletionBar conversation={conversation} /></div>
   return (
     <div className="chat-dock">
       {!compact && <div className="chat-dock-header">

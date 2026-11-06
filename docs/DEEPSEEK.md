@@ -55,6 +55,8 @@ core 为每个阶段在自己的会话目录写入启动覆盖层，注入技能
 
 core 使用通用 ACP driver，按握手能力调用 `session/resume`。计划映射到共享计划卡；批准时先确认权限切换，再回复批准。取消后仍不退出的进程由 daemon 按宽限期终止。会话绑定目录，没有原生 fork 的场景沿用 Conclave 的移交。
 
+删除 Conclave 会话时，会清理其 DSH 原生会话、确认为子 Agent 的后代以及对应投影缓存。专用 profile 的 runtime 将创建的会话写入继承的归属日志，所以工具进程直接启动 `dsh --profile conclave` 产生的空白诊断会话也能随所属会话清理。独立分叉不按 `parentSession` 单独判定为子 Agent；普通 DSH profile 和未登记的旧记录不按标题猜测删除。
+
 新增 Agent 类型将 core 协议递增到 16，旧客户端会拒绝不匹配的 core；桌面端与远程 core 同步更新即可，数据库无需迁移，daemon 协议不变。
 
 ## 验证

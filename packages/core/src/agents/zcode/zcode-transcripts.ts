@@ -1,4 +1,6 @@
 import { stat } from 'node:fs/promises'
+import { removeZcodeSession } from './zcode-session-deletion'
+import { storedSessionExists } from '../../native-session-files'
 import { DatabaseSync } from 'node:sqlite'
 import os from 'node:os'
 import path from 'node:path'
@@ -190,13 +192,7 @@ export function zcodeTranscripts(file: () => string = () => zcodeSessionDb()): T
       const at = ref.lastIndexOf('#')
       const dbPath = ref.slice(0, at)
       const sessionId = ref.slice(at + 1)
-      try {
-        const { DatabaseSync } = await import('node:sqlite')
-        const db = new DatabaseSync(dbPath)
-        db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId)
-        db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId)
-        db.close()
-      } catch {}
+      if (await storedSessionExists(dbPath)) removeZcodeSession(dbPath, sessionId)
     }
   }
 }

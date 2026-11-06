@@ -5,8 +5,10 @@ import { findFiles, parseLine, readHead, readLines, SummaryCache, timeOf, titleO
 
 const PI_SESSION_FILE = /^[0-9T_-]+_[0-9a-f-]+\.jsonl$/i
 
-export function piSessionsRoot(): string {
-  return path.join(homedir(), '.pi', 'agent', 'sessions')
+export function piSessionsRoot(env: NodeJS.ProcessEnv = process.env, home = homedir()): string {
+  const configured = env.PI_CODING_AGENT_DIR
+  const directory = configured?.startsWith('~/') || configured?.startsWith('~\\') ? path.join(home, configured.slice(2)) : configured
+  return path.join(directory || path.join(home, '.pi', 'agent'), 'sessions')
 }
 
 async function summarizePiSession(file: string, mtimeMs: number): Promise<TranscriptSummary | null> {
@@ -110,7 +112,7 @@ export function piTranscripts(root: () => string = piSessionsRoot): TranscriptSo
     delete: async (file) => {
       await rm(file, { force: true })
       const dir = file.replace(/\.jsonl$/, '')
-      await rm(dir, { recursive: true, force: true }).catch(() => {})
+      await rm(dir, { recursive: true, force: true })
     }
   }
 }

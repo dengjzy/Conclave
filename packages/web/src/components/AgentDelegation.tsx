@@ -83,7 +83,7 @@ export function DelegationDialog({ conversation, onClose, onHistory }: { convers
     } catch (reason) { setError(String(reason)) } finally { setSaving(false) }
   }
   const dispatch = async () => {
-    if (!rpc || locked || !ready || !goal.trim() || instruction.length > 20000 || conversation.archivedAt != null) return
+    if (!rpc || locked || !ready || !goal.trim() || instruction.length > 20000 || (conversation.archivedAt != null || Boolean(conversation.deletion))) return
     setBusy(true)
     setError(null)
     try {
@@ -124,7 +124,7 @@ export function DelegationDialog({ conversation, onClose, onHistory }: { convers
       <div className="delegation-handoff"><strong>{t('Delegation.sharedProjects')}</strong><ul>{(conversation.projectPaths.length ? conversation.projectPaths : [conversation.workspacePath]).map((path) => <li key={path}>{path}</li>)}</ul>{Boolean(conversation.referencePaths?.length) && <><strong>{t('Delegation.references')}</strong><ul>{conversation.referencePaths?.map((path) => <li key={path}>{path}</li>)}</ul></>}<p className="muted">{t('Delegation.historyHint')}</p></div>
       {instruction && <details className="delegation-preview"><summary>{t('Delegation.preview')}</summary><pre>{instruction}</pre></details>}
       {error && <p className="modal-error" role="alert">{error}</p>}
-      <footer className="modal-footer"><button type="button" className="link-button delegation-history" disabled={locked} onClick={() => { onHistory(); onClose() }}>{t('AgentProfiles.history')}</button><button type="button" className="button ghost" disabled={locked} onClick={onClose}>{t('ChatCommandSettings.cancel')}</button><button type="submit" className="button primary" disabled={locked || !ready || !goal.trim() || instruction.length > 20000 || conversation.archivedAt != null}>{busy ? t('AgentProfiles.starting') : t('AgentProfiles.dispatch')}</button></footer>
+      <footer className="modal-footer"><button type="button" className="link-button delegation-history" disabled={locked} onClick={() => { onHistory(); onClose() }}>{t('AgentProfiles.history')}</button><button type="button" className="button ghost" disabled={locked} onClick={onClose}>{t('ChatCommandSettings.cancel')}</button><button type="submit" className="button primary" disabled={locked || !ready || !goal.trim() || instruction.length > 20000 || (conversation.archivedAt != null || Boolean(conversation.deletion))}>{busy ? t('AgentProfiles.starting') : t('AgentProfiles.dispatch')}</button></footer>
     </form>
   </dialog>
 }
@@ -141,7 +141,7 @@ export function AgentDelegation({ conversation }: { conversation: Conversation }
   }
   const working = conversation.delegation?.open ?? 0
   return <>
-    <button type="button" className="tool-button delegation-button" aria-label={t('AgentProfiles.delegate')} aria-haspopup="dialog" aria-expanded={open} data-tooltip={t('AgentProfiles.delegate')} disabled={conversation.archivedAt != null} onClick={() => setOpen(true)}><SquadIcon /><span>{t('AgentProfiles.delegate')}</span>{working > 0 && <span className="delegation-count" aria-label={`${t('AgentProfiles.running')} ${working}`}>{working}</span>}</button>
+    <button type="button" className="tool-button delegation-button" aria-label={t('AgentProfiles.delegate')} aria-haspopup="dialog" aria-expanded={open} data-tooltip={t('AgentProfiles.delegate')} disabled={(conversation.archivedAt != null || Boolean(conversation.deletion))} onClick={() => setOpen(true)}><SquadIcon /><span>{t('AgentProfiles.delegate')}</span>{working > 0 && <span className="delegation-count" aria-label={`${t('AgentProfiles.running')} ${working}`}>{working}</span>}</button>
     {open && <DelegationDialog key={conversation.id} conversation={conversation} onClose={() => setOpen(false)} onHistory={history} />}
   </>
 }

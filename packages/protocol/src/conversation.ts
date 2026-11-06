@@ -37,6 +37,8 @@ export const Conversation = z.object({
   referencePaths: z.array(z.string()).optional(),
   managedWorkspace: z.boolean(),
   sessionId: z.string().nullable(),
+  // Native history cleanup can be retried with conversations.delete after a failure.
+  deletion: z.object({ state: z.enum(['running', 'failed']), error: z.string().optional() }).optional(),
   // Includes CLI checks and handshake, before the agent can take a message.
   starting: z.boolean().optional(),
   createdAt: z.number(),

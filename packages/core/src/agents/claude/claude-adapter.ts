@@ -5,6 +5,7 @@ import { claudeCommand } from './claude-command'
 import { claudeProviderModels } from './claude-provider'
 import { CLAUDE_MODE_NAMES, ClaudeStream } from './claude-stream'
 import { claudeTranscripts } from './claude-transcripts'
+import { claudeNativeSessions } from './claude-native-sessions'
 import { hasClaudeCredentials, readClaudeUsage } from './claude-usage'
 
 export const claude: AgentAdapter = {
@@ -22,6 +23,7 @@ export const claude: AgentAdapter = {
   usage: readClaudeUsage,
   accounts: claudeAccounts,
   transcripts: claudeTranscripts(),
+  nativeSessions: claudeNativeSessions(),
   // Haiku, with no tools, no MCP servers, no skills, and no session left for --resume.
   quick: {
     parse: parseClaudeQuick,

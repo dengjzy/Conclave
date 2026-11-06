@@ -4,6 +4,7 @@ import { zcodeCatalog, zcodeInstallation, zcodeSignedIn } from './zcode-cli'
 import { zcodeCommand } from './zcode-command'
 import { ZCODE_MODES } from './zcode-modes'
 import { zcodeTranscripts } from './zcode-transcripts'
+import { zcodeNativeSessions } from './zcode-native-sessions'
 import { readZCodeUsage } from './zcode-usage'
 import { zcodeProviderLaunch, zcodeProviderModels } from './zcode-provider'
 
@@ -24,6 +25,7 @@ export const zcode: AgentAdapter = {
   mcpApproval: 'agent',
   catalog: zcodeCatalog,
   transcripts: zcodeTranscripts(),
+  nativeSessions: zcodeNativeSessions(),
   signedIn: (home) => zcodeSignedIn(home),
   // The GLM Coding Plan's quota, where ZCode runs on a plan key.
   usage: (home) => readZCodeUsage(home),

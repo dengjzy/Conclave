@@ -134,15 +134,21 @@ export function archiveConversation(id: string, archived: boolean) {
 }
 
 export async function deleteConversation(conversation: Conversation): Promise<boolean> {
+  if (conversation.deletion?.state === 'running') return false
+  if (conversation.deletion) return retryConversationDeletion(conversation.id)
   const confirmed = await askConfirm({
     title: t('ConversationActions.deleteConversation'),
-    message: t('ConversationActions.deleteThisConversationAndItsChatHistoryProject'),
+    message: t(useCore.getState().rpc?.features.includes('conversation-session-cleanup') ? 'ConversationDeletion.confirm' : 'ConversationActions.deleteThisConversationAndItsChatHistoryProject'),
     confirmLabel: t('ConversationActions.deleteConversation'),
     cancelLabel: t('ConfirmDialog.cancel'),
     danger: true,
   })
   if (!confirmed) return false
-  return (await perform((rpc) => rpc.call('conversations.delete', { id: conversation.id }))) !== null
+  return retryConversationDeletion(conversation.id)
+}
+
+export async function retryConversationDeletion(id: string): Promise<boolean> {
+  return (await perform((rpc) => rpc.call('conversations.delete', { id }))) !== null
 }
 
 // The row's right-click menu: the header's actions, and the one place a conversation is deleted.

@@ -9,6 +9,7 @@ export type ConversationGlyph = 'awaiting' | 'running' | 'failed' | 'unseen' | '
 
 export function conversationGlyph(conversation: Conversation, unseen: boolean): ConversationGlyph {
   const state = conversationState(conversation)
+  if (conversation.deletion) return state.failed ? 'failed' : 'running'
   if (conversation.sessionId && conversation.chat?.turn === 'awaiting') return 'awaiting'
   if (state.running && (conversation.starting || conversation.chat?.turn !== 'idle')) return 'running'
   if (state.failed) return 'failed'
@@ -33,6 +34,11 @@ export function timeAgo(at: number, now: number): string {
 // last failed, is all there is to say.
 export function conversationState(conversation: Conversation): ConversationState {
   const { sessionId, lastExit, chat } = conversation
+  if (conversation.deletion) {
+    const failed = conversation.deletion.state === 'failed'
+    return { label: t(failed ? 'ConversationDeletion.failed' : 'ConversationDeletion.cleaning'), running: !failed, failed,
+      detail: conversation.deletion.error ?? t('ConversationDeletion.cleaning') }
+  }
   if (conversation.starting) return { label: t('conversationState.starting'), running: true, failed: false, detail: t('conversationState.preparingAgentYourMessageWillBeSentAfterward') }
   if (sessionId && chat?.turn === 'awaiting') return { label: t('conversationState.awaitingApproval'), running: true, failed: false, detail: t('attention.agentNeedsYourApprovalOrAnswer') }
   if (sessionId && chat?.turn === 'running') return { label: t('ConversationList.running'), running: true, failed: false, detail: null }

@@ -69,7 +69,7 @@ export class AgentProfileService {
       writing: calls.some((call) => !call.readOnly && call.state !== 'queued') } : undefined
   }
   private canDelegate(parent: Conversation): boolean {
-    return this.scopeAllowed(parent) && !parent.parentConversationId && !parent.discussionId && !parent.squadRunId && !parent.routineId && !isHelper(parent) && parent.archivedAt == null
+    return !parent.deletion && this.scopeAllowed(parent) && !parent.parentConversationId && !parent.discussionId && !parent.squadRunId && !parent.routineId && !isHelper(parent) && parent.archivedAt == null
   }
   available(id: string): AgentProfile[] {
     if (this.closed) return []
@@ -109,6 +109,7 @@ export class AgentProfileService {
       const call = AgentCall.parse({ id: randomUUID(), parentId: id, conversationId: randomUUID(), profile, instruction,
         ...(direct ? { temporary: true } : {}),
         permissionMode, readOnly, ref: ref ?? null, state: 'queued', result: null, error: null, delivered: false, createdAt: at, updatedAt: at })
+      if (!this.canDelegate(this.chats.get(id))) throw new Rejection('conversation-deleting', '会话正在删除，不能委派')
       this.announce(this.store.saveCall(call))
       this.tick()
       return call
@@ -175,7 +176,7 @@ export class AgentProfileService {
   }
   private async advance(id: string): Promise<void> {
     const parent = this.lookup(id)
-    if (!parent || parent.archivedAt != null) {
+    if (!parent || parent.archivedAt != null || parent.deletion) {
       for (const call of this.store.calls(id).filter((call) => agentCallOpen(call) || !call.delivered)) {
         await this.stopChild(call)
         this.patch(call.id, { state: agentCallOpen(call) ? 'cancelled' : call.state, delivered: true })

@@ -34,6 +34,15 @@ describe('conversationState', () => {
 describe('conversationGlyph', () => {
   const glyph = (patch: Partial<Conversation>, unseen = false) => conversationGlyph({ ...base, ...patch }, unseen)
 
+  it('keeps failed deletion visible and prevents stale agent activity from masking cleanup', () => {
+    const deleting = { ...base, sessionId: 'old', chat: { turn: 'awaiting' as const }, deletion: { state: 'running' as const } }
+    expect(conversationState(deleting)).toMatchObject({ label: '正在清理会话', running: true, failed: false })
+    expect(conversationGlyph(deleting, true)).toBe('running')
+    const failed = { ...deleting, deletion: { state: 'failed' as const, error: 'locked history' } }
+    expect(conversationState(failed)).toMatchObject({ label: '会话清理未完成', failed: true, detail: 'locked history' })
+    expect(conversationGlyph(failed, true)).toBe('failed')
+  })
+
   it('puts what waits on the user before an agent at work, and that before a failure', () => {
     expect(glyph({ sessionId: 's', chat: { turn: 'awaiting' } })).toBe('awaiting')
     expect(glyph({ sessionId: 's', chat: { turn: 'running' } })).toBe('running')

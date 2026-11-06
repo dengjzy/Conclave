@@ -1,7 +1,7 @@
 import type { ChatReference, AgentProfile, SkillRef } from '@conclave/protocol'
 import { agentCliAccess } from './agent-cli-access'
 import { randomUUID } from 'node:crypto'
-import { mkdir, realpath, rm, rmdir, stat, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, realpath, rm, rmdir, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { chatReferencesFor, canHaveHelper, helperAllowsMode, isHelper, agentDescriptor, modelPrice, providerEndpoint, type CostBaseline, checkEditAdditionalProjects, checkSwitchBranch, handoffMessage, isPlanApproval, parseHandoffMessage, MAX_TASK_REPOS, type AgentKind, type ChatCatalog, type ChatImage, type ChatItem, type ChatModel, type ChatOption, type ChatSettings, type CommitPushResult, type CommitResult, type PushResult, type Conversation, type ConversationMessage, type ConversationSearchHit, type ConversationStage, type FileDiff, type FolderChanges, type ProjectBranches, type ProjectHead, type ChatDecision, type KnowledgeBase, type TaskSource, type UnattendedMode, isConclaveRequest , PROCESS_OWNER_ENV, processOwner, parseProcessOwner } from '@conclave/protocol'
 import type { DaemonEvent, SessionInfo } from '@conclave/protocol/node'
@@ -15,6 +15,9 @@ import { ChatLog, type LoggedRecord } from './chat-log'
 import type { Transcript } from './agent-transcripts'
 import type { SessionHost } from './daemon-client'
 import { ConversationStore } from './conversation-store'
+import type { NativeSession } from './native-session'
+import { ConversationDeletion, type NativeSessionDeletion } from './conversation-deletion'
+import { NATIVE_SESSION_LOG_ENV, ownedSessionLog, readOwnedNativeSessions, readStageOwnedSessions } from './owned-native-sessions'
 import { folderChanges, folderDiff, folderHead } from './conversation-changes'
 import { adapterOf, checkUnattended } from './agents'
 import type { AgentLaunch, AgentStage, CancelGrace } from './agents/agent-adapter'
@@ -136,6 +139,19 @@ async function resolveProjects(projectPaths: readonly string[], taken: readonly 
 }
 
 export class ConversationService {
+  private readonly deletion: ConversationDeletion
+  private nativeDeletion: NativeSessionDeletion | null = null
+  private readonly resolvingNative = new Map<string, { conversationId: string; promise: Promise<void> }>()
+  private readonly resolvedNativeStages = new Set<string>()
+  private stopDeletionTerminals: (id: string) => Promise<void> = async () => {}
+  setNativeDeletion(native: NativeSessionDeletion, stopTerminals: (id: string) => Promise<void>): void {
+    this.nativeDeletion = native
+    this.deletion.configure(native)
+    this.stopDeletionTerminals = stopTerminals
+  }
+  recoverDeletions(): Promise<void> { return this.deletion.recover() }
+  cleanupNative(agent: AgentKind, session: NativeSession): Promise<void> { return this.deletion.cleanupNative(agent, session) }
+  async registerNative(agent: AgentKind, session: NativeSession, processSessionId: string): Promise<void> { this.deletion.registerNative(agent, session, processSessionId) }
   private delegationStatus: ((id: string) => Conversation['delegation']) | null = null
   setDelegationStatus(status: (id: string) => Conversation['delegation']): void { this.delegationStatus = status }
   refreshDelegation(id: string): void { const conversation = this.store.get(id); if (conversation) this.changed(conversation) }
@@ -225,6 +241,35 @@ export class ConversationService {
     // Where chat stages' raw traffic goes while the user has it on; null keeps none.
     private readonly wire: WireLog | null = null
   ) {
+    this.deletion = new ConversationDeletion(store, {
+      quiesce: async (ids) => {
+        for (const id of ids) {
+          await this.waitForLaunch(id)
+          await this.callCleanup?.(id)
+        }
+        for (const id of ids) {
+          await this.waitForLaunch(id)
+          if (this.store.get(id)?.sessionId) await this.stop(id)
+          await this.stopDeletionTerminals(id)
+          for (const stage of this.store.stages(id)) await this.rememberNativeSession(stage.id)
+          await Promise.all([...this.resolvingNative.values()].filter((entry) => entry.conversationId === id).map((entry) => entry.promise))
+        }
+        const closure = new Set(ids)
+        const stageProcesses = new Set(ids.flatMap((id) => this.store.stages(id).flatMap((stage) => stage.sessionId ? [stage.sessionId] : [])))
+        const belongs = (session: SessionInfo) => {
+          const owner = session.owner ? parseProcessOwner(session.owner) : null
+          return stageProcesses.has(session.sessionId) || (owner?.kind === 'conversation' && closure.has(owner.id))
+        }
+        for (const session of (await this.daemon.request('list', {})).sessions.filter((session) => !session.exited && belongs(session))) await this.stopAgent(session.sessionId)
+        if ((await this.daemon.request('list', {})).sessions.some((session) => !session.exited && belongs(session))) throw new Error('仍有智能体进程未退出，请稍后重试删除')
+      },
+      removeStopped: (id) => this.removeStoppedConversation(id),
+      stopProbe: async (sessionId) => {
+        if ((await this.daemon.request('list', {})).sessions.some((session) => session.sessionId === sessionId && !session.exited)) await this.stopAgent(sessionId)
+        if ((await this.daemon.request('list', {})).sessions.some((session) => session.sessionId === sessionId && !session.exited)) throw new Error('临时智能体仍未退出')
+      },
+      changed: (ids) => { for (const id of ids) { const current = this.store.get(id); if (current) this.changed(current) } }
+    }, sessionsRoot)
     this.titles = new ConversationTitles(store, (conversation) => this.changed(conversation))
     this.chats = new ChatHost(daemon, sessionsRoot, attachments, {
       settled: (stage, items) => this.titles.observe(stage.conversationId, items),
@@ -238,7 +283,12 @@ export class ConversationService {
       delta: (conversationId, stageId, itemId, append) => this.emit({ type: 'chatDelta', conversationId, stageId, itemId, append }),
       messages: (stage, messages) => messages.forEach((message) => this.recordChatMessage(stage, message)),
       prompt: (stage, ref) => this.emit({ type: 'prompt', conversationId: stage.conversationId, stageId: stage.stageId, ref }),
-      provider: (stage, providerSessionId) => this.store.setProviderSession(stage.stageId, providerSessionId),
+      provider: (stage, providerSessionId) => {
+        this.store.setProviderSession(stage.stageId, providerSessionId)
+        this.resolvedNativeStages.delete(stage.stageId)
+        void this.rememberNativeSession(stage.stageId)
+        void this.deletion.recoverDeferred().catch((error: unknown) => console.warn('[conclave-core] deferred cleanup failed', error))
+      },
       activity: (conversationId) => {
         const current = this.store.get(conversationId)
         if (current) this.changed(current)
@@ -560,7 +610,10 @@ export class ConversationService {
     discussion: { id: string; title: string } | null = null,
     squad: { runId: string; readOnly: boolean; referencePaths?: readonly string[] } | null = null
   ): Promise<Conversation> {
+    this.deletion.requireWritable(id)
+    if (start.parentId) this.deletion.requireWritable(start.parentId)
     if (start.helperOf) {
+      if (this.store.deletionFor(start.helperOf)) throw new Rejection('invalid-params', '这个会话不能创建小助手')
       const parent = this.get(start.helperOf)
       if (this.retiring.has(parent.id) || !canHaveHelper(parent) || routine || discussion || squad || start.worktree || start.branch) throw new Rejection('invalid-params', '这个会话不能创建小助手')
       const permissionMode = start.permissionMode ?? 'ask'
@@ -573,6 +626,7 @@ export class ConversationService {
       const helperProvider = modelProvider !== null && this.routeFor({ id, modelProvider }, agent).kind === 'provider' ? modelProvider : undefined
       await this.validateStartOptions(agent, { ...start, permissionMode }, helperProvider)
       // Recheck after catalog discovery: concurrent creates must not open two helpers.
+      if (this.store.deletionFor(parent.id)) throw new Rejection('invalid-params', '这个会话不能创建小助手')
       const currentParent = this.get(parent.id)
       if (this.retiring.has(parent.id) || !canHaveHelper(currentParent) || this.store.helper(parent.id)) throw new Rejection('invalid-params', '不能创建小助手或已有小助手')
       this.store.create(agent, currentParent.workspacePath, currentParent.projectPaths, id, this.store.projectStarts(parent.id), null, null, null, parent.id)
@@ -621,6 +675,8 @@ export class ConversationService {
       const head = await folderHead(project)
       if (head) starts[project] = head
     }
+    this.deletion.requireWritable(id)
+    if (start.parentId) this.deletion.requireWritable(start.parentId)
     const created = this.store.create(agent, workspace, projects, id, starts, null, routine, discussion)
     if (start.modelProvider) this.store.setModelProvider(id, start.modelProvider)
     if (start.profile) this.store.setProfile(id, start.profile, start.parentId ?? null, start.callId ?? null)
@@ -668,7 +724,8 @@ export class ConversationService {
   }
 
   // A task's chat is driven from its task, which checks what the task may do first.
-  private free(id: string): Conversation {
+  private free(id: string, deleting = false): Conversation {
+    if (!deleting) this.deletion.requireWritable(id)
     const conversation = this.get(id)
     if (conversation.taskId) throw new Rejection('task-conversation', 'this conversation runs a task; go on from the task')
     return conversation
@@ -796,7 +853,10 @@ export class ConversationService {
         await this.callCleanup?.(id)
         if (current.sessionId) await this.stop(id)
         const helper = this.store.helper(id)
-        if (helper) await this.remove(helper.id)
+        if (helper) {
+          await this.transferHelperHistory(helper.id, id)
+          await this.removeStoppedConversation(helper.id)
+        }
         return this.changed(this.store.setArchived(id, archived))
       } finally { this.retiring.delete(id) }
     }
@@ -805,6 +865,7 @@ export class ConversationService {
 
   // An archived conversation takes no message until it is taken out again.
   private writable(id: string): Conversation {
+    this.deletion.requireWritable(id)
     const conversation = this.get(id)
     if (conversation.archivedAt != null) throw new Rejection('conversation-archived', 'take the conversation out of the archive first')
     return conversation
@@ -917,6 +978,7 @@ export class ConversationService {
   }
 
   async fork(sourceId: string, stageId: string, itemId: string): Promise<Conversation> {
+    this.deletion.requireWritable(sourceId)
     const source = this.free(sourceId)
     if (isHelper(source)) throw new Rejection('invalid-params', '小助手不能 fork')
     if (source.squadRunId || source.parentConversationId) throw new Rejection('squad-managed')
@@ -992,6 +1054,7 @@ export class ConversationService {
   // A session the agent ran outside Conclave, taken in as a stage that has ended, on that session: the
   // next start resumes it, as it would a stage of Conclave's own. title: what the session was called.
   importStage(id: string, agent: AgentKind, providerSessionId: string, transcript: Transcript, title: { text: string; locked: boolean } | null = null): Conversation {
+    this.deletion.requireWritable(id)
     const current = this.get(id)
     if (current.sessionId || this.launching.has(id)) throw new Rejection('conversation-running')
     const stageId = randomUUID()
@@ -1014,6 +1077,7 @@ export class ConversationService {
   }
 
   private async start(id: string, agent: AgentKind, note: string, handoff: boolean, launch: StageLaunch = {}): Promise<Conversation> {
+    this.deletion.requireWritable(id)
     const conversation = this.get(id)
     this.checkReadOnly(agent, Boolean(conversation.workspaceReadOnly || conversation.discussionId), Boolean(conversation.discussionId))
     this.squadGuard?.(this.get(id))
@@ -1176,7 +1240,7 @@ export class ConversationService {
         if (prepared.env) env = { ...env, ...prepared.env }
       }
       this.wire?.record(id, stage.id, [{ dir: 'spawn', text: JSON.stringify({ command: command.command, args: command.args, cwd: current.workspacePath }) }])
-      const spawned = await agentCliAccess.use(agent, () => this.daemon.request('spawnPipe', { agent, command: command.command, args: command.args, cwd: current.workspacePath, env: { ...env, [PROCESS_OWNER_ENV]: processOwner({ kind: 'conversation', id }) } }))
+      const spawned = await agentCliAccess.use(agent, () => this.daemon.request('spawnPipe', { agent, command: command.command, args: command.args, cwd: current.workspacePath, env: { ...env, [PROCESS_OWNER_ENV]: processOwner({ kind: 'conversation', id }), [NATIVE_SESSION_LOG_ENV]: ownedSessionLog(this.sessionsRoot, id) } }))
       sessionId = spawned.sessionId
       this.launches.set(sessionId, { ...launched, at: Date.now() })
       this.preparing.delete(stage.id)
@@ -1209,11 +1273,17 @@ export class ConversationService {
         await this.chats.send(id, message, [], false, false, undefined, chatReferencesFor(handoff.note, message, handoff.references))
       }
     } catch (error) {
-      // A stage that never started leaves nothing to resume, so it goes, log and all.
-      this.chats.forget(sessionId, stage.id)
+      // Spawn succeeded even when attaching its stage failed. Always stop that process, and
+      // leave its launch files to the exit/reconnect sweep if the daemon cannot confirm it.
       await this.daemon.request('kill', { sessionId, force: true }).catch(() => {})
-      this.store.deleteStage(stage.id)
-      await rm(ChatLog.of(this.sessionsRoot, id, stage.id).file, { force: true })
+      await this.rememberNativeSession(stage.id)
+      this.chats.forget(sessionId, stage.id)
+      const retained = this.nativeDeletion !== null
+      if (retained) this.store.endStage(stage.id, null)
+      else {
+        this.store.deleteStage(stage.id)
+        await rm(ChatLog.of(this.sessionsRoot, id, stage.id).file, { force: true })
+      }
       this.changed(this.store.update(id, { sessionId: null }))
       throw error
     }
@@ -1404,7 +1474,7 @@ export class ConversationService {
     if (known) return known
     const found = this.freshCatalogs.has(agent) ? null : this.catalogFromStages(agent)
     const adapter = adapterOf(agent)
-    const catalog = found ? Promise.resolve(found) : agentCliAccess.use(agent, () => adapter.catalog ? adapter.catalog(this.sessionsRoot) : this.probeCatalog(agent)).catch(() => null)
+    const catalog = found ? Promise.resolve(found) : agentCliAccess.use(agent, () => adapter.catalog ? adapter.catalog(this.sessionsRoot, this.nativeDeletion?.executor) : this.probeCatalog(agent)).catch(() => null)
     this.catalogs.set(agent, catalog)
     // A probe that failed is tried again next time rather than remembered.
     void catalog.then((result) => {
@@ -1479,7 +1549,9 @@ export class ConversationService {
   private async sendNow(id: string, text: string, imageIds: readonly string[], queue: boolean, steer: boolean, ref?: string, references?: ChatReference[]): Promise<void> {
     this.gitSending.set(id, (this.gitSending.get(id) ?? 0) + 1)
     try {
+      this.deletion.requireWritable(id)
       await this.gitGuard?.(this.get(id).projectPaths)
+      this.deletion.requireWritable(id)
       if (ref && this.sentRef(id, ref, 0)) return
       const current = this.get(id)
       if (current.sessionId && this.chats.sessionLost(id)) {
@@ -1830,14 +1902,15 @@ export class ConversationService {
   }
 
   async delete(id: string): Promise<void> {
-    this.free(id)
-    await this.remove(id)
+    if (!this.store.get(id)) { await this.deletion.delete(id); return }
+    this.free(id, true)
+    await this.deletion.delete(id)
   }
 
   // A task's chat goes with its task; the worktrees it worked in stay.
   async deleteForTask(taskId: string): Promise<void> {
     const conversation = this.store.byTask(taskId)
-    if (conversation) await this.remove(conversation.id)
+    if (conversation) await this.deletion.delete(conversation.id)
   }
 
   // Lets a task's agent go, as a task given up or closed no longer needs it.
@@ -1847,30 +1920,75 @@ export class ConversationService {
     if (conversation?.sessionId) await this.stop(conversation.id)
   }
 
-  private async remove(id: string): Promise<void> {
+  private rememberNativeSession(stageId: string): Promise<void> {
+    if (this.resolvedNativeStages.has(stageId)) return Promise.resolve()
+    const pending = this.resolvingNative.get(stageId)
+    if (pending) return pending.promise
+    const native = this.nativeDeletion
+    const stage = this.store.stage(stageId)
+    const conversation = stage ? this.store.get(stage.conversationId) : null
+    if (!native || !stage?.providerSessionId || !conversation) return Promise.resolve()
+    if (this.store.nativeSessions([conversation.id]).some((entry) => entry.agent === stage.agent && entry.providerSessionId === stage.providerSessionId)) {
+      this.resolvedNativeStages.add(stageId)
+      return Promise.resolve()
+    }
+    const adapter = native.adapter(stage.agent)
+    if (!adapter) return Promise.resolve()
+    const initial = { providerSessionId: stage.providerSessionId, cwd: conversation.workspacePath, home: native.home(stage.agent, stage.account ?? null) }
+    const captured = adapter.capture?.(initial) ?? initial
+    const home = this.store.rememberNativeTarget(conversation.id, stage.agent, captured.providerSessionId, captured.cwd, stage.account ?? null, captured.home)
+    const target = { ...captured, ...(home ? { home } : {}) }
+    const promise = adapter.resolve(target).then((session) => {
+      if (!session || !this.store.get(conversation.id)) return
+      this.store.rememberNativeSession(conversation.id, stage.agent, target.providerSessionId, target.cwd, stage.account ?? null, session)
+      this.resolvedNativeStages.add(stageId)
+    }).catch((error: unknown) => console.warn('[conclave-core] saving native session identity failed', error)).finally(() => this.resolvingNative.delete(stageId))
+    this.resolvingNative.set(stageId, { conversationId: conversation.id, promise })
+    return promise
+  }
+
+  private async transferHelperHistory(id: string, parentId: string): Promise<void> {
+    await this.waitForLaunch(id)
+    if (this.store.get(id)?.sessionId) await this.stop(id)
+    for (const stage of this.store.stages(id)) await this.rememberNativeSession(stage.id)
+    for (const target of this.store.nativeTargets([id])) this.store.rememberNativeTarget(parentId, target.agent, target.providerSessionId, target.cwd, target.account, target.home)
+    for (const entry of this.store.nativeSessions([id])) this.store.rememberNativeSession(parentId, entry.agent, entry.providerSessionId, entry.session.cwd, null, entry.session)
+    const explicit = await readOwnedNativeSessions(this.sessionsRoot, id)
+    const current = this.store.get(id)
+    if (current) for (const stage of this.store.stages(id).filter((each) => each.sessionId !== null)) explicit.push(...readStageOwnedSessions(this.sessionsRoot, id, stage.id, stage.agent, current.workspacePath, this.nativeDeletion?.home(stage.agent, stage.account ?? null)))
+    if (explicit.length) {
+      const file = ownedSessionLog(this.sessionsRoot, parentId)
+      await mkdir(path.dirname(file), { recursive: true, mode: 0o700 })
+      await appendFile(file, explicit.map((entry) => JSON.stringify(entry) + '\n').join(''), { mode: 0o600 })
+    }
+  }
+
+  private async waitForLaunch(id: string): Promise<void> {
+    const deadline = Date.now() + 240_000
+    while (this.launching.has(id)) {
+      if (Date.now() > deadline) throw new Error('智能体仍在启动，请稍后重试删除')
+      await new Promise<void>((resolve) => setTimeout(resolve, 25))
+    }
+  }
+
+  private async removeStoppedConversation(id: string): Promise<void> {
+    if (!this.store.get(id)) return
     if (this.launching.has(id)) throw new Rejection('conversation-running')
     this.retiring.add(id)
     this.attend(id)
     try {
       const current = this.get(id)
-      await this.callCleanup?.(id)
-      const helper = this.store.helper(id)
-      if (helper) await this.remove(helper.id)
       if (current.sessionId) await this.stop(id)
       const directory = path.join(this.sessionsRoot, id)
       await rm(path.join(directory, 'handoffs'), { recursive: true, force: true })
       await rm(path.join(directory, 'stages'), { recursive: true, force: true })
+      await rm(path.join(directory, 'dsh'), { recursive: true, force: true })
       await rm(WireLog.directory(this.sessionsRoot, id), { recursive: true, force: true })
-      // Only folders no process is shown to use; the others stay until one is.
+      await rm(ownedSessionLog(this.sessionsRoot, id), { force: true })
       await this.settleLaunches().catch((error: unknown) => console.error('[conclave-core] settling launch files failed', error))
       await rmdir(launchRoot(this.sessionsRoot, id)).catch(() => {})
-      // The folder goes too, unless it still holds the workspace Conclave made, which stays.
       await rmdir(directory).catch(() => {})
-      if (this.sessionImports) {
-        await this.sessionImports.purgeImported(id).catch((err: unknown) => {
-          console.warn('[conclave-core] purging underlying imported session failed', err)
-        })
-      }
+      this.store.deleteCalls(id)
       this.store.delete(id)
       this.emit({ type: 'deleted', id })
     } finally { this.retiring.delete(id) }
@@ -1878,6 +1996,7 @@ export class ConversationService {
 
   // The message itself, then what it says about the rest.
   private recordChatMessage(chat: ChatStage, message: StageMessage): void {
+    void this.rememberNativeSession(chat.stageId)
     const conversation = this.store.get(chat.conversationId)
     const stage = this.store.stage(chat.stageId)
     if (!conversation || !stage) return
@@ -2073,7 +2192,7 @@ export class ConversationService {
     const doing = turn === 'running' ? this.chats.doing(conversation.id) : null
     const providerId = conversation.modelProvider ?? null
     const route = providerId === null ? null : conversationRoute(providerId, this.routeFor(conversation, conversation.agent), this.providers?.get(providerId)?.name ?? this.store.latestStage(conversation.id, conversation.agent)?.route?.name ?? null)
-    return { ...conversation, ...(this.delegationStatus ? { delegation: this.delegationStatus(conversation.id) } : {}), starting: this.launching.has(conversation.id), chat: turn ? { turn, ...(suggestion ? { suggestion } : {}), ...(request ? { request } : {}), ...(doing ? { doing } : {}) } : null, chatOptions, route }
+    return { ...conversation, ...(this.deletion.pending(conversation.id) ? { deletion: this.deletion.pending(conversation.id) } : {}), ...(this.delegationStatus ? { delegation: this.delegationStatus(conversation.id) } : {}), starting: this.launching.has(conversation.id), chat: turn ? { turn, ...(suggestion ? { suggestion } : {}), ...(request ? { request } : {}), ...(doing ? { doing } : {}) } : null, chatOptions, route }
   }
 
   private changed(value: Conversation): Conversation {

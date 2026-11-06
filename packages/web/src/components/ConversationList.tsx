@@ -98,7 +98,7 @@ export function metaProjects(paths: readonly string[], underProject: boolean): s
 // the row leaves out.
 function ConversationMeta({ conversation, heading = 'none' }: { conversation: Conversation; heading?: GroupBy }) {
   const agent = agentLabel(conversation.agent)
-  const activity = conversationActivity(conversation, conversation.agent)
+  const activity = conversation.deletion ? null : conversationActivity(conversation, conversation.agent)
   const state = activity?.detail ?? conversationState(conversation).label
   const projects = metaProjects(conversation.projectPaths, heading === 'project')
   return (

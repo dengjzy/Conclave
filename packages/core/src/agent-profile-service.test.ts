@@ -360,6 +360,23 @@ describe('reusable agent roles and delegated work', () => {
     expect(chats.get(first.conversationId).sessionId).toBeNull()
     expect(profiles.calls(parentId).every((call) => call.delivered)).toBe(true)
   })
+  it('deletes completed and running delegate histories with their parent without reentering the dispatch lock', async () => {
+    const first = await profiles.dispatch(parentId, reviewer.id, 'Finished review')
+    const second = await profiles.dispatch(parentId, reviewer.id, 'Still working')
+    await waitFor(() => store.call(first.id).state === 'running' && store.call(second.id).state === 'running')
+    complete(chats.get(first.conversationId).sessionId!, 'Review complete')
+    await waitFor(() => store.call(first.id).delivered)
+    const project = chats.get(parentId).workspacePath
+    await chats.delete(parentId)
+    expect(conversations.get(parentId)).toBeNull()
+    expect(conversations.get(first.conversationId)).toBeNull()
+    expect(conversations.get(second.conversationId)).toBeNull()
+    expect(store.calls()).toEqual([])
+    expect(project).toBeTruthy()
+    await profiles.reconcile()
+    expect(store.calls()).toEqual([])
+  })
+
   it('sends failures back to the parent instead of treating them as success', async () => {
     const call = await profiles.dispatch(parentId, reviewer.id, 'Review')
     await waitFor(() => store.call(call.id).state === 'running')

@@ -49,6 +49,7 @@ import { migrateLegacyJira } from './source-migration'
 import { SourceService } from './source-service'
 import { ConversationStore } from './conversation-store'
 import { ConversationService } from './conversation-service'
+import { NativeSessionRunner } from './native-session-runner'
 import { TerminalCommandStore } from './terminal-commands'
 import { BookmarkStore } from './bookmarks'
 import { ChatCommandStore } from './chat-commands'
@@ -363,6 +364,11 @@ conversations.setDelegationStatus((id) => profiles.summary(id))
 conversations.setDelegationAvailable((id) => profiles.available(id).length > 0)
 
 const terminals = new TerminalService(paths.database, daemon, (list) => server?.broadcast('terminals.changed', { terminals: list }), Date.now, new ShellPrompt(path.join(paths.home, 'shell')))
+conversations.setNativeDeletion({
+  adapter: (agent) => adapterOf(agent).nativeSessions,
+  executor: new NativeSessionRunner(daemon, undefined, undefined, (agent, session) => conversations.cleanupNative(agent, session), (agent, session, processSessionId) => conversations.registerNative(agent, session, processSessionId)),
+  home: (agent, account) => account ? accounts.home(agent, account) : undefined
+}, (id) => terminals.stopForConversation(id))
 // Looked for where the daemon looks: it was started with the same PATH as core.
 const environment = new EnvironmentService({
   pathEnv: process.env.PATH ?? '',
@@ -484,6 +490,7 @@ daemon.onConnect(() => {
     .then(async ({ sessions }) => {
       await cliMaintenance.reconcile(sessions)
       await conversations.reconcile(sessions, listedAt)
+      await conversations.recoverDeletions()
       await smallModels.recoverHelpers({ stages: () => conversations.chatStageRefs(), items: (id, stageId) => conversations.stageChatItems(id, stageId) })
       terminals.reconcile(sessions)
       await discussions.reconcile()

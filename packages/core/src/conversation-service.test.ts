@@ -867,6 +867,46 @@ describe('ConversationService', () => {
     expect(daemon.written(sessionId).at(-1)).toMatchObject({ method: 'turn/start', params: { input: [{ type: 'text', text: '先不要' }] } })
   })
 
+  it('preserves a failed handshake native identity and protocol log until deletion', async () => {
+    const removed: string[] = []
+    service.setNativeDeletion({
+      adapter: () => ({ resolve: async (target) => ({ id: target.providerSessionId, root: '/test-history', locator: target.providerSessionId, cwd: target.cwd }),
+        children: async () => [], remove: async (session) => { removed.push(session.id) } }),
+      executor: { command: async () => '', acp: async () => ({}) }, home: () => undefined
+    }, async () => {})
+    daemon.answerInit = false
+    const created = await service.create('claude', [], false, { deferStart: true })
+    const starting = service.continue(created.id)
+    const rejection = expect(starting).rejects.toMatchObject({ reason: 'chat-start-failed' })
+    while (!daemon.sessions.get('pipe-1')) await settle()
+    daemon.exit('pipe-1', 1)
+    await rejection
+    const [failed] = service.stages(created.id)
+    expect(failed?.providerSessionId).toBeTruthy()
+    expect(store.nativeTargets([created.id]).length + store.nativeSessions([created.id]).length).toBeGreaterThan(0)
+    expect(existsSync(path.join(root, 'sessions', created.id, 'stages', `${failed!.id}.jsonl`))).toBe(true)
+    await service.delete(created.id)
+    expect(removed).toEqual([failed!.providerSessionId])
+  })
+
+  it('keeps archived helper native ownership on the parent for later deletion', async () => {
+    const removed: string[] = []
+    service.setNativeDeletion({
+      adapter: () => ({ resolve: async (target) => ({ id: target.providerSessionId, root: '/test-history', locator: target.providerSessionId, cwd: target.cwd }),
+        children: async () => [], remove: async (session) => { removed.push(session.id) } }),
+      executor: { command: async () => '', acp: async () => ({}) }, home: () => undefined
+    }, async () => {})
+    const parent = await service.create('claude', [], false, { deferStart: true })
+    const helper = await service.create('claude', [], false, { helperOf: parent.id, deferStart: true })
+    store.startStage(helper.id, 'claude', 'archived-helper-native', 0)
+    await service.setArchived(parent.id, true)
+    expect(store.helper(parent.id)).toBeNull()
+    expect(removed).toEqual([])
+    await service.setArchived(parent.id, false)
+    await service.delete(parent.id)
+    expect(removed).toEqual(['archived-helper-native'])
+  })
+
   it('drops a chat stage that fails to start, leaving nothing to resume', async () => {
     daemon.answerInit = false
     daemon.reply = () => {}
@@ -946,7 +986,7 @@ describe('ConversationService', () => {
 
   it('marks what its agent starts as the conversation\'s, to find a server the agent outlives', async () => {
     const created = await service.create('claude', [])
-    expect(daemon.spawns.at(-1)?.env).toEqual({ CONCLAVE_OWNER: `conversation:${created.id}` })
+    expect(daemon.spawns.at(-1)?.env).toMatchObject({ CONCLAVE_OWNER: `conversation:${created.id}`, CONCLAVE_NATIVE_SESSION_LOG: path.join(root, 'sessions', created.id, 'owned-sessions.jsonl') })
   })
 
   it('offers a new chat the models the agent listed last, after a restart too, and starts with one picked', async () => {

@@ -5,6 +5,7 @@ import type { ResetCreditUse, UsageSource } from '../usage-source'
 import type { QuickAnswer } from '../model-metering'
 import type { ProviderLaunch } from '../provider-launch'
 import type { TranscriptSource } from '../agent-transcripts'
+import type { NativeSessions, NativeSessionExecutor } from '../native-session'
 
 // What a chat stage's agent starts with, which its adapter turns into its own command line. The
 // stream carries every message, the handoff prompt included: none goes in argv.
@@ -110,10 +111,11 @@ export interface AgentAdapter {
   providerModels?(provider: Pick<ProviderLaunch, 'providerId' | 'models' | 'defaultModel'>): ChatModel[]
   // The sessions it kept of its runs outside Conclave, which an imported conversation resumes.
   readonly transcripts?: TranscriptSource
+  readonly nativeSessions?: NativeSessions
   readonly usageTranscripts?: { format: 'claude' | 'codex'; home(home?: string): string }
   readonly warmup?: { probe: QuickCommand; args(printed: string): string[] }
   // Its models without a chat to read them from; without it, a probe of its chat protocol.
-  catalog?(cwd: string): Promise<ChatCatalog | null>
+  catalog?(cwd: string, executor?: NativeSessionExecutor): Promise<ChatCatalog | null>
   // How the environment check finds it; without it, its kind on PATH, asked for --version.
   detect?(pathEnv: string, platform: NodeJS.Platform): Promise<AgentDetection>
   signedIn?(home?: string): Promise<boolean>

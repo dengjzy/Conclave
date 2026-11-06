@@ -12263,4 +12263,8 @@ export const MESSAGES = {
   "FilesPanel.goToFile": {"zh": "转到文件", "en": "Go to file"},
   "FilesPanel.searchFilesIn": {"zh": "在 {value1} 中按名称查找文件", "en": "Search files in {value1} by name"},
   "FilesPanel.matchingFiles": {"zh": "匹配的文件", "en": "Matching files"},
+  "ConversationDeletion.cleaning": {"zh": "正在清理会话", "en": "Deleting conversation history"},
+  "ConversationDeletion.failed": {"zh": "会话清理未完成", "en": "Conversation cleanup incomplete"},
+  "ConversationDeletion.retry": {"zh": "重试清理", "en": "Retry cleanup"},
+  "ConversationDeletion.confirm": {"zh": "删除这条会话、全部委派及对应的外部智能体会话记录？项目文件和工作目录会保留。", "en": "Delete this conversation, its delegated conversations, and their external agent history? Project files and working directories will be kept."},
 } as const

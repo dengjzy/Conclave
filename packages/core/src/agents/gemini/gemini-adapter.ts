@@ -1,3 +1,4 @@
+import { geminiSessions } from './gemini-sessions'
 import type { AgentAdapter } from '../agent-adapter'
 import { AcpDriver } from '../acp/acp-driver'
 import { clearMcpReadyFile, mcpReadyFile, mcpReadyWithin, mcpServerReporting } from '../mcp-ready-file'
@@ -9,7 +10,8 @@ import { readGeminiUsage } from './gemini-usage'
 const readyFile = (stage: Parameters<typeof mcpReadyFile>[0]) => mcpReadyFile(stage, 'gemini')
 
 export const gemini: AgentAdapter = {
-  kind: 'gemini', maintenance: { packageName: '@google/gemini-cli' },
+  kind: 'gemini',
+  nativeSessions: geminiSessions(), maintenance: { packageName: '@google/gemini-cli' },
   createDriver: (stageId, options) => new AcpDriver(geminiDialect, stageId, options),
   command: (launch) => ({ command: 'gemini', args: ['--acp', '--skip-trust', ...[...new Set([...launch.extraProjects, ...(launch.references ?? []), ...(launch.knowledgeBase ? [launch.knowledgeBase.path] : [])])].flatMap((dir) => ['--include-directories', dir])] }),
   permissionModes: Object.keys(geminiDialect.modes), fallbackMode: 'ask',

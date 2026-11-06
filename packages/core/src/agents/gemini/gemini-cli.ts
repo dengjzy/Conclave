@@ -8,19 +8,18 @@ import { z } from 'zod'
 import type { AgentCliInstallation, ChatCatalog } from '@conclave/protocol'
 import { launchFile } from '@conclave/protocol/node'
 import { findOnPath } from '../../environment-check'
-import { probeChatCatalog } from '../../chat-catalog'
+import type { NativeSessionExecutor } from '../../native-session'
+import { geminiSessions } from './gemini-sessions'
 import { Rejection } from '../../rejection'
 import { parseJson } from '../../usage-source'
 import type { AgentDetection } from '../agent-adapter'
 import { AcpDriver } from '../acp/acp-driver'
 import { geminiDialect } from './gemini-dialect'
+import { geminiHome } from './gemini-home'
+export { geminiHome } from './gemini-home'
 
 const execute = promisify(execFile)
 const Settings = z.looseObject({ security: z.looseObject({ auth: z.looseObject({ selectedType: z.string().optional() }).optional() }).optional() })
-
-export function geminiHome(env = process.env, home = os.homedir()): string {
-  return path.join(env.GEMINI_CLI_HOME || home, '.gemini')
-}
 
 export async function geminiAuthType(env = process.env, home = os.homedir()): Promise<string | null> {
   const settings = Settings.safeParse(parseJson(await readFile(path.join(geminiHome(env, home), 'settings.json'), 'utf8').catch(() => null))).data
@@ -60,9 +59,22 @@ export async function requireGemini(): Promise<string> {
   return command
 }
 
-export async function geminiCatalog(cwd: string): Promise<ChatCatalog | null> {
-  if (!await geminiSignedIn()) return null
-  return probeChatCatalog(new AcpDriver(geminiDialect, 'catalog', { cwd, extraDirs: [], resume: null }), { command: await requireGemini(), args: ['--acp', '--skip-trust'] }, cwd)
+export async function geminiCatalog(cwd: string, executor?: NativeSessionExecutor): Promise<ChatCatalog | null> {
+  if (!executor?.catalog || !executor.cleanup || !executor.register || !await geminiSignedIn()) return null
+  const command = await requireGemini()
+  const driver = new AcpDriver(geminiDialect, 'catalog', { cwd, extraDirs: [], resume: null })
+  try {
+    return await executor.catalog(driver, { command, args: ['--acp', '--skip-trust'] }, cwd, async (id, daemonSessionId) => {
+      const session = await geminiSessions().resolve({ providerSessionId: id, cwd })
+      if (session) await executor.register?.('gemini', session, daemonSessionId)
+    })
+  } finally {
+    const id = driver.providerSessionId()
+    if (id) {
+      const session = await geminiSessions().resolve({ providerSessionId: id, cwd })
+      if (session) await executor.cleanup('gemini', session)
+    }
+  }
 }
 
 export function geminiInstallation(platform: NodeJS.Platform): AgentCliInstallation {

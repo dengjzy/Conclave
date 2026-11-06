@@ -6,6 +6,7 @@ import { dshCommand, dshProviderModels } from './dsh-command'
 import { detectDsh, dshCatalog, dshInstallation, prepareDsh } from './dsh-cli'
 import { readDshUsage } from './dsh-usage'
 import { dshTranscripts } from './dsh-transcripts'
+import { dshNativeSessions } from './dsh-native-sessions'
 
 export const dsh: AgentAdapter = {
   kind: 'dsh',
@@ -18,6 +19,7 @@ export const dsh: AgentAdapter = {
   fallbackMode: 'ask',
   session: { preassignedId: false, folderBound: true, nativeFork: 'none' },
   transcripts: dshTranscripts(),
+  nativeSessions: dshNativeSessions(),
   startTimeoutMs: 60_000,
   mcpApproval: 'conclave',
   catalog: dshCatalog,

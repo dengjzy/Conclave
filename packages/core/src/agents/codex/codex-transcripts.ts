@@ -1,5 +1,5 @@
 import { readdirSync } from 'node:fs'
-import { rename, rm, writeFile } from 'node:fs/promises'
+import { readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { DatabaseSync } from 'node:sqlite'
 import path from 'node:path'
 import { CODEX_IMAGE_GENERATION, CODEX_IMAGE_VIEW, CONTEXT_COMPACTED } from '@conclave/protocol'
@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { clip, type ChatItemBody } from '../../chat-items'
 import { findFiles, parseLine, readHead, readLines, SummaryCache, timeOf, titleOf, type Transcript, type TranscriptEntry, type TranscriptMessage, type TranscriptSource, type TranscriptSummary } from '../../agent-transcripts'
 import { codexDefaultHome } from './codex-account'
+import { missingSessionFile } from '../../native-session-files'
 import { CODEX_CLIENT_NAME, commandDescription, diffOf, unwrapShell } from './codex-app-server'
 
 // Codex keeps each thread in sessions/YYYY/MM/DD/rollout-<time>-<thread id>.jsonl, older ones
@@ -291,58 +292,59 @@ async function threadNames(home: string): Promise<Map<string, string>> {
   return names
 }
 
-async function pruneCodexSessionIndex(home: string, sessionId: string): Promise<void> {
-  const indexPath = path.join(home, 'session_index.jsonl')
+export async function pruneCodexSessionIndex(home: string, sessionId: string): Promise<void> {
+  let indexPath: string
+  let text: string
   try {
-    const kept: string[] = []
-    let changed = false
-    const Entry = z.looseObject({ id: z.string() })
-    await readLines(indexPath, (text) => {
-      const entry = Entry.safeParse(parseLine(text))
-      if (entry.success && entry.data.id === sessionId) {
-        changed = true
-      } else if (text.trim()) {
-        kept.push(text)
-      }
-      return true
-    })
-    if (changed) {
-      const tmpPath = `${indexPath}.${Date.now()}.tmp`
-      await writeFile(tmpPath, kept.length ? kept.join('\n') + '\n' : '', 'utf8')
-      await rename(tmpPath, indexPath)
-    }
-  } catch {
-    // If index doesn't exist or is not readable, skip
+    indexPath = await realpath(path.join(home, 'session_index.jsonl'))
+    text = await readFile(indexPath, 'utf8')
+  } catch (error) {
+    if (missingSessionFile(error)) return
+    throw error
   }
+  const Entry = z.looseObject({ id: z.string() })
+  const lines = text.split(/\r?\n/).filter(Boolean)
+  const kept = lines.filter((line) => Entry.safeParse(parseLine(line)).data?.id !== sessionId)
+  if (kept.length === lines.length) return
+  const temporary = `${indexPath}.${process.pid}.${Date.now()}.tmp`
+  try {
+    await writeFile(temporary, kept.length ? `${kept.join('\n')}\n` : '', 'utf8')
+    await rename(temporary, indexPath)
+  } finally { await rm(temporary, { force: true }) }
 }
 
-function pruneCodexDatabases(home: string, sessionId: string): void {
-  try {
-    const entries = readdirSync(home, { withFileTypes: true })
-    for (const entry of entries) {
-      if (!entry.isFile()) continue
-      const name = entry.name
-      if (/^state_\d+\.sqlite$/.test(name)) {
-        try {
-          const db = new DatabaseSync(path.join(home, name))
-          db.prepare('DELETE FROM threads WHERE id = ?').run(sessionId)
-          db.prepare('DELETE FROM thread_dynamic_tools WHERE thread_id = ?').run(sessionId)
-          db.prepare('DELETE FROM thread_spawn_edges WHERE thread_id = ?').run(sessionId)
-          db.prepare('DELETE FROM thread_attachments WHERE thread_id = ?').run(sessionId)
-          db.prepare('DELETE FROM thread_read_receipts WHERE thread_id = ?').run(sessionId)
-          db.close()
-        } catch {}
-      } else if (/^thread_history_\d+\.sqlite$/.test(name)) {
-        try {
-          const db = new DatabaseSync(path.join(home, name))
-          db.prepare('DELETE FROM thread_turns WHERE thread_id = ?').run(sessionId)
-          db.prepare('DELETE FROM thread_items WHERE thread_id = ?').run(sessionId)
-          db.close()
-        } catch {}
+export function pruneCodexDatabases(home: string, sessionId: string): void {
+  let entries
+  try { entries = readdirSync(home, { withFileTypes: true }) } catch (error) {
+    if (missingSessionFile(error)) return
+    throw error
+  }
+  for (const entry of entries) {
+    if ((!entry.isFile() && !entry.isSymbolicLink()) || !/^(state|thread_history)_\d+\.sqlite$/.test(entry.name)) continue
+    const db = new DatabaseSync(path.join(home, entry.name))
+    let transaction = false
+    try {
+      const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((row) => String(row.name)))
+      db.exec('BEGIN IMMEDIATE')
+      transaction = true
+      for (const table of ['thread_dynamic_tools', 'thread_attachments', 'thread_read_receipts', 'thread_turns', 'thread_items']) {
+        if (tables.has(table)) db.prepare(`DELETE FROM ${table} WHERE thread_id = ?`).run(sessionId)
       }
-    }
-  } catch {
-    // Skip if sqlite is not available or locked
+      if (tables.has('thread_spawn_edges')) {
+        const columns = new Set(db.prepare('PRAGMA table_info(thread_spawn_edges)').all().map((row) => String(row.name)))
+        if (columns.has('parent_thread_id') && columns.has('child_thread_id')) {
+          db.prepare('DELETE FROM thread_spawn_edges WHERE parent_thread_id = ? OR child_thread_id = ?').run(sessionId, sessionId)
+        } else if (columns.has('thread_id')) {
+          db.prepare('DELETE FROM thread_spawn_edges WHERE thread_id = ?').run(sessionId)
+        } else throw new Error('Codex 子会话关系表格式不兼容')
+      }
+      if (tables.has('threads')) db.prepare('DELETE FROM threads WHERE id = ?').run(sessionId)
+      db.exec('COMMIT')
+      transaction = false
+    } catch (error) {
+      if (transaction) db.exec('ROLLBACK')
+      throw error
+    } finally { db.close() }
   }
 }
 
@@ -392,15 +394,15 @@ export function codexTranscripts(home: () => string = () => codexDefaultHome()):
 
       await rm(file, { force: true })
       if (file.endsWith('.zst')) {
-        await rm(file.slice(0, -'.zst'.length), { force: true }).catch(() => {})
+        await rm(file.slice(0, -'.zst'.length), { force: true })
       } else {
-        await rm(`${file}.zst`, { force: true }).catch(() => {})
+        await rm(`${file}.zst`, { force: true })
       }
 
       if (sessionId) {
         await pruneCodexSessionIndex(root, sessionId)
         pruneCodexDatabases(root, sessionId)
-        await rm(path.join(root, 'archived_sessions', `${sessionId}.jsonl`), { force: true }).catch(() => {})
+        await rm(path.join(root, 'archived_sessions', `${sessionId}.jsonl`), { force: true })
       }
     }
   }

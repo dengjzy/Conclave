@@ -366,7 +366,13 @@ export const MIGRATIONS = [
   `ALTER TABLE scheduled_runs ADD COLUMN released_at INTEGER;
    ALTER TABLE scheduled_runs ADD COLUMN held_by TEXT;`,
   // Keep the concluding chair turn for groups created before the summary became optional.
-  `ALTER TABLE discussions ADD COLUMN summarize INTEGER NOT NULL DEFAULT 1;`
+  `ALTER TABLE discussions ADD COLUMN summarize INTEGER NOT NULL DEFAULT 1;`,
+  `CREATE TABLE conversation_deletions (root_id TEXT PRIMARY KEY, data TEXT NOT NULL);
+   CREATE TABLE conversation_native_sessions (
+     conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+     agent TEXT NOT NULL, provider_session_id TEXT NOT NULL, cwd TEXT NOT NULL, account TEXT, home TEXT, native TEXT,
+     PRIMARY KEY (conversation_id, agent, provider_session_id, cwd)
+   );`
 ]
 
 
