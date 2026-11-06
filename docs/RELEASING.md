@@ -7,14 +7,14 @@
 | 用户说的 | 做什么 | 改文件吗 | 对外可见吗 |
 | --- | --- | --- | --- |
 | 「打个包」「打个 dmg 试试」「打个 beta 包」 | [本地打包](#本地打包)，不升版本 | 不改 | 否 |
-| 「升级版本」「发版」「release」 | [正式发版](#正式发版)第 1–4 步：升版本号、写更新日志、提交 | 改 | 否 |
-| 「推送」「发布到 GitHub」「打标签」 | [正式发版](#正式发版)第 5 步：推送提交和标签，触发自动发布 | 不改 | **是**，先跟用户确认 |
+| 「升级版本」「发版」「release」 | [正式发版](#正式发版)第 1–3 步：升版本号、校验、提交 | 改 | 否 |
+| 「推送」「发布到 GitHub」「打标签」 | [正式发版](#正式发版)第 4 步：推送提交和标签，触发自动发布 | 不改 | **是**，先跟用户确认 |
 
 ## 版本号规则
 
 [语义化版本](https://semver.org/lang/zh-CN/)，1.0 之前：
 
-- `CHANGELOG.md` 的「未发布」里有 `### 破坏性改动` → 升第二位，第三位归零：`0.19.1` → `0.20.0`。
+- 自上个版本以来有破坏性改动（核对实际变更和提交的 `BREAKING CHANGE` footer）→ 升第二位，第三位归零：`0.19.1` → `0.20.0`。
 - 其他情况（新功能、改进、修复）→ 升第三位：`0.19.1` → `0.19.2`。
 - 预发布在后面加后缀：`0.19.2-beta.1`、`0.19.2-beta.2`。带 `-` 的版本在 GitHub 上标为 Pre-release，不会成为 Latest。
 
@@ -65,7 +65,7 @@ hdiutil verify dist/Conclave-<版本>-arm64.dmg                                 
 
 ### 1. 定版本号
 
-按[版本号规则](#版本号规则)，从 `CHANGELOG.md` 的「未发布」和当前版本算出新版本，下文记为 `X.Y.Z`。「未发布」下面没有任何条目时，没有可发布的内容，停下来问用户。
+按[版本号规则](#版本号规则)，检查上个发布标签以来的变更和提交说明，结合当前版本算出新版本，下文记为 `X.Y.Z`。没有新变更时不要重复发版。发布说明由 GitHub 自动生成，无需维护单独的更新日志文件。
 
 ### 2. 改五个 `package.json` 的 `version`
 
@@ -86,33 +86,17 @@ node -e 'const fs=require("fs");for(const d of [".","packages/core","packages/da
 node -e 'for (const d of [".","packages/core","packages/daemon","packages/web","packages/protocol"]) console.log(d, require("./"+d+"/package.json").version)'
 ```
 
-### 3. 改 `CHANGELOG.md`
-
-在 `## 未发布` 下面插入一行版本标题，原来「未发布」里的条目就归到这个版本下；`## 未发布` 本身保留，下面留空。日期用今天（`date +%F`），中间是长破折号 `—`，工作流靠这个格式找发布说明：
-
-```diff
- ## 未发布
-
-+## X.Y.Z — 2026-10-20
-+
- ### 改进
-
- - ……
-```
-
-发版前按 [AGENTS.md 的「Changelog」](../AGENTS.md#changelog) 过一遍条目：超出长度的精简成一两句，意思不变；别的不要改写。
-
-### 4. 校验并提交
+### 3. 校验并提交
 
 ```bash
 pnpm typecheck && pnpm test && pnpm build
-git add package.json packages/core/package.json packages/daemon/package.json packages/web/package.json packages/protocol/package.json CHANGELOG.md
-git commit -m "build: release X.Y.Z" -m "Align the application and workspace package versions at X.Y.Z and record the accumulated changes in the changelog."
+git add package.json packages/core/package.json packages/daemon/package.json packages/web/package.json packages/protocol/package.json
+git commit -m "build: release X.Y.Z" -m "Align the application and workspace package versions at X.Y.Z for the release."
 ```
 
-提交里只能有这六个文件。需要安装包时，再按[本地打包](#本地打包)执行 `pnpm dist:mac`，此时不需要 `extraMetadata`，产物名就是新版本。
+提交里只能有这五个文件。需要安装包时，再按[本地打包](#本地打包)执行 `pnpm dist:mac`，此时不需要 `extraMetadata`，产物名就是新版本。
 
-### 5. 推送并发布（对外，先确认）
+### 4. 推送并发布（对外，先确认）
 
 这一步会在 GitHub 上公开发布，发出去的 Release 不能覆盖。**用户明确说要推送或发布之后才做**：
 
@@ -124,15 +108,14 @@ git push origin vX.Y.Z
 
 标签一推送，[Release 工作流](../.github/workflows/release.yml)自动运行：
 
-1. 校验标签格式，五个 `package.json` 的版本必须等于标签去掉 `v`，`CHANGELOG.md` 里必须有非空的 `## X.Y.Z` 段落；然后跑类型检查和测试。
+1. 校验标签格式，五个 `package.json` 的版本必须等于标签去掉 `v`；然后跑类型检查和测试。
 2. 分别在 macOS 和 Windows 上执行 `dist:mac` 和 `dist:win`。
-3. 创建 GitHub Release，标题 `Conclave vX.Y.Z`，说明取自 CHANGELOG 的这一段，附上 DMG、EXE 和它们的 `SHA256SUMS`（App 在 GitHub 接口限流、改读发布订阅时，靠它校验安装包）。
+3. 创建 GitHub Release，标题 `Conclave vX.Y.Z`，说明由 GitHub 自动生成并附带安装说明，附上 DMG、EXE 和它们的 `SHA256SUMS`（App 在 GitHub 接口限流、改读发布订阅时，靠它校验安装包）。
 
 查看进度：`gh run list --workflow=Release --limit 3`，`gh run watch <id>`。
 
 ## 出错时
 
 - **工作流报 `does not match`**：有 `package.json` 的版本和标签不一致。不要移动已推送的标签：补一个修正提交，打下一个版本号（或下一个 `-beta.N`）重新发。
-- **工作流报 `CHANGELOG.md has no entry`**：标题格式不对。必须是 `## X.Y.Z` 或 `## X.Y.Z — 日期`，版本号前后没有 `v`。
 - **构建中途失败**：留下的草稿 Release 可以重跑：Actions → Release → Run workflow，分支选 `main`，填已推送的标签。已经发布的 Release 拒绝覆盖。
 - **本地 `dist:mac` 失败**：先单独跑 `pnpm build`，看是不是代码本身编译不过。

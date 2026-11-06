@@ -44,20 +44,7 @@ To try the app by hand, run it against the test home instead of the user's real 
 
 Bumping the version, packaging a dmg/exe and publishing follow [docs/RELEASING.md](docs/RELEASING.md) step by step. Packaging alone changes no file; pushing a release tag publishes on GitHub, so do it only when the user asks.
 
-## Changelog
-
-A change a user can notice gets a line in `CHANGELOG.md` under `## 未发布`, in the commit that makes it: `### 新功能`, `### 改进` or `### 修复` (`### 破坏性改动` for what bumps the minor version). That section becomes the GitHub release notes, read by users rather than developers.
-
-- One sentence, two at most: about 60 characters for a fix or an improvement, 100 for a new feature.
-- What the user now sees or can do, and where. Not why, how it is built, or its edge cases: those go in `docs/`.
-- A fix says what no longer goes wrong (「X 不再 Y」), not how it used to.
-- At most one limit worth knowing (「仅 macOS」); the rest is for the docs.
-- Things go by the names the interface shows, never an RPC, field or component.
-
-```
-- 支持 OpenCode 2：可用全部权限模式（含定时和例程），显示真实可用的模型和每轮用量。
-- Codex 在后台跑的开发服务器不再在 30 分钟后被一起停掉。
-```
+GitHub generates release notes; no separate changelog is maintained. Determine breaking changes from the changes themselves and commit `BREAKING CHANGE` footers.
 
 ## Commits
 
