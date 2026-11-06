@@ -1,20 +1,22 @@
 import { getLocale, t, tr } from '../i18n'
 import { useEffect, useMemo, useState } from 'react'
 import { agentDescriptor, ChatPermissionMode, DEFAULT_DISCUSSION_ROUNDS, MIN_DISCUSSION_MEMBERS, type AgentKind, type ChatCatalog, type ExternalSession } from '@conclave/protocol'
-import { closeConversationDraft, perform, selectConversation, selectDiscussion, setSettingsOpen, useChatImagesSupported, useChatOptionsSupported, useConversationWorktreesSupported, useCore, useDiscussionsSupported, useSessionImportSupported, useSourceInvestigateSupported, useStartBranchSupported } from '../core-store'
+import { closeConversationDraft, perform, selectConversation, selectDiscussion, setSettingsOpen, useChatImagesSupported, useChatOptionsSupported, useConversationWorktreesSupported, useCore, useDiscussionsSupported, useScheduleImagesSupported, useSchedulesSupported, useSessionImportSupported, useSourceInvestigateSupported, useStartBranchSupported } from '../core-store'
 import { resumeSession, useExternalSessionsWhen } from '../external-sessions'
 import { OtherProjectsHint } from './OtherProjectsHint'
 import { ConversationTip } from './ConversationTip'
 import { defaultAgent } from '../default-agent'
 import { useInstalledAgents } from '../installed-agents'
 import { agentLabel } from '../labels'
-import { conclaveEntries } from '../chat-commands'
+import { conclaveEntries, type CommandEntry } from '../chat-commands'
 import { AgentQuotaHint, confirmQuota, modelText, RecommendedMark, useRecommendation } from './AgentQuota'
 import { usePreferences } from '../preferences'
 import { useChatTypeface } from '../chat-typeface'
 import { openWithFirstMessage, startOptions } from './ConversationActions'
 import { sendsMessage } from './ChatComposer'
 import { ChatAddMenu, ChatImageStrip, useComposerImages } from './ChatImages'
+import { ScheduleSendButton } from './ScheduleSendButton'
+import { createSchedule } from '../schedules'
 import { useChatCommandMenu } from './ChatCommandMenu'
 import { useChatMentionMenu } from './ChatMentionMenu'
 import { MentionField, useMentionedText } from './ChatMentionField'
@@ -136,12 +138,46 @@ export function ConversationDraft() {
   useEffect(() => saveComposerDraft(composerId, { ...value, images: attached.images }), [composerId, value, attached.images])
   const width = usePreferences((s) => s.chatWidth)
   const typeface = useChatTypeface()
+  const schedulesSupported = useSchedulesSupported()
+  const scheduleImagesSupported = useScheduleImagesSupported()
+  const canSchedule = !isMulti && agent !== null && schedulesSupported && Boolean(agentDescriptor(agent).capabilities.unattended)
+  const [scheduleOpen, setScheduleOpen] = useState(false)
   // Only the user's own commands: the agent has not started to say what it takes.
   const chatCommands = useCore((s) => s.chatCommands)
-  const commandEntries = useMemo(() => conclaveEntries(chatCommands, projectPaths), [chatCommands, projectPaths, getLocale()])
-  const commandMenu = useChatCommandMenu({ text, entries: commandEntries, agentLabel: agent ? agentLabel(agent) : '', setText, sendCommand: () => {} })
+  const scheduleCommand = useMemo((): CommandEntry | null => canSchedule ? ({
+    source: 'conclave',
+    name: 'schedule',
+    description: t('ChatComposer.scheduleMessage'),
+    argumentHint: null,
+    command: { id: 'builtin:schedule', createdAt: 0, name: 'schedule', prompt: '', description: '', projectPath: null }
+  }) : null, [canSchedule, getLocale()])
+  const commandEntries = useMemo(
+    () => [...(scheduleCommand ? [scheduleCommand] : []), ...conclaveEntries(chatCommands, projectPaths)],
+    [scheduleCommand, chatCommands, projectPaths, getLocale()]
+  )
+  const commandMenu = useChatCommandMenu({
+    text,
+    entries: commandEntries,
+    agentLabel: agent ? agentLabel(agent) : '',
+    setText,
+    sendCommand: (command) => {
+      if (command === '/schedule') {
+        setText('')
+        setScheduleOpen(true)
+        return
+      }
+    }
+  })
   // The agent will work in the first project picked.
-  const mentionMenu = useChatMentionMenu({ value, setText, setValue, roots: projectPaths, cwd: projectPaths[0] ?? null, agent })
+  const mentionMenu = useChatMentionMenu({
+    value,
+    setText,
+    setValue,
+    roots: projectPaths,
+    cwd: projectPaths[0] ?? null,
+    agent,
+    onSchedule: canSchedule ? () => setScheduleOpen(true) : undefined
+  })
   // Written out for the agent picked when it goes, which may not be the one picked before.
   const writtenMessage = agent ? writeMentionedText(value, agent) : { text, references: [] }
   const written = writtenMessage.text
@@ -197,9 +233,32 @@ export function ConversationDraft() {
   const quotaAllows = (kind: AgentKind) => providerOf(kind) !== null || confirmQuota(kind, modelFor(kind))
   const where = { projectPaths, ...(inWorktree ? { worktree: true } : {}), ...(startBranch ? { branch: startBranch } : {}) }
   // The page is how a chat start begins, as settings choose; a terminal start has its dialog.
-  const create = () => {
-    if (!agent || !quotaAllows(agent)) return Promise.resolve(null)
+  const create = (allowSchedule = false) => {
+    if (!agent || (!allowSchedule && !quotaAllows(agent))) return Promise.resolve(null)
     return perform((rpc) => rpc.call('conversations.create', { agent, ...where, ...(deferStart ? { deferStart: true } : {}), ...startOptions(), ...chosen }))
+  }
+  const handleSchedule = async (notBefore: number | null, draftText: string): Promise<boolean> => {
+    if (!agent) return false
+    setBusy(true)
+    try {
+      const created = await create(true)
+      if (!created) return false
+      const message = draftText.trim()
+      const run = await createSchedule({
+        kind: 'conversation',
+        conversationId: created.id,
+        text: message,
+        references: messageReferences(writtenMessage, message),
+        ...(attached.images.length ? { images: attached.images.map((img) => img.id) } : {})
+      }, notBefore)
+      if (!run) return false
+      saveComposerDraft(composerId, EMPTY_DRAFT)
+      useCore.setState((state) => ({ conversations: { ...state.conversations, [created.id]: created }, conversationDraftIssue: null }))
+      selectConversation(created.id)
+      return true
+    } finally {
+      setBusy(false)
+    }
   }
   // Core fetches the issue and starts the agent on it before answering, so the page waits.
   const investigate = async () => {
@@ -221,6 +280,11 @@ export function ConversationDraft() {
   }
   // Open before launching; the first message keeps its own delivery and retry state.
   const send = async () => {
+    if (written.trim() === '/schedule') {
+      setText('')
+      setScheduleOpen(true)
+      return
+    }
     const expanded = commandMenu.expand(written)
     if (expanded !== null) {
       setText(expanded)
@@ -496,6 +560,22 @@ export function ConversationDraft() {
                       />
                     )}
                   </>
+                )}
+                {canSchedule && (
+                  <ScheduleSendButton
+                    text={written}
+                    references={writtenMessage.references}
+                    images={attached.images.map((img) => img.id)}
+                    disabledReason={
+                      busy && agent ? (issue ? t('ConversationDraft.readingIssueAndStarting', { value1: agentLabel(agent) }) : inWorktree ? t('ConversationDraft.creatingWorktreeAndStarting', { value1: agentLabel(agent) }) : t('ChatComposer.starting', { value1: agentLabel(agent) }))
+                        : attached.uploading > 0 ? t('ChatComposer.imagesAreStillUploading')
+                        : attached.images.length > 0 && !scheduleImagesSupported ? t('ChatComposer.thisCoreCannotScheduleMessagesWithImagesYet')
+                        : null
+                    }
+                    open={scheduleOpen}
+                    onOpenChange={setScheduleOpen}
+                    onScheduleCustom={handleSchedule}
+                  />
                 )}
                 <button
                   type="button"

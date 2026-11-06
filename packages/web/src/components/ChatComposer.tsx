@@ -3,7 +3,7 @@ import { HelperStartOptions } from './HelperModelPicker'
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { chatReferencesIn, chatReferencesFor, type ChatReference, agentDescriptor, canReuseConversation, type ChatImage, type ChatItem, type ChatQueued, type Conversation } from '@conclave/protocol'
 import { perform, useChatImagesSupported, useChatOptionsSupported, useCore, useFileMentionsSupported, useScheduleImagesSupported, useSchedulesSupported } from '../core-store'
-import { agentEntries, conclaveEntries } from '../chat-commands'
+import { agentEntries, conclaveEntries, type CommandEntry } from '../chat-commands'
 import { composeMessage, parseQuotes, setQuotes, useQuotes, type ChatQuote } from '../chat-quotes'
 import { takeDraft } from '../chat-drafts'
 import { messageReferences, shiftMentions, readMentionedText, writeMentionedText } from '../chat-mentions'
@@ -21,8 +21,7 @@ import { ChatOptionsBar } from './ChatOptionsBar'
 import { RouteBadge } from './RouteBadge'
 import { HandoffAgentPicker, HandoffModePicker, HandoffModelPicker, useComposerHandoff } from './ChatHandoff'
 import { ChevronDownIcon, ClockIcon, CloseIcon, EnterIcon, PencilIcon, StopIcon } from './icons'
-import { SchedulePicker } from './SchedulePicker'
-import { createSchedule } from '../schedules'
+import { ScheduleSendButton } from './ScheduleSendButton'
 import { ChatMessageRelay } from './chat-message-relay'
 import { composerDraft, EMPTY_DRAFT, saveComposerDraft, subscribeDraftAppend } from '../composer-drafts'
 import { useOccludesBrowser } from '../browser-occlusion'
@@ -67,75 +66,6 @@ function queuedText(text: string): string {
   return `${quoted}${body}` || t('ChatComposer.imagesOnly')
 }
 
-// Sends what the input holds later, unattended: once its time comes and the agent has quota again.
-// An empty input schedules carrying out the plan the chat has; with no plan, it schedules nothing.
-function ScheduleSendButton({ conversationId, text, references, quotes, images, disabledReason, onScheduled }: {
-  conversationId: string
-  // What the input holds, which the picker starts from and lets the user change there.
-  text: string
-  references: ChatReference[]
-  quotes: readonly ChatQuote[]
-  // The pictures in the input, by their names in core's attachment store, which keeps them.
-  images: readonly string[]
-  disabledReason: string | null
-  onScheduled: () => void
-}) {
-  const [open, setOpen] = useState(false)
-  const [draft, setDraft] = useState('')
-  const planned = usePlans(conversationId).length > 0
-  const close = useCallback(() => setOpen(false), [])
-  const toggle = () => {
-    if (!open) setDraft(text)
-    setOpen(!open)
-  }
-  const extras = [images.length ? t('ChatComposer.images', { value1: images.length }) : null, quotes.length ? t('ChatComposer.quotes_242', { value1: quotes.length }) : null].filter(Boolean)
-  return (
-    <span className="menu-anchor chat-schedule-anchor">
-      <button
-        type="button"
-        className="tool-button chat-schedule-button"
-        aria-label={t('ChatComposer.scheduleMessage')}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        disabled={disabledReason !== null}
-        data-tooltip={disabledReason ?? t('ChatComposer.scheduleSendWhenQuotaResetsOrAtA')}
-        data-tooltip-side="top-end"
-        onClick={toggle}
-      >
-        <ClockIcon />
-      </button>
-      {open && (
-        <SchedulePicker
-          title={t('ChatComposer.scheduleMessage')}
-          align="end"
-          empty={!planned && draft.trim() === '' && quotes.length === 0 && images.length === 0}
-          onSchedule={async (notBefore) => {
-            const message = composeMessage(quotes, draft)
-            const run = await createSchedule({ kind: 'conversation', conversationId, text: message.trim(), references: chatReferencesFor(draft, message.trim(), shiftMentions(references, text, draft, null)), ...(images.length ? { images: [...images] } : {}) }, notBefore)
-            if (run) onScheduled()
-            return run !== null
-          }}
-          onClose={close}
-        >
-          {/* The message itself, written or changed here; empty, the agent carries out the chat's plan. */}
-          <textarea
-            className="input schedule-message"
-            rows={3}
-            value={draft}
-            aria-label={t('ChatComposer.instructionsToSendToAgentWhenDue')}
-            placeholder={planned ? t('ChatComposer.instructionsWhenDueLeaveEmptyToImplementThe') : t('ChatComposer.messageToSendWhenDue')}
-            onChange={(event) => setDraft(event.target.value)}
-          />
-          {extras.length > 0 && (
-            <div className="schedule-extras">
-              {extras.map((extra) => <span key={extra} className="schedule-extra">{tr('ChatComposer.attach', { extra: extra })}</span>)}
-            </div>
-          )}
-        </SchedulePicker>
-      )}
-    </span>
-  )
-}
 
 // The messages waiting above the input, in the order they will go: one per turn as each ends. A
 // failed turn holds them; the first is released from the header, any of them from its row. Each
@@ -318,25 +248,59 @@ export function ChatComposer({ conversation, state, compact = false }: { convers
   // Not held by this conversation's turn: the new one runs beside it.
   const reusable = useReuseConversationSupported() && canReuseConversation(conversation) && !compact
   const canSendNew = reusable && !handingOff && !busy && !starting && attached.uploading === 0 && (text.trim() !== '' || attached.images.length > 0 || quotes.length > 0)
+  const canSchedule = !handingOff && schedulesSupported && agentDescriptor(conversation.agent).capabilities.unattended && !conversation.routineId && !conversation.helperOf
+  const [scheduleOpen, setScheduleOpen] = useState(false)
+  const scheduleCommand = useMemo((): CommandEntry | null => canSchedule ? ({
+    source: 'conclave',
+    name: 'schedule',
+    description: t('ChatComposer.scheduleMessage'),
+    argumentHint: null,
+    command: { id: 'builtin:schedule', createdAt: 0, name: 'schedule', prompt: '', description: '', projectPath: null }
+  }) : null, [canSchedule, getLocale()])
   const chatCommands = useCore((s) => s.chatCommands)
   const commandEntries = useMemo(
-    () => [...conclaveEntries(chatCommands, conversation.projectPaths), ...agentEntries(state?.commands ?? [])],
-    [chatCommands, conversation.projectPaths, state?.commands, getLocale()]
+    () => [
+      ...(scheduleCommand ? [scheduleCommand] : []),
+      ...conclaveEntries(chatCommands, conversation.projectPaths),
+      ...agentEntries(state?.commands ?? [])
+    ],
+    [scheduleCommand, chatCommands, conversation.projectPaths, state?.commands, getLocale()]
   )
   const commandMenu = useChatCommandMenu({
     text,
     entries: commandEntries,
     agentLabel: agentLabel(conversation.agent),
     setText,
-    sendCommand: (command) => void send(false, command)
+    sendCommand: (command) => {
+      if (command === '/schedule') {
+        setText('')
+        setScheduleOpen(true)
+        return
+      }
+      void send(false, command)
+    }
   })
-  const mentionMenu = useChatMentionMenu({ conversationId: conversation.id, value, setText, setValue, roots: conversation.projectPaths, cwd: conversation.workspacePath, agent: conversation.agent })
+  const mentionMenu = useChatMentionMenu({
+    conversationId: conversation.id,
+    value,
+    setText,
+    setValue,
+    roots: conversation.projectPaths,
+    cwd: conversation.workspacePath,
+    agent: conversation.agent,
+    onSchedule: canSchedule ? () => setScheduleOpen(true) : undefined
+  })
   // The input as the agent reads it, each mention written out.
   const writtenMessage = writeMentionedText(value, handingOff ?? conversation.agent)
   const written = writtenMessage.text
   // steer: into the running turn now; otherwise a message while the agent works waits its turn.
   // The user's own command expands into the input to be read over, rather than going.
   const send = async (steer = false, message = written) => {
+    if (message.trim() === '/schedule') {
+      setText('')
+      setScheduleOpen(true)
+      return
+    }
     const expanded = commandMenu.expand(message)
     if (expanded !== null) {
       setText(expanded)
@@ -509,7 +473,7 @@ export function ChatComposer({ conversation, state, compact = false }: { convers
         )}
         {/* A routine's chat is out of the list and its follow-ups light nothing: a run scheduled
             here would finish unseen. Running again belongs to the routine's own schedule. */}
-        {!handingOff && schedulesSupported && agentDescriptor(conversation.agent).capabilities.unattended && !conversation.routineId && !conversation.helperOf && (
+        {canSchedule && (
           <ScheduleSendButton
             conversationId={id}
             text={written}
@@ -521,6 +485,8 @@ export function ChatComposer({ conversation, state, compact = false }: { convers
                 : attached.images.length > 0 && !scheduleImagesSupported ? t('ChatComposer.thisCoreCannotScheduleMessagesWithImagesYet')
                   : surface.sendBlocker ?? null
             }
+            open={scheduleOpen}
+            onOpenChange={setScheduleOpen}
             onScheduled={() => {
               setText('')
               setQuotes(id, [])

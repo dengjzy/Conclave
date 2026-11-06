@@ -6,7 +6,7 @@ import { useCore, useFileMentionsSupported } from '../core-store'
 import { fileTarget, insertMention, matchConversations, matchProjects, mentionQuery, placeMention, type MentionedText, type MentionTarget } from '../chat-mentions'
 import type { SetText } from './ChatMentionField'
 import { projectName } from './ProjectPicker'
-import { AgentIcon, ChatIcon, FolderIcon } from './icons'
+import { AgentIcon, ChatIcon, ClockIcon, FolderIcon } from './icons'
 import { FileTypeIcon } from './FileTypeIcon'
 import { isDarkTheme, onThemeChange } from '../appearance'
 import { agentLabel } from '../labels'
@@ -72,7 +72,7 @@ function MentionOption({ entry, id, active, onHover, onPick }: {
 // one picked in as a mention, its icon and short name, written out for the agent as the message goes
 // (see writeMentions); Tab on a folder opens it to pick inside, and elsewhere picks too; Esc puts
 // the list away until the text changes.
-export function useChatMentionMenu({ value, setText, setValue, roots, cwd, agent, conversationId }: {
+export function useChatMentionMenu({ value, setText, setValue, roots, cwd, agent, conversationId, onSchedule }: {
   conversationId?: string
   value: MentionedText
   setText: SetText
@@ -81,6 +81,7 @@ export function useChatMentionMenu({ value, setText, setValue, roots, cwd, agent
   roots: readonly string[]
   cwd: string | null
   agent: AgentKind | null
+  onSchedule?: () => void
 }): {
   menu: ReactNode
   inputProps: InputProps
@@ -177,10 +178,29 @@ export function useChatMentionMenu({ value, setText, setValue, roots, cwd, agent
     { id: 'projects', label: t('ChatMentionMenu.projects'), loading: projects === null },
     ...(references ? [{ id: 'conversations' as const, label: t('ChatMentionMenu.conversations'), loading: false }] : [])
   ]
+  const isAlarmQuery = (q: string | null) => {
+    if (!q) return false
+    const lower = q.toLowerCase()
+    return ['闹钟', '时钟', '预约', 'alarm', 'clock', 'schedule'].some((keyword) => keyword.includes(lower) || lower.includes(keyword))
+  }
+  const alarmMatch = Boolean(onSchedule && isAlarmQuery(query))
   const selectedGroup = tabs.some((tab) => tab.id === group) && group !== null ? group : delegates && callable.length ? 'profiles' : rootsKey ? 'files' : 'projects'
-  const shown = entries[selectedGroup]
+  const shown = useMemo(() => {
+    const list = entries[selectedGroup]
+    if (!alarmMatch) return list
+    const alarmEntry: MentionEntry = {
+      key: 'action:schedule',
+      group: selectedGroup,
+      target: null,
+      name: t('ChatComposer.scheduleMessage'),
+      detail: t('ChatComposer.scheduleSendWhenQuotaResetsOrAtA'),
+      opens: null,
+      icon: <ClockIcon />
+    }
+    return [alarmEntry, ...list]
+  }, [alarmMatch, entries, selectedGroup, getLocale()])
   const loading = tabs.find((tab) => tab.id === selectedGroup)?.loading ?? false
-  const open = range !== null && text !== closedAt
+  const open = range !== null && text !== closedAt && shown.length > 0
   const active = Math.min(highlight, Math.max(0, shown.length - 1))
   useEffect(() => setHighlight(0), [query])
   useEffect(() => {
@@ -191,6 +211,16 @@ export function useChatMentionMenu({ value, setText, setValue, roots, cwd, agent
 
   const pick = (entry: MentionEntry, tab: boolean) => {
     if (!range) return
+    if (entry.key === 'action:schedule') {
+      const prefix = text.slice(0, range.start)
+      const suffix = text.slice(range.end)
+      const nextText = `${prefix}${suffix}`
+      placed.current = range.start
+      setText(nextText, range.start)
+      setClosedAt(nextText)
+      onSchedule?.()
+      return
+    }
     if (!entry.target) {
       const next = insertMention(text, range, `@${entry.name}`, true)
       placed.current = next.caret
