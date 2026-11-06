@@ -376,6 +376,7 @@ export const rpcMethods = {
       helperOf: z.string().uuid().optional(),
       model: z.string().trim().min(1).max(200).optional(),
       effort: z.string().trim().min(1).max(200).optional(),
+      agentPreset: z.string().trim().min(1).max(100).optional(),
       // The model provider it runs on (Conversation.modelProvider), which must serve the agent; a
       // helper runs on its parent's. Needs model-providers.
       modelProvider: ModelProviderId.optional()

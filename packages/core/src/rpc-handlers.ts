@@ -437,11 +437,11 @@ export function createRpcHandlers(
     'conversations.get': ({ id }) => conversations.get(id),
     'conversations.configuration': ({ id }) => conversations.configuration(id),
     'conversations.helper': ({ id }) => conversations.helper(id),
-    'conversations.create': ({ agent, projectPaths, worktree, branch, allowBypass, permissionMode, model, effort, deferStart, helperOf, modelProvider, profileId }) => {
+    'conversations.create': ({ agent, projectPaths, worktree, branch, allowBypass, permissionMode, model, effort, agentPreset, deferStart, helperOf, modelProvider, profileId }) => {
       const profile = profileId ? profileService().get(profileId) : undefined
       if (profile && (profile.agent !== agent || helperOf)) throw new Rejection('invalid-params', '智能体配置与会话不匹配')
       return conversations.create(agent, projectPaths, allowBypass, { permissionMode: profile?.capability === 'readOnly' ? agentDescriptor(agent).readOnlyMode : permissionMode,
-        model: model ?? profile?.model ?? undefined, effort: effort ?? profile?.effort ?? undefined, worktree, branch, deferStart, helperOf,
+        model: model ?? profile?.model ?? undefined, effort: effort ?? profile?.effort ?? undefined, agentPreset, worktree, branch, deferStart, helperOf,
         modelProvider: profile?.modelProvider ?? modelProvider, profile })
     },
     'conversations.chatCatalog': ({ agent, modelProvider }) => conversations.chatCatalog(agent, modelProvider),

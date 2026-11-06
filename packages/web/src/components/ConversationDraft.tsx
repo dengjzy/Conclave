@@ -102,6 +102,9 @@ export function ConversationDraft() {
     const mode = ChatPermissionMode.safeParse(initial?.permissionMode)
     return initial && mode.success ? { [initial.agent]: mode.data } : {}
   })
+  const [presets, setPresets] = useState<Partial<Record<AgentKind, string>>>(() => {
+    return initial?.agentPreset ? { [initial.agent]: initial.agentPreset } : {}
+  })
   // A model or effort left unpicked is the agent's own default, which the start does not pass.
   const [picks, setPicks] = useState<Partial<Record<AgentKind, { model?: string; effort?: string }>>>(() => initial ? {
     [initial.agent]: { model: initial.model ?? undefined, effort: initial.effort ?? undefined }
@@ -166,6 +169,9 @@ export function ConversationDraft() {
   const reading = agent && issue && offeredModes.includes(agentDescriptor(agent).discussionMode) ? agentDescriptor(agent).discussionMode : null
   const mode = profile?.capability === 'readOnly' && agent ? agentDescriptor(agent).readOnlyMode : agent ? (chosenMode && offeredModes.includes(chosenMode) ? chosenMode : reading ?? defaultStartMode(agent, offeredModes)) : null
   const effort = pick.effort && (!catalog || efforts.includes(pick.effort)) ? pick.effort : null
+  const agentPresets = agent ? agentDescriptor(agent).agentPresets : undefined
+  const chosenPreset = agent ? presets[agent] : undefined
+  const preset = agentPresets ? (chosenPreset && agentPresets.options.some((opt) => opt.id === chosenPreset) ? chosenPreset : agentPresets.defaultPreset) : null
   const settingsLoading = Boolean(initial && agent && optionsSupported && catalog === undefined)
   const canSend = !busy && !settingsLoading && attached.uploading === 0 && (
     isMulti
@@ -183,7 +189,7 @@ export function ConversationDraft() {
   }
 
   const chosen = {
-    ...(optionsSupported ? { permissionMode: mode ?? undefined, ...(pick.model ? { model: pick.model } : {}), ...(effort ? { effort } : {}) } : {}),
+    ...(optionsSupported ? { permissionMode: mode ?? undefined, ...(pick.model ? { model: pick.model } : {}), ...(effort ? { effort } : {}), ...(preset ? { agentPreset: preset } : {}) } : {}),
     ...(provider ? { modelProvider: provider.id } : {}),
     ...(profile ? { profileId: profile.id } : {})
   }
@@ -463,6 +469,16 @@ export function ConversationDraft() {
                         if (picked.success) setModes({ ...modes, [agent]: picked.data })
                       }}
                     />
+                    {agentPresets && (
+                      <ChatPicker
+                        label={t('ChatOptionsBar.agentPreset')}
+                        value={preset}
+                        placeholder={t('ChatOptionsBar.agentPreset')}
+                        options={agentPresets.options.map((option) => ({ value: option.id, label: option.label, description: option.description }))}
+                        disabled={busy}
+                        onChange={(value) => setPresets({ ...presets, [agent]: value })}
+                      />
+                    )}
                     <span className="chat-dock-spacer" />
                     {catalog === undefined && <span className="chat-options-note muted">{t('AgentModelPicker.loadingModels')}</span>}
                     {catalog && (

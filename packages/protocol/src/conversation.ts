@@ -105,7 +105,8 @@ export type Conversation= z.infer<typeof Conversation>
 export const ConversationConfiguration = Conversation.pick({ agent: true, projectPaths: true, modelProvider: true }).extend({
   permissionMode: z.string().nullable(),
   model: z.string().nullable(),
-  effort: z.string().nullable()
+  effort: z.string().nullable(),
+  agentPreset: z.string().nullable().optional()
 })
 export type ConversationConfiguration = z.infer<typeof ConversationConfiguration>
 

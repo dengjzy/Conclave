@@ -542,7 +542,8 @@ export class ConversationService {
       modelProvider: conversation.modelProvider ?? null,
       permissionMode: live ? state.permissionMode : next?.permissionMode ?? state?.permissionMode ?? null,
       model: live ? state.model : next?.model ?? state?.model ?? null,
-      effort: live ? state.effort : next?.effort ?? (next?.model && next.model !== state?.model ? null : state?.effort ?? null)
+      effort: live ? state.effort : next?.effort ?? (next?.model && next.model !== state?.model ? null : state?.effort ?? null),
+      ...(next?.agentPreset ? { agentPreset: next.agentPreset } : {})
     }
   }
 
@@ -553,7 +554,7 @@ export class ConversationService {
     agent: AgentKind,
     projectPaths: readonly string[],
     allowBypass?: boolean,
-    start: { permissionMode?: string; model?: string; effort?: string; worktree?: boolean; branch?: string; deferStart?: boolean; helperOf?: string; modelProvider?: string; profile?: AgentProfile; parentId?: string; callId?: string; readOnly?: boolean; referencePaths?: readonly string[] } = {},
+    start: { permissionMode?: string; model?: string; effort?: string; agentPreset?: string; worktree?: boolean; branch?: string; deferStart?: boolean; helperOf?: string; modelProvider?: string; profile?: AgentProfile; parentId?: string; callId?: string; readOnly?: boolean; referencePaths?: readonly string[] } = {},
     routine: { id: string; title: string } | null = null,
     id: string = randomUUID(),
     discussion: { id: string; title: string } | null = null,
@@ -629,7 +630,7 @@ export class ConversationService {
     if (squad?.referencePaths?.length) this.store.setReferencePaths(id, squad.referencePaths)
     if (allowBypass !== undefined) this.store.setChatOptions(id, { allowBypass: readOnly ? false : allowBypass })
     if (permissionMode) this.store.setChatOptions(id, { permissionMode })
-    if (model || effort) this.store.setChatOptions(id, { [agent]: { model, effort } })
+    if (model || effort || start.agentPreset) this.store.setChatOptions(id, { [agent]: { model, effort, ...(start.agentPreset ? { agentPreset: start.agentPreset } : {}) } })
     // The paths as picked, not resolved: the same strings a task stores for them.
     this.projects.remember(picked)
     // The agent starts once setup ends; a failure shows in its tab, with no first message to tell the agent in.
