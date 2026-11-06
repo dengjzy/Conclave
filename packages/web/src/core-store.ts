@@ -833,11 +833,6 @@ export function useCommitMessageSupported(): boolean {
   return useCore((s) => s.rpc?.features.includes('commit-message') ?? false)
 }
 
-// Whether core translates a reply with the conversation's agent (conversations.translate).
-export function useTranslateSupported(): boolean {
-  return useCore((s) => s.rpc?.features.includes('translate') ?? false)
-}
-
 // Whether core puts conversations and group chats away (conversations.setArchived, discussions.setArchived).
 export function useConversationArchiveSupported(): boolean {
   return useCore((s) => s.rpc?.features.includes('conversation-archive') ?? false)
@@ -1369,11 +1364,8 @@ export function updateTask(id: string, patch: Omit<RpcParams<'tasks.update'>, 'i
 const RETRY_MS = 1000
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
-// One loop for the app's lifetime; survives core restarts (new port and token). The card of
-// waiting requests needs only tasks and chats: it asks for nothing else, and starts nothing (the
-// browser host) that the main window already does.
-export function startCoreConnection(scope: 'app' | 'requests' = 'app'): void {
-  const full = scope === 'app'
+// One loop for the app's lifetime; survives core restarts (new port and token).
+export function startCoreConnection(): void {
   void (async () => {
     for (;;) {
       const endpoint = await resolveCoreEndpoint()
@@ -1507,30 +1499,30 @@ export function startCoreConnection(scope: 'app' | 'requests' = 'app'): void {
         } catch (error) {
           summaryError = error instanceof Error ? error.message : String(error)
         }
-        const usage = full ? await rpc.call('usage.list', { windowKinds: [...USAGE_WINDOW_KINDS] }).catch(() => null) : null
-        const sources = full ? await rpc.call('sources.list', {}) : []
-        const modelProviders = full && rpc.features.includes('model-providers') ? await rpc.call('modelProviders.list', {}) : []
-        const inboxes = full ? await rpc.call('sources.inbox', {}) : []
-        const terminals = full ? await rpc.call('terminals.list', {}).catch(() => []) : []
-        const terminalCommands = full && rpc.features.includes('terminal-commands') ? await rpc.call('terminalCommands.list', {}).catch(() => []) : []
-        // Asked only of a core that has one, and never waited for: it starts the host when it is down.
-        if (full && rpc.features.includes('browser')) void rpc.call('browser.status', {}).then((status) => useCore.setState({ browser: status })).catch(() => {})
-        if (full && rpc.features.includes('bookmarks')) void rpc.call('bookmarks.list', {}).then((bookmarks) => useCore.setState({ bookmarks })).catch(() => {})
-        if (full && rpc.features.includes('keep-awake')) void rpc.call('system.awakeStatus', {}).then((awake) => useCore.setState({ awake })).catch(() => {})
+        const usage = await rpc.call('usage.list', { windowKinds: [...USAGE_WINDOW_KINDS] }).catch(() => null)
+        const sources = await rpc.call('sources.list', {})
+        const modelProviders = rpc.features.includes('model-providers') ? await rpc.call('modelProviders.list', {}) : []
+        const inboxes = await rpc.call('sources.inbox', {})
+        const terminals = await rpc.call('terminals.list', {}).catch(() => [])
+        const terminalCommands = rpc.features.includes('terminal-commands') ? await rpc.call('terminalCommands.list', {}).catch(() => []) : []
+        // Query the optional browser host's status without delaying the rest of the connection.
+        if (rpc.features.includes('browser')) void rpc.call('browser.status', {}).then((status) => useCore.setState({ browser: status })).catch(() => {})
+        if (rpc.features.includes('bookmarks')) void rpc.call('bookmarks.list', {}).then((bookmarks) => useCore.setState({ bookmarks })).catch(() => {})
+        if (rpc.features.includes('keep-awake')) void rpc.call('system.awakeStatus', {}).then((awake) => useCore.setState({ awake })).catch(() => {})
         // What is left to do everywhere, for the overview; todos.changed keeps it current.
-        if (full && rpc.features.includes('todo-overview')) void rpc.call('todos.open', {}).then((open) => open.forEach(({ conversationId, groups }) => receiveTodos(conversationId, groups))).catch(() => {})
-        if (full && rpc.features.includes('prompt-suggestions')) void rpc.call('system.chatSettings', {}).then((chatSettings) => useCore.setState({ chatSettings })).catch(() => {})
-        const schedules = full && rpc.features.includes('schedules') ? await rpc.call('schedules.list', {}).catch(() => []) : []
-        const routines = full && rpc.features.includes('routines') ? await rpc.call('routines.list', {}).catch(() => []) : []
-        const activeSquadRuns = full && rpc.features.includes('squads') ? await rpc.call('squads.activeRuns', {}) : []
-        const agentProfiles = full && rpc.features.includes('agent-profiles') ? await rpc.call('agentProfiles.list', {}) : []
-        const squads = full && rpc.features.includes('squads') ? await rpc.call('squads.list', {}) : []
-        const discussions = full && rpc.features.includes('discussions') ? await rpc.call('discussions.list', {}).catch(() => []) : []
-        if (full && rpc.features.includes('chat-commands')) void rpc.call('chatCommands.list', {}).then((chatCommands) => useCore.setState({ chatCommands })).catch(() => {})
-        if (full && rpc.features.includes('skills-library')) void rpc.call('skills.list', {}).then((skillRepos) => useCore.setState({ skillRepos })).catch(() => {})
-        if (full && rpc.features.includes('mcp-servers')) void rpc.call('mcpServers.list', {}).then((mcpServers) => useCore.setState({ mcpServers })).catch(() => {})
-        const accounts = full && rpc.features.includes('agent-accounts') ? await rpc.call('accounts.list', {}).catch(() => null) : null
-        if (full && rpc.features.includes('environment')) void rpc.call('system.environment', {}).then((environment) => useCore.setState({ environment })).catch(() => {})
+        if (rpc.features.includes('todo-overview')) void rpc.call('todos.open', {}).then((open) => open.forEach(({ conversationId, groups }) => receiveTodos(conversationId, groups))).catch(() => {})
+        if (rpc.features.includes('prompt-suggestions')) void rpc.call('system.chatSettings', {}).then((chatSettings) => useCore.setState({ chatSettings })).catch(() => {})
+        const schedules = rpc.features.includes('schedules') ? await rpc.call('schedules.list', {}).catch(() => []) : []
+        const routines = rpc.features.includes('routines') ? await rpc.call('routines.list', {}).catch(() => []) : []
+        const activeSquadRuns = rpc.features.includes('squads') ? await rpc.call('squads.activeRuns', {}) : []
+        const agentProfiles = rpc.features.includes('agent-profiles') ? await rpc.call('agentProfiles.list', {}) : []
+        const squads = rpc.features.includes('squads') ? await rpc.call('squads.list', {}) : []
+        const discussions = rpc.features.includes('discussions') ? await rpc.call('discussions.list', {}).catch(() => []) : []
+        if (rpc.features.includes('chat-commands')) void rpc.call('chatCommands.list', {}).then((chatCommands) => useCore.setState({ chatCommands })).catch(() => {})
+        if (rpc.features.includes('skills-library')) void rpc.call('skills.list', {}).then((skillRepos) => useCore.setState({ skillRepos })).catch(() => {})
+        if (rpc.features.includes('mcp-servers')) void rpc.call('mcpServers.list', {}).then((mcpServers) => useCore.setState({ mcpServers })).catch(() => {})
+        const accounts = rpc.features.includes('agent-accounts') ? await rpc.call('accounts.list', {}).catch(() => null) : null
+        if (rpc.features.includes('environment')) void rpc.call('system.environment', {}).then((environment) => useCore.setState({ environment })).catch(() => {})
         useCore.setState((s) => ({
           rpc,
           connection: 'connected',

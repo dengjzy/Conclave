@@ -14,7 +14,6 @@ catalog:
   vitest: 5.0.1
   ws: 8.21.3
   zod: 4.6.5
-  playwright-core: 1.63.0
 
 allowBuilds:
   esbuild: true

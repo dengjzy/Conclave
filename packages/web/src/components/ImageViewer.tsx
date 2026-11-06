@@ -2,7 +2,6 @@ import { getLocale, t } from '../i18n'
 import { useEffect, useId, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { imageLabel, MAX_IMAGE_NAME_LENGTH, type TaskImage } from '@conclave/protocol'
 import { useImageUrl } from '../attachment-images'
-import { useOccludesBrowser } from '../browser-occlusion'
 import { clampPan, FITTED, fitScale, MAX_SCALE, MIN_SCALE, overhangs, scaleOf, turn, ZOOM_STEP, zoomBy, type ImageView, type Point, type Size } from '../image-view'
 import { RotateLeftIcon, RotateRightIcon, ZoomInIcon, ZoomOutIcon } from './icons'
 
@@ -31,7 +30,6 @@ export function ImageViewer({
   onClose: () => void
   onRename?: (id: string, name: string) => void
 }) {
-  useOccludesBrowser()
   const dialog = useRef<HTMLDialogElement>(null)
   const ids = useId()
   const image = images[index]

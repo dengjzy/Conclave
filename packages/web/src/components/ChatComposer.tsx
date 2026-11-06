@@ -24,7 +24,6 @@ import { ChevronDownIcon, ClockIcon, CloseIcon, EnterIcon, PencilIcon, StopIcon 
 import { ScheduleSendButton } from './ScheduleSendButton'
 import { ChatMessageRelay } from './chat-message-relay'
 import { composerDraft, EMPTY_DRAFT, saveComposerDraft, subscribeDraftAppend } from '../composer-drafts'
-import { useOccludesBrowser } from '../browser-occlusion'
 import { sendWayKeys, sendWays, type SendWay } from '../chat-send-ways'
 import { sendToNewConversation, useReuseConversationSupported } from './ConversationActions'
 import { keepInitialMessage, sendInitialMessage, useInitialMessage } from '../initial-messages'
@@ -173,7 +172,6 @@ function SendCard({ rows, note, children }: { rows: readonly SendRow[]; note: st
 }
 
 function SendCardRows({ rows, note }: { rows: readonly SendRow[]; note: string | null }) {
-  useOccludesBrowser()
   return (
     <div className="chat-send-card" role="group" aria-label={t('ChatComposer.waysToSend')}>
       {note && <div className="chat-send-card-note">{note}</div>}

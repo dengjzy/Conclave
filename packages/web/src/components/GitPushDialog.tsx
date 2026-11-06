@@ -3,7 +3,6 @@ import { trackedBranch, type GitOutgoing, type GitStatus, type GitTarget } from 
 import { getLocale, t } from '../i18n'
 import { useCore } from '../core-store'
 import { setPreference, usePreferences } from '../preferences'
-import { useOccludesBrowser } from '../browser-occlusion'
 import { projectName } from './ProjectPicker'
 
 const SHOWN = 5
@@ -18,7 +17,6 @@ export function GitPushDialog({ target, status, busy, push, close }: {
   push: (remote: string, name: string) => void
   close: () => void
 }) {
-  useOccludesBrowser()
   const rpc = useCore((s) => s.rpc)
   const dialog = useRef<HTMLDialogElement>(null)
   const listId = useId()
@@ -102,7 +100,6 @@ export function GitPushRejectedDialog({ target, busy, choose, close }: {
   choose: (method: 'merge' | 'rebase', remember: boolean) => void
   close: () => void
 }) {
-  useOccludesBrowser()
   const dialog = useRef<HTMLDialogElement>(null)
   const [remember, setRemember] = useState(false)
   useEffect(() => { dialog.current?.showModal() }, [])

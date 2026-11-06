@@ -166,9 +166,8 @@ function named(conversation: Conversation, tasks: Snapshot['tasks'], runs?: Snap
 
 // What to tell the user about between two states: an agent now waiting on them, a turn over, or
 // an agent gone. Judged on the turn, not the task, so a task's chat is told of once. A routine's
-// conversation is told of through its run (routineNoticesBetween), not here. Without tellWaiting
-// an agent now waiting goes untold: the card of waiting requests shows it instead.
-export function noticesBetween(prev: Snapshot, next: Snapshot, tellWaiting = true): Notice[] {
+// conversation is told of through its run (routineNoticesBetween), not here.
+export function noticesBetween(prev: Snapshot, next: Snapshot): Notice[] {
   const notices: Notice[] = []
   for (const conversation of Object.values(next.conversations)) {
     if (isHelper(conversation)) continue
@@ -181,7 +180,7 @@ export function noticesBetween(prev: Snapshot, next: Snapshot, tellWaiting = tru
     if (crashed(conversation) && !crashed(before)) {
       notices.push({ title, body: t('attention.agentExitedUnexpectedlyCodeSendAMessageTo', { value1: conversation.lastExit?.code }), target })
     } else if (waiting(conversation) && !waiting(before)) {
-      if (tellWaiting) notices.push({ title, body: t('attention.agentNeedsYourApprovalOrAnswer'), target })
+      notices.push({ title, body: t('attention.agentNeedsYourApprovalOrAnswer'), target })
     } else if (working(before) && !working(conversation)) {
       notices.push({ title, body: asking(conversation) ? t('attention.agentFinishedThisTurnAndHasAQuestion') : t('attention.agentFinishedThisTurn'), target })
     }

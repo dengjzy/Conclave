@@ -16,7 +16,6 @@ import { Popover } from './Popover'
 import { ChatPicker } from './ChatPicker'
 import { executorOptions } from './TaskExecutorPicker'
 import { MarkdownEditor } from './MarkdownEditor'
-import { useOccludesBrowser } from '../browser-occlusion'
 
 function PaperclipIcon() {
   return (
@@ -27,7 +26,6 @@ function PaperclipIcon() {
 }
 
 export function NewTaskDialog() {
-  useOccludesBrowser()
   const tasks = useCore((s) => s.tasks)
   const connected = useCore((s) => s.connection === 'connected')
   const error = useCore((s) => s.error)

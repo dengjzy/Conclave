@@ -9,7 +9,6 @@ import { folderName, HeldBranchNote, holderLabel } from './BranchHolder'
 import { CommitMessageButton } from './CommitMessageButton'
 import { ArrowUpIcon, BranchIcon, CheckIcon, CommitIcon, PlusIcon } from './icons'
 import { hasPrimaryModifier, PRIMARY_KEY_LABEL } from '../shortcut-keys'
-import { useOccludesBrowser } from '../browser-occlusion'
 import { commitSubject, commitWithWrittenMessage, useCanWriteCommitMessage, useWritingCommit } from '../written-commits'
 
 // A conversation works in the user's own checkout: switching changes it for everything in the folder.
@@ -168,7 +167,6 @@ const ACTION_TITLE: Record<BranchAction, string> = localized(() => ({ switch: t(
 // pressing in it is not a click outside, and keeps Escape to itself, so the popover stays open
 // under it and shows how the action went.
 function BranchActionDialog({ action, head, onClose, children }: { action: BranchAction; head: ProjectHead; onClose: () => void; children: ReactNode }) {
-  useOccludesBrowser()
   const dialog = useRef<HTMLDialogElement>(null)
   useEffect(() => {
     const element = dialog.current

@@ -299,11 +299,6 @@ export function ChatPlanCard({ conversationId, item, modes }: { conversationId: 
   )
 }
 
-// A plan's translation, apart from a reply's under the same conversation.
-function planTranslationKey(key: string): string {
-  return `plan:${key}`
-}
-
 function downloadMarkdown(filename: string, markdown: string): void {
   const url = URL.createObjectURL(new Blob([markdown], { type: 'text/markdown;charset=utf-8' }))
   const link = document.createElement('a')

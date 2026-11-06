@@ -149,7 +149,6 @@ pnpm start
 |---|---|
 | <kbd>Alt</kbd> <kbd>N</kbd> | 新建任务对话框 |
 | <kbd>Ctrl</kbd> <kbd>`</kbd> | 打开 / 关闭内置终端面板 |
-| <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>`</kbd> | 打开 / 关闭内置浏览器面板 |
 | <kbd>Alt</kbd> <kbd>Shift</kbd> <kbd>E</kbd> | 打开 / 关闭文件管理面板 |
 | <kbd>Ctrl</kbd> <kbd>P</kbd> | 快速文件定位与切换 |
 | <kbd>Ctrl</kbd> <kbd>,</kbd> | 打开偏好设置 |

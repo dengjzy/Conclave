@@ -388,7 +388,6 @@ body.stacked-panel-resizing * {
   touch-action: none;
   user-select: none;
   outline: none;
-  -webkit-app-region: no-drag;
 }
 
 .sidebar-resizer::after {
@@ -602,13 +601,6 @@ button.pane-chip:focus-visible { outline: 2px solid var(--focus); outline-offset
   height: 16px;
 }
 
-/* A reply's translation: its word in the reply's actions, and the note it sits under. */
-/* Over .copy-button, which it shares the hover with, it holds a word as well as its icon. */
-.chat-translate,
-.copy-button.chat-translate { display: inline-flex; align-items: center; gap: 3px; width: auto; padding: 0 6px; font-size: 12px; color: var(--text-3); white-space: nowrap; }
-.chat-translate svg { width: 14px; height: 14px; }
-.copy-button.chat-translate[data-failed] { color: var(--danger); }
-span.chat-translate .spinner { width: 12px; height: 12px; }
 /* One line per agent: its mark and name, then the model it does small jobs with. */
 .quick-models { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .quick-model { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
@@ -1042,42 +1034,11 @@ button.task-tag:hover {
   color: var(--danger);
 }
 
-/* macOS hides the native title bar (see main): the sidebar starts under the traffic
-   lights and each pane's header takes the title bar's row, so both double as the
-   window's drag area. */
-.titlebar-drag {
-  display: none;
-}
-
-:root[data-titlebar='inset'] {
-  --titlebar-height: 52px;
-}
-
-[data-titlebar='inset'] :is(.sidebar, .settings-nav) {
-  padding-top: var(--titlebar-height);
-}
-
-/* No traffic lights in fullscreen, so nothing to make room for but the app's name. */
-[data-titlebar='inset'][data-fullscreen] .settings-nav {
-  padding-top: 0;
-}
-
-/* The app's name and the sidebar's switch, beside the traffic lights (or at the corner where there
-   are none). Fixed, so the switch stays put as the sidebar comes and goes; a pane that then
-   reaches the corner keeps --window-brand-end clear in its header. */
+/* Keep the sidebar switch visible as panes change, and leave room for it in their headers. */
 :root {
   --window-brand-left: 12px;
   --window-brand-height: 44px;
   --window-brand-end: calc(var(--window-brand-left) + 92px);
-}
-
-[data-titlebar='inset'] {
-  --window-brand-left: 92px;
-  --window-brand-height: var(--titlebar-height);
-}
-
-[data-titlebar='inset'][data-fullscreen] {
-  --window-brand-left: 16px;
 }
 
 .window-brand {
@@ -1089,7 +1050,6 @@ button.task-tag:hover {
   display: flex;
   align-items: center;
   gap: 6px;
-  -webkit-app-region: drag;
 }
 
 .window-brand-name {
@@ -1102,7 +1062,6 @@ button.task-tag:hover {
 .window-brand-toggle {
   display: grid;
   place-items: center;
-  -webkit-app-region: no-drag;
 }
 
 .window-brand-toggle svg {
@@ -1137,56 +1096,6 @@ button.task-tag:hover {
 
 .app[data-sidebar-hidden] .detail-empty {
   padding-top: var(--window-brand-height);
-}
-
-[data-titlebar='inset'] .detail {
-  padding-top: 0;
-}
-
-/* Sticky, so the header and its drag region stay put while the pane scrolls. */
-[data-titlebar='inset'] .detail-header {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  flex-shrink: 0;
-  min-height: var(--titlebar-height);
-  margin: 0 -20px;
-  padding: 0 20px;
-  background: var(--surface);
-}
-
-[data-titlebar='inset'] .titlebar-drag {
-  display: block;
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  height: var(--titlebar-height);
-  background: var(--surface);
-}
-
-[data-titlebar='inset'] :is(.sidebar, .settings-nav, .detail-header, .detail-empty, .titlebar-drag) {
-  -webkit-app-region: drag;
-}
-
-[data-titlebar='inset'] :is(.sidebar, .settings-nav) > *,
-[data-titlebar='inset'] .detail-header :is(button, a, input, select, textarea),
-[data-titlebar='inset'] .menu {
-  -webkit-app-region: no-drag;
-}
-
-/* A fullscreen window does not move, and macOS takes a drag region at its top for its title bar:
-   hovering one slides the bar down over the header. So fullscreen has none, and the bar comes only
-   from the screen's top edge, with the menu bar, as in any app. */
-[data-titlebar='inset'][data-fullscreen] :is(.sidebar, .settings-nav, .detail-header, .detail-empty, .titlebar-drag, .window-brand) {
-  -webkit-app-region: no-drag;
-}
-
-/* Drag regions ignore what's painted over them, so a modal would otherwise let
-   clicks on its backdrop move the window. Only the regions themselves are named: a :has() on the
-   root over every element (*) had Chromium restyle the whole page at each DOM change, seconds on a
-   long chat whenever a terminal mounted. */
-[data-titlebar='inset']:has(dialog[open]) :is(.sidebar, .settings-nav, .detail-header, .detail-empty, .titlebar-drag, .window-brand) {
-  -webkit-app-region: no-drag;
 }
 
 .toolbar {
@@ -4455,10 +4364,6 @@ div.inspector-empty > p { margin: 0 0 8px; }
   max-width: var(--page-form);
   margin: 0 auto;
   padding: 40px 32px 96px;
-}
-
-[data-titlebar='inset'] .settings-inner {
-  padding-top: 16px;
 }
 
 .settings-section-header {
@@ -8089,10 +7994,6 @@ div.inspector-empty > p { margin: 0 0 8px; }
 .chat-plan-view-actions .tool-button { width: 24px; height: 24px; }
 .chat-plan-view-actions .tool-button svg { width: 14px; height: 14px; }
 .chat-plan-view-actions .tool-button[data-copied] { color: var(--status-done); }
-/* Translating a plan sits at the end of its row, before copying and downloading it. */
-.chat-plan-view-status > .chat-translate { margin-left: auto; }
-.chat-plan-view-status > .chat-translate + .chat-plan-view-actions { margin-left: 0; }
-.chat-plan .chat-request-title > .chat-translate { margin-left: auto; font-weight: 400; }
 
 /* A new conversation before its first message: the agent in the middle, the projects above the
    input they go with. */
@@ -9430,57 +9331,6 @@ summary.agent-group-head:focus-visible { outline: 2px solid var(--focus); outlin
 .sidebar-tasks-entry { position: relative; display: flex; }
 .sidebar-tasks-entry .inbox-entry { margin: 0 8px; padding-right: 40px; }
 .sidebar-tasks-add { position: absolute; top: 50%; right: 14px; transform: translateY(-50%); }
-
-/* The card of waiting requests, alone in its own window at the top of the screen (main's
-   request-popup.ts). The window is clear: the card draws its edge and shadow inside a margin, and
-   the window is as tall as the frame, so a taller card scrolls the page rather than squeezing. */
-:root[data-window='request-popup'] body { background: transparent; overflow-y: auto; }
-.request-popup-frame { padding: 8px 24px 32px; }
-.request-popup.chat-view {
-  flex: none;
-  border: 1px solid var(--border-2);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-float);
-  overflow: hidden;
-}
-.request-popup-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 40px;
-  padding: 4px 4px 4px 12px;
-  border-bottom: 1px solid var(--border);
-  font-size: var(--chat-font-small);
-  white-space: nowrap;
-}
-.request-popup-label { flex-shrink: 0; color: var(--accent); font-weight: 600; }
-.request-popup-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
-.request-popup-agent { flex-shrink: 0; display: grid; place-items: center; color: var(--text-3); }
-.request-popup-agent .agent-mark { width: 16px; height: 16px; }
-.request-popup-spacer { flex: 1; }
-.request-popup-pager { display: flex; flex-shrink: 0; align-items: center; gap: 4px; color: var(--text-3); font-variant-numeric: tabular-nums; }
-.request-popup-header .link-button { flex-shrink: 0; margin-left: 4px; }
-.request-popup-step,
-.request-popup-close {
-  display: grid;
-  place-items: center;
-  flex-shrink: 0;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-.request-popup-step { width: 24px; height: 24px; }
-.request-popup-step:hover,
-.request-popup-close:hover { background: var(--fill); color: var(--text); }
-.request-popup-step[data-direction='previous'] svg { transform: scaleX(-1); }
-.request-popup .chat-intervention { max-height: none; border: 0; border-radius: 0; }
-.request-popup-error { margin: 0; padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--danger); font-size: var(--chat-font-small); }
-.request-popup-loading { margin: 0; padding: 12px; color: var(--text-3); }
 
 /* Group chats: a sidebar section between the tasks and the conversations, sized to what it holds. */
 .sidebar-discussions { flex: 0 1 auto; min-height: 0; max-height: 30%; display: flex; flex-direction: column; }

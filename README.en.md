@@ -149,7 +149,6 @@ Once ready, the console outputs direct links with session tokens:
 |---|---|
 | <kbd>Alt</kbd> <kbd>N</kbd> | New task dialog |
 | <kbd>Ctrl</kbd> <kbd>`</kbd> | Toggle terminal panel |
-| <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>`</kbd> | Toggle browser panel |
 | <kbd>Alt</kbd> <kbd>Shift</kbd> <kbd>E</kbd> | Toggle file explorer |
 | <kbd>Ctrl</kbd> <kbd>P</kbd> | Quick file switch |
 | <kbd>Ctrl</kbd> <kbd>,</kbd> | Open settings |

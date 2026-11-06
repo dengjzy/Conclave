@@ -2,7 +2,6 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { agentDescriptor, type AgentKind, type AgentProfile, type ChatItem, type Conversation } from '@conclave/protocol'
 import { agentCallForResult, openAgentCall, showAgentCalls, useAgentCalls, useAgentCallsSupported } from '../agent-calls'
 import { useAgentCatalog, type ModelChoice } from '../agent-models'
-import { useOccludesBrowser } from '../browser-occlusion'
 import { useCore } from '../core-store'
 import { delegationAgent, delegationAgents, delegationInstruction, delegationReadOnly, delegationRoleFields, directDelegationAllowed, directDelegationTarget } from '../delegation-choice'
 import { discussionModelUnavailable } from '../discussion-model'
@@ -18,7 +17,6 @@ import { AgentIcon, CloseIcon, SquadIcon } from './icons'
 import './agent-calls.css'
 
 export function DelegationDialog({ conversation, onClose, onHistory }: { conversation: Conversation; onClose(): void; onHistory(): void }) {
-  useOccludesBrowser()
   const dialog = useRef<HTMLDialogElement>(null)
   const titleId = useId()
   const rpc = useCore((state) => state.rpc)

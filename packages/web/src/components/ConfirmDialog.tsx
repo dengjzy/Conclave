@@ -1,12 +1,10 @@
 import { useEffect, useRef } from 'react'
 import { useConfirmDialog } from '../confirm-dialog'
-import { useOccludesBrowser } from '../browser-occlusion'
 import { t } from '../i18n'
 import { CloseIcon, TrashIcon, WarningIcon } from './icons'
 
 export function ConfirmDialog() {
   const current = useConfirmDialog((state) => state.current)
-  useOccludesBrowser(current !== null)
 
   const dialogRef = useRef<HTMLDialogElement>(null)
   const confirmBtnRef = useRef<HTMLButtonElement>(null)

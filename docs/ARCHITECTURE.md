@@ -6,7 +6,7 @@
 - [2. 任务模型](#2-任务模型)
 - [3. Worktree 与 Git](#3-worktree-与-git)
 - [4. Agent 接入与聊天](#4-agent-接入与聊天)
-- [5. 内置浏览器](#5-内置浏览器)
+- [5. 浏览器宿主兼容与书签](#5-浏览器宿主兼容与书签)
 - [6. 终端与端口](#6-终端与端口)
 - [7. 从源码运行](#7-从源码运行)
 - [8. 源码构建](#8-源码构建)
@@ -17,10 +17,10 @@
 
 ```
 ┌──────────── 客户端（可以有多个）────────────┐
-│  desktop  Electron + React + xterm.js     │
-│           聊天界面 / 终端面板                │
+│  web     React + Vite + xterm.js          │
+│          CodeMirror / 聊天界面 / 终端面板 │
 └────────────────┬───────────────────────────┘
-                 │ JSON-RPC 2.0 over WebSocket（127.0.0.1 + token）
+                 │ JSON-RPC 2.0 over WebSocket（token 鉴权）
 ┌────────────────▼───────────────────────────┐
 │  core    纯 Node 服务，不依赖 Electron       │
 │   ├─ TaskStore / ConversationStore  持久化 │
@@ -33,11 +33,11 @@
 ┌────────────────▼───────────────────────────┐
 │  daemon  持有所有 agent 进程（stdio 管道）   │
 │          和终端面板的 shell（node-pty）      │
-│          core / 桌面端重启，agent 不会断     │
+│          core 重启 / 页面刷新不结束进程   │
 └────────────────────────────────────────────┘
 ```
 
-内置浏览器不在这条链上：标签页由桌面端主进程持有（Electron 的 `WebContentsView`），core 经本地 WebSocket 驱动它，地址写在 `~/.conclave/browser/host.json`。
+生产构建由 core 的 HTTP 服务提供 `packages/web/dist`，开发时由 Vite 提供前端。浏览器宿主是另一条兼容链路：core 可按 `~/.conclave/browser/host.json` 连接外部宿主，但本仓库没有宿主实现；仅运行 Web 前端不会提供内嵌网页，见第 5 节。
 
 | 包 | 职责 |
 |---|---|
@@ -46,19 +46,19 @@
 | `packages/daemon` | 进程宿主，独立进程：Agent 跑在 stdio 管道上，终端面板的 shell 跑在 PTY 里；缓存最近输出，供重新连接时回放 |
 | `packages/web` | Web 前端：看板、详情编辑、聊天界面、终端面板；纯 Vite + React SPA 直连 core |
 
-运行时数据在 `~/.conclave/`（可用 `CONCLAVE_HOME` 覆盖）：`conclave.db`、`core.json`（端口与 token，权限 0600）、`worktrees/`、`sessions/`、`browser/`（`host.json`，桌面端写的浏览器宿主地址）、`skills/`（技能库：`skills.json` 锁文件、`repos/` 里的 git 克隆、`bundles/` 里交给 Agent 的目录）、`mcp-servers.json`（用户的 MCP 服务器，不含密钥）、`credentials.json`（任务来源和 MCP 服务器的密钥，权限 0600）。
+运行时数据在 `~/.conclave/`（可用 `CONCLAVE_HOME` 覆盖）：`conclave.db`、`core.json`（端口与 token，权限 0600）、`worktrees/`、`sessions/`、`browser/`（兼容外部浏览器宿主的 `host.json`，本仓库不写入）、`skills/`（技能库：`skills.json` 锁文件、`repos/` 里的 git 克隆、`bundles/` 里交给 Agent 的目录）、`mcp-servers.json`（用户的 MCP 服务器，不含密钥）、`credentials.json`（任务来源和 MCP 服务器的密钥，权限 0600）。
 
 ### 进程边界
 
-- **daemon** 持有每一个 Agent 进程和 PTY，跑在纯 Node 上；node-pty 这类原生模块只在这里加载，从不进 Electron。
-- **core** 持有任务、git 和持久化，不依赖 Electron，可以在没有界面的服务器上单独运行。core 的 MCP 服务（`mcp-main.ts`）是 Agent 启动的独立进程，和桌面端一样只是客户端。
-- **web** 纯浏览器前端。保持精简：不放任务逻辑、不碰 git、不开 PTY，通过 WebSocket 与 HTTP 静态托管与 core 保持高效通信。
+- **daemon** 持有每一个 Agent 进程和 PTY，跑在纯 Node 上；node-pty 这类原生模块只在这里加载。
+- **core** 持有任务、git 和持久化，不依赖 Electron，可以在没有界面的服务器上单独运行。core 的 MCP 服务（`mcp-main.ts`）是 Agent 启动的独立进程，和 Web 前端一样只是客户端。
+- **web** 纯浏览器前端。保持精简：不放任务逻辑、不碰 git、不开 PTY，通过 WebSocket 调用 core；文件、终端和系统操作由服务端执行。
 
 ### 通信与版本
 
-- 客户端 ↔ core：JSON-RPC 2.0 over WebSocket，只绑定 `127.0.0.1`，并要求 `core.json` 里的 token，因为任何网页都能连本机的 WebSocket。
+- 客户端 ↔ core：JSON-RPC 2.0 over WebSocket，要求 `core.json` 里的 token，因为任何网页都能连本机的 WebSocket。`pnpm start` 默认监听 `127.0.0.1:43551`；直接运行 core（含 `pnpm dev:core`）默认监听 `0.0.0.0:43551`。可用 `--host` / `CONCLAVE_HOST` 和 `--port` / `CONCLAVE_PORT` 调整。本机开发可明确绑定 `127.0.0.1`。Web 客户端通过同源 `/api/auth/session` 或 URL 参数、浏览器存储发现端点；该 HTTP 路由检查回环连接或既有 token/cookie，不是一次性登录票据。
 - core ↔ daemon：NDJSON over Unix socket（Windows 上是 named pipe）。只有连接被拒绝才说明 daemon 的 socket 已失效，超时或 EPERM 不能证明什么。
-- `packages/protocol` 是唯一的类型来源：RPC 方法和通知都先在这里定义 zod schema，再在 `core/src/rpc-handlers.ts` 实现。客户端和 core 可以是不同版本；增加可选字段是安全的，破坏性改动要提升 `PROTOCOL_VERSION`（daemon 线路是 `DAEMON_PROTOCOL_VERSION`）。当前 core RPC 协议版本为 14，daemon 协议版本为 3，浏览器宿主协议版本为 2。桌面端和 core 跨越 RPC 版本时应一起升级。
+- `packages/protocol` 是唯一的类型来源：RPC 方法和通知都先在这里定义 zod schema，再在 `core/src/rpc-handlers.ts` 实现。客户端和 core 可以是不同版本；增加可选字段是安全的，破坏性改动要提升 `PROTOCOL_VERSION`（daemon 线路是 `DAEMON_PROTOCOL_VERSION`）。版本常量分别以 `protocol/src/rpc.ts`、`protocol/src/node/daemon-protocol.ts` 和 `protocol/src/node/browser-host-protocol.ts` 为准；客户端与服务端跨越不兼容的 RPC 版本时需一起升级。
 - 启动 Agent 用 argv 数组，prompt 前加 `--`，从不经过 shell。
 
 ### core 的网络请求
@@ -91,7 +91,7 @@ core 启动时通过 `system-proxy.ts` 安装全局 undici dispatcher，让自�
 - **开始规划**：还有依赖没完成时，Agent 只读规划，不建任务分支。它读的是任务分支将来拉出的起点（见「分支起点」）：Conclave 把起点提交检出成一个没有分支的只读副本，放在 `~/.conclave/worktrees/<任务id>/.planning/<项目名>/`；起点就是项目当前检出的分支时，直接在项目里读。Claude Code 用规划模式并禁止改动这些目录里的文件，Codex 用 plan 模式配 `read-only` 沙箱，权限模式只有「规划」。未完成依赖的详情和计划直接写在第一条消息里。拿出计划后可以继续规划，也可以「保存计划」：计划存到任务上，任务仍是「未执行」，列表里标「计划已保存」。依赖都完成后点「开始执行」，Conclave 结束规划用的 Agent，在新建的 worktree 里开一个新会话，把保存的计划交给它，让它先对照当时的代码核对一遍。
 - **提交验收**：Agent 退出不会让任务进入待验收，因为 Agent 空闲 30 分钟就会被结束，下次发消息再接着同一个会话启动。觉得做完了就点「提交验收」（Agent 正在处理时不行），检查器会打开到改动。
 - **依赖完成后自动执行**：在详情的依赖项下开启「自动执行」，core 将这一次启动放入预约队列，等所有依赖进入「已完成」再运行，待验收、已取消都不算完成。沿用任务的模型、推理强度和服务商，权限采用 设置 → 权限 里的「预约运行的权限」；额度或并发不足时继续等待，启动失败保留预约记录。启动、取消排队或移除全部依赖后开关关闭；删除前置任务也会关闭其后续任务的自动执行，避免把删除当成完成。core 重启后从数据库恢复，手动开始、关闭开关不会重复执行。团队和不支持无人值守的 Agent 暂不支持。
-- **其他**：任务的聊天不出现在「会话」列表和搜索里，从任务打开；删除任务时一并删除它的聊天记录，worktree 保留。任务的聊天有 Conclave 的预览和浏览器工具。
+- **其他**：任务的聊天不出现在「会话」列表和搜索里，从任务打开；删除任务时一并删除它的聊天记录，worktree 保留。任务的聊天有 Conclave 的预览工具；浏览器工具仍依赖外部宿主，见第 5 节。
 
 ### 验收之后
 
@@ -139,7 +139,7 @@ core 启动时通过 `system-proxy.ts` 安装全局 undici dispatcher，让自�
 
 任务交给团队时默认「先和队长规划」：团队的队长用自己的 Agent 和模型，在只读规划里和你商量出计划和分工（可以在依赖完成前开始）；你在计划卡片上选「交给团队按计划开发」后，同一个队长接着带队，规划时读过的代码和讨论都还在（能原生续接的会话直接续接，Claude 这类会话绑定目录的，从规划目录换到 worktree 时把规划记录连同带队指令一起交接给它）。也可以选「直接开始」，由队长按任务详情边做边派活；或者由单个 Agent 规划后，在规划确认处选择「交给团队执行」。交接前验证目标团队与权限，再停止原规划会话，保存所选规划并启动队长；原 Agent 不获准执行。已保存的规划也可以从任务详情交给团队。未完成的依赖仍阻止执行，团队任务首版只支持手动启动。
 
-- **core 编排**：`SquadService` 用持久化派活记录协调独立 Conversation，通过 Conclave MCP 的 `conclave_squad_roster`、`conclave_squad_dispatch`、`conclave_squad_finish` 让队长查看成员、派活和提交。成员按需启动，进程仍归 daemon；桌面端不承担调度。
+- **core 编排**：`SquadService` 用持久化派活记录协调独立 Conversation，通过 Conclave MCP 的 `conclave_squad_roster`、`conclave_squad_dispatch`、`conclave_squad_finish` 让队长查看成员、派活和提交。成员按需启动，进程仍归 daemon；Web 前端不承担调度。
 - **工作区**：每个仓库沿用任务的独立 worktree，团队成员共享。一个任务同时只运行一项开发工作，只读分析可并行。队长只读协调，成员能力与执行权限分别校验，只有共同支持的开发模式可以选择，默认逐项确认。队长和只读成员按 Agent 描述里的 `readOnlyMode` 运行（Claude 是逐项确认、Codex 和 Cursor 是只读），目录照样不可写，但不进计划模式：在计划模式下 Claude 会再提交一版计划，也不肯派活。
 - **配置快照**：每次运行保存完整团队配置。修改或归档团队不改变正在运行的成员与模型；接着修改沿用快照，重做生成新的运行。
 - **结果与恢复**：队长派活后结束回合、释放空闲容量；成员完成后先停止其 Agent 和归属命令，再释放开发位置，将结果交给队长。结果批次先持久化，以稳定消息引用去重。core 重启先接回 daemon 会话，再恢复派活；不能确认完成的工作保留为失败，允许显式重试。
@@ -222,6 +222,8 @@ core 启动后会在自己的 PATH 里找 `git`、`claude`、`codex` 和 Cursor 
 
 设置 → 外部智能体里的「暂未支持」显示 Conclave 认识、但尚未接入聊天的 Agent：从 core 当前的 PATH 查找已知 CLI，并在 macOS 的 `/Applications` 和 `~/Applications` 查找已知应用。Cursor 已支持聊天，应用和 CLI 会合并进「已安装」或「可安装」的一项；只安装编辑器仍需另外安装 CLI。找到 CLI 后会限时执行 `--version`，分别显示命令已响应、版本检测失败或 Windows 命令垫片认不出、无法直接验证；这不检查登录，也不代表 Conclave 已支持该 CLI 的聊天协议。每 5 分钟自动复查，也能手动「重新检测」；新增 PATH 目录仍需重启 Conclave，才能让 core 和 daemon 都用到它。未接入的 Agent 标为「暂未支持」，不能选来运行任务或会话。尚未接入的产品在 `packages/core/src/environment-check.ts` 的发现清单里登记可辨认的命令或应用名；已接入的 Agent 由它的 adapter 声明（见「新增 Agent」）。
 
+跨平台发现由 `environment-check.ts` 统一实现：Windows 按可识别后缀查找 PATH 并检查文件存在，Unix 检查可执行权限。应用候选目录包括 macOS 的 `/Applications`、`~/Applications`，Windows 的用户 Programs 与 Program Files，以及 Linux 的 `/usr/share`、`/opt` 和常见 bin/share 目录。发现位置不等于已支持聊天或已登录；CLI 版本探测通过 `launchFile`，限时执行，并在 Windows 隐藏探测窗口。
+
 ### Windows 上启动 Agent
 
 Agent 的命令从不经过 shell，Windows 上也一样，而 npm、pnpm 装的 `claude`、`codex`、`npx` 在 Windows 上是 `.cmd` 垫片，`child_process` 只能经 cmd.exe 运行它，cmd 又会把参数重新切一遍。所以 daemon 和 core 启动命令前都走 `protocol/node` 的 `planLaunch`：按 PATHEXT 找到文件（不先试无扩展名的那个，那是 npm 给 sh 写的脚本）；是认得的 npm / pnpm 垫片，就读出它要运行的东西，直接起 `node.exe <脚本>` 或它包着的 `.exe`，pnpm 加的 `NODE_PATH` 照样加上；旁边有同名 `.ps1` 的（Cursor 的安装方式）用 `powershell -File` 运行；都不是就报 `command-needs-shell`，不退回 cmd。识别规则参照 Orca 的同名实现，认不全就拒绝，宁可不启动也不运行错的程序。
@@ -231,7 +233,7 @@ Agent 的命令从不经过 shell，Windows 上也一样，而 npm、pnpm 装的
 ### Agent 并发
 
 
-设置 → 运行 可以限制同时运行的 Agent 进程总数（默认 20）和每款 Agent 的进程数（默认各 6）。聊天、任务、规划共用额度；等待你批准的 Agent 也占额度，终端面板和内置浏览器不占。调低上限不会结束已运行的进程。手动启动超过上限时会提示等待或预约；预约保存在 core 中，额度满时留在等待队列，不消耗失败重试次数，有会话结束便再次尝试。正在运行的进程由 daemon 持有，core 重启后会重新接管并计入额度。
+设置 → 运行 可以限制同时运行的 Agent 进程总数（默认 20）和每款 Agent 的进程数（默认各 6）。聊天、任务、规划共用额度；等待你批准的 Agent 也占额度，终端面板和外部浏览器宿主不占。调低上限不会结束已运行的进程。手动启动超过上限时会提示等待或预约；预约保存在 core 中，额度满时留在等待队列，不消耗失败重试次数，有会话结束便再次尝试。正在运行的进程由 daemon 持有，core 重启后会重新接管并计入额度。
 
 ### 页面与关闭
 
@@ -251,9 +253,9 @@ Agent 的命令从不经过 shell，Windows 上也一样，而 npm、pnpm 装的
 
 ### 界面语言
 
-设置 → 外观 → 界面语言支持「跟随系统 / 简体中文 / English」，保存在桌面端 `conclave.preferences.language`，默认跟随系统：`zh-*` 使用简体中文，其他系统使用英语。切换即时生效，通过 storage 事件同步其他窗口和独立审批窗口；原生菜单与文件选择器的应用标题通过 desktop IPC 跟随，操作系统自带控件仍按系统语言显示。它与 Agent 回复、提示词和回复翻译设置独立，不改用户内容或历史数据。
+设置 → 外观 → 界面语言支持「跟随系统 / 简体中文 / English」，保存在当前浏览器的 `conclave.preferences.language`，默认简体中文；选择跟随系统时，`zh-*` 使用简体中文，其他系统使用英语。切换即时生效，通过 storage 事件同步同源页面。它与 Agent 回复和提示词独立，不改用户内容或历史数据。审批在会话页面处理，不提供原生独立审批窗口。
 
-界面文案集中在 desktop 的 `shared/messages.ts`，使用语义键与命名参数；普通文本走 `t`，带行内 React 元素的句子走 `tr`，英语计数使用 `one / other` 复数形式。模块级展示表通过 `localized` 按当前语言缓存，React 根节点订阅语言，涉及展示文字的 memo 包含语言依赖。CodeMirror 只重配文字，不重建编辑器，保留草稿、选择和撤销历史。
+界面文案集中在 `packages/web/src/shared/messages.ts`，使用语义键与命名参数；普通文本走 `t`，带行内 React 元素的句子走 `tr`，英语计数使用 `one / other` 复数形式。模块级展示表通过 `localized` 按当前语言缓存，React 根节点订阅语言，涉及展示文字的 memo 包含语言依赖。CodeMirror 只重配文字，不重建编辑器，保留草稿、选择和撤销历史。
 
 Agent 描述符可提供英语展示文本，客户端传入语言读取，执行规则不变。来源设置及登录提示可附加 `translations.en`（包括选项、链接、提示和重试错误），core 只验证和传递；缺少翻译时使用原字符串，旧客户端忽略这些可选字段。
 
@@ -276,7 +278,7 @@ Agent 描述符可提供英语展示文本，客户端传入语言读取，执�
 
 `Conversation.helperOf` / SQLite 的 `helper_of` 记录父会话，唯一索引保证一个父会话只有一条小助手。core 验证父会话存在且为普通或任务会话，拒绝群聊成员、团队成员、定时会话、小助手和已归档会话；标题固定为「小助手」。权限模式可以在小助手输入框里选，默认 `ask`，可选 Agent 新会话能用的模式里除 plan 以外的任何一个，包括 bypass（`helperAllowsMode`：小助手做的是小事，不需要先规划），core 在创建、切换模式和回答批准时都会检查；不提供持续授权、移交或无人值守执行。推理强度和模型一起选，所选模型没有推理强度（如 Claude 的 Haiku）时不显示。小助手持久化到清空（`conversations.delete`），删除或归档父会话时一起删除，项目文件保留。
 
-小助手不进入会话列表、全文搜索、未读和全局待处理/通知/请求弹窗/总览；它通过 `conversations.helper { id: 父会话 }` 恢复，等待批准只在小助手标签和父会话检查器按钮上亮点。`listAll()`、git 忙碌判断和 Agent 并发计数仍包含它。协议通过 `conversation-helper` feature 控制入口，老 core 没有这个标签。
+小助手不进入会话列表、全文搜索、未读和全局待处理/通知/总览；它通过 `conversations.helper { id: 父会话 }` 恢复，等待批准只在小助手标签和父会话检查器按钮上亮点。`listAll()`、git 忙碌判断和 Agent 并发计数仍包含它。协议通过 `conversation-helper` feature 控制入口，老 core 没有这个标签。
 
 会话不需要「停止」：发消息就会接着聊，状态只有运行中、等待确认和空闲。Agent 空闲 30 分钟后（没有回合在跑、没有后台命令或子 Agent 在跑、没有等你处理的请求、没有排队的消息），Conclave 会结束它的进程，下次发消息时再接着同一个会话启动，这一次要多等几秒。进程异常退出时，会话显示「异常退出」，发消息会重新启动它。
 
@@ -319,7 +321,7 @@ Claude Code 以 `claude -p --input-format stream-json --output-format stream-jso
 
 深度用量分析、额度预测和按账号自动化见 [用量账本与额度自动化](USAGE-ANALYTICS.md)。它在总览统计中单独汇总 Conclave 内外的消耗，不改变任务验收率等工作指标。
 
-总览「统计」里的「小模型省下」和用途明细统计翻译、提交说明、小助手、会话标题，每次小助手回合在「处理了 N 秒」旁显示花费和约省金额。美元均标注「按 API 标价折算」，不代表订阅账号的实际扣款。按完成日期、客户端时区和所选时间范围汇总，分别注明有多少次能计价和估算；未知金额不作为零参与合计。标题用途通过 `includeTitleCosts` 显式请求，旧客户端不接收新枚举项。
+Web 前端已移除回复翻译入口与翻译设置；core 的 `conversations.translate` RPC 和历史用量仍保留，供兼容客户端使用。总览「统计」里的「小模型省下」和用途明细继续统计翻译、提交说明、小助手、会话标题，每次小助手回合在「处理了 N 秒」旁显示花费和约省金额。美元均标注「按 API 标价折算」，不代表订阅账号的实际扣款。按完成日期、客户端时区和所选时间范围汇总，分别注明有多少次能计价和估算；未知金额不作为零参与合计。标题用途通过 `includeTitleCosts` 显式请求，旧客户端不接收新枚举项。
 
 - **模型差价**：同一份输入、输出和缓存用量按主模型计价，减去小模型花费。
 - **上下文节省**：开始时主会话上下文 token × 模型调用次数 × 主模型缓存读取单价。小助手、提交说明计入，翻译不计入。
@@ -332,6 +334,12 @@ Claude Code 以 `claude -p --input-format stream-json --output-format stream-jso
 Agent adapter 解析一次性命令的结构化输出：Claude 的 JSON、Codex 的 JSONL（答案仍读输出文件）、Cursor 的 JSON。回合的可选 `metering` 保留缓存读写和实际模型；Claude 用 `num_turns`，Codex 从去重后的累计用量增长保守估算调用，无法识别时按一次。说 ACP 的 Agent 在回合结束时读 `session/prompt` 返回的标准 `usage`：输入算上缓存读写（OpenCode 的 `inputTokens` 不含命中缓存的部分），输出算上推理，回复底下显示 ↑ / ↓；花费取 `usage_update` 里会话累计的 `cost`，一轮的花费是这轮前后两次累计之差，恢复的会话在第一轮里还不知道之前的累计，就记为未提供。OpenCode 两样都报。Pi 不走 ACP，每条助手消息带自己的 `usage`（含缓存读写和 `cost.total`），一轮按模型累加，调用次数就是助手消息数。Cursor CLI（实测 2026.10.01）都不报，所以 Cursor 的回合仍没有用量，小助手只统计次数，等它的 CLI 报了自然就有。`usage_update` 的上下文大小只用于上下文占用，不能视作消耗的 token。缓存写入时长或长上下文档位无法确定时保留已有 token，金额降级为未提供。
 
 模型价格是 Agent 描述符引用的纯数据，来源及更新日期见 `protocol/src/agents/model-prices.ts`，支持缓存类别、长上下文档位和已公布的生效日期；未解析的别名、未知模型不猜价格。协议增加 `small-model-stats` feature 和可选字段，不提升版本。新客户端用 `dashboard.stats.includeSmallModels` 请求新统计，同时将翻译、提交说明 token 加入原合计、每日趋势和模型明细；小助手仍从原回合统计，避免重复。老客户端未请求此字段时保留原统计口径。
+
+### 上下文与恢复边界
+
+会话由 `ConversationService` / `ConversationStore` 管理，阶段记录当前 Agent 与原生会话 id；`ChatHost` 和各 driver 将输入、输出及事件写入可回放日志。core 重启可重新连接 daemon 中仍存活的进程；daemon 本身退出则不能保住原进程，后续能否原生恢复由 adapter 与上游 CLI 决定。
+
+`ChatOptionsBar` 的 `ContextRing` 只展示 Agent 上报的上下文占用，不会在达到 80% 时触发统一的滑窗压缩。压缩事件和原生命令由对应 driver 处理；跨 Agent 移交传递可见历史，不能替代原生上下文。阶段结束、会话停止和 worktree 删除是不同生命周期：任务完成或删除不自动删除工作树，清理规则见第 3 节。
 
 ### 会话与 Agent 移交
 
@@ -365,16 +373,16 @@ dsh 启动环境保留已有 `NODE_OPTIONS` 并追加 `--report-exclude-network`
 
 ### 导入终端里的会话
 
-设置 → 导入会话（首次打开时新手引导和总览也会列出最近几个，见「首次使用环境引导」）列出 Claude Code 和 Codex 在 Conclave 之外跑过的会话（`session-imports.ts`），勾选后各导入成一条会话，下一条消息用 Agent 自己的恢复接着聊。读哪里、怎么读归 adapter 的 `transcripts`（`agent-transcripts.ts`），没有它的 Agent 不出现在列表里：
+设置 → 导入会话（首次打开时新手引导和总览也会列出最近几个，见「首次使用环境引导」）列出 Claude Code、Codex、ZCode、Pi 和 Antigravity 在 Conclave 之外跑过的会话（`session-imports.ts`），勾选后各导入成一条会话，下一条消息用 Agent 自己的恢复接着聊。读哪里、怎么读归 adapter 的 `transcripts`（`agent-transcripts.ts`），没有它的 Agent 不出现在列表里：
 
 - **Claude Code**（`claude-transcripts.ts`）：`$CLAUDE_CONFIG_DIR/projects/*/<会话 id>.jsonl`（默认 `~/.claude`），会话 id 取文件名，目录取记录里的 `cwd`，不从目录名反推。从最后一条主线记录沿 `parentUuid` 往回走（压缩处接 `logicalParentUuid`），/rewind 丢掉的分支和 sidechain 不算；`isMeta`、压缩摘要和 CLI 自己注入的用户轮次（`<local-command-…>`、`<system-reminder>`、`<task-notification>` 等）跳过，斜杠命令显示成 `/命令 参数`。标题依次取 `custom-title`（用户 /rename 的，导入后锁定）、`ai-title`、`summary`、第一条提问。`<id>/subagents/` 不是会话。
 - **Codex**（`codex-transcripts.ts`）：`$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl`，旧的已压成 `.jsonl.zst`，两份都在时读没压的那份（Codex 还在写它）。第一行 `session_meta` 的 `source` 是对象（子 Agent、审查）、`thread_source` 不是 `user`，或 `originator` 是 Conclave 自己（`CODEX_CLIENT_NAME`）的线程不算。内容按回合读 `event_msg` 里的 `item_completed`，回合以 `task_complete` / `turn_aborted` 收尾；更早没有这些事件的 rollout 只显示消息。标题取 `session_index.jsonl` 的 `thread_name`，没有就用第一条提问。
 
-扫描只读每个文件开头 256KB，最后活动时间用文件的修改时间，按路径、大小和修改时间缓存，第二次几乎不花时间。隐藏的有：`conversation_stages` 里已有、却不是导入来的会话（Conclave 自己跑的），目录在 `CONCLAVE_HOME` 或临时目录下的。目录已不存在的列出但不能选，因为 Claude 只能在原目录恢复。
+Claude 和 Codex 扫描会话文件头并缓存摘要；其他格式由各 adapter 处理。Pi 读取 `~/.pi/agent/sessions`（可由 Agent 配置覆盖），ZCode 读取本机 SQLite 会话库，Antigravity 读取 `~/.gemini/antigravity/brain` 及摘要数据库。隐藏的有：`conversation_stages` 里已有、却不是导入来的会话（Conclave 自己跑的），目录在 `CONCLAVE_HOME` 或临时目录下的。目录已不存在的列出但不能选，因为 Claude 只能在原目录恢复。
 
 导入新会话时建一条不启动的会话（`create(..., deferStart)`，项目就是原目录，不建 worktree），再由 `ConversationService.importStage` 补一个已结束的 stage：`provider_session_id` 是原会话的 id，聊天记录写成 `item` 记录（各 driver 原样放进条目，不写 `exit`，否则会被当成没启动成功），用户消息和每轮最终回复写进 `conversation_messages`（Claude 恢复要先看到这些消息，标题、搜索、`history_read` 和移交也读它们）。之后和重启后继续一样：`startStage` 找到这个 stage，Claude 用 `--resume`，Codex 用 `thread/resume`；原会话不在了照常退回移交文件。
 
-`session_imports` 表记每个导入的会话导到哪条记录（`imported_through`）和当时文件的修改时间。文件之后又改过，而改动时间不落在这条会话任何 stage 的 `[开始, 结束 + 2 秒]` 里，就算在终端里又聊过，列表标「有更新」；Conclave 自己恢复时也写同一个文件，这段时间的改动不算。再导入一次，只取时间晚于 `imported_through`、又不在这些区间里的记录，作为一个新的已结束 stage 接在后面，原会话 id 不变，下一次仍从它恢复。会话的 Agent 正在运行时不导入。删掉会话后，它导入的会话回到「未导入」。
+`session_imports` 表记每个导入的会话导到哪条记录（`imported_through`）和当时文件的修改时间。文件之后又改过，而改动时间不落在这条会话任何 stage 的 `[开始, 结束 + 2 秒]` 里，就算在终端里又聊过，列表标「有更新」；Conclave 自己恢复时也写同一个文件，这段时间的改动不算。再导入一次，只取时间晚于 `imported_through`、又不在这些区间里的记录，作为一个新的已结束 stage 接在后面，原会话 id 不变，下一次仍从它恢复。会话的 Agent 正在运行时不导入。删除导入会话时，`purgeImported` 会尝试通过 adapter 的 `transcripts.delete` 删除底层原生会话存储，并移除导入标记。源记录不可找到或删除失败时不保证原生记录消失；失败会写入 core 日志。
 
 ### 待办
 
@@ -415,7 +423,7 @@ dsh 启动环境保留已有 `NODE_OPTIONS` 并追加 `--report-exclude-network`
    - 必填：driver（实现 `ChatDriver`）、启动命令（argv 数组，需要时加环境变量 `env`）、能用的权限模式、会话策略（是否预先指定会话 id、会话是否绑定目录、原生 fork 能从任意一轮、只能整个会话复制（只用于从最新一轮分叉），还是不支持）。
    - 可选：模型目录、环境检测、登录检查、用量读取、使用重置卡（`useResetCredit`，没有它就只能在 Agent 自己的应用里用）、CLI 安装命令、应用发现。
    - 可选 hooks，用于命令行之外的特殊需求：启动前后的准备（`launch`，`prepare` 可以换可执行文件，也可以追加它刚写出的文件的参数，比如 Pi 的扩展）、回合处理（`turns`：串行发送、取消后分阶段停止进程、首帧超时、换新进程重试、拒绝理由作为消息发送）。注册时 `checkAdapter()` 会检查这些 hooks 是否配套，比如声明了首帧超时，就必须同时能停进程、能重试。
-3. **desktop**：放一个图标资源，登记进 `components/icons.tsx` 的 `AGENT_MARKS`。
+3. **web**：放一个图标资源，登记进 `packages/web/src/components/icons.tsx` 的 `AGENT_MARKS`。
 
 说 ACP 的 Agent 不用另写 driver：`agents/acp/acp-driver.ts` 讲标准协议，Agent 自己的部分写成一份 `AcpDialect`，然后用 `new AcpDriver(dialect, …)` 创建 driver。dialect 至少要有显示名、请求 id 前缀（会写进日志，定下后不能改）和权限模式映射；扩展认证方式、模型列表、提问、计划审批、子 Agent、工具命名、写进回复的传输错误等，都按需声明。Cursor 的 dialect（`agents/cursor/cursor-dialect.ts`）扩展最多，OpenCode 的（`agents/opencode/opencode-dialect.ts`）几乎只用标准协议，都可以作参照。`agents/acp/acp-driver.test.ts` 用一个什么扩展都不带的 dialect 跑完一整个回合，新 dialect 可以从它开始。说自有协议的 Agent 要写自己的 driver，Pi 的 `agents/pi/pi-rpc.ts` 是最小的一份：一切从 `apply()` 来，流式增量不进日志，由完整消息补齐，所以从日志重放和实时得到同样的条目（`pi-rpc.test.ts` 逐份 fixture 对比两者）。
 
@@ -441,7 +449,7 @@ Kimi Code 使用官方 `kimi acp` 和通用 ACP driver，dialect 负责四种原
 
 ### 首次使用环境引导
 
-desktop 在首次连接且环境、供应商和任务来源数据到齐后启动检查，不再自动打开整篇指导。引导只检查一个 Agent 的安装和可用条件，再提出接着聊终端里的会话、询问是否配置任务来源，自己不创建会话、不发送模型请求。`agent-readiness.ts`（protocol）统一供引导和外部智能体 设置页使用：先看启用、安装及兼容性，再看原生登录或兼容且有密钥的供应商。供应商已配置与连接测试成功是两件事，测试结果按配置 revision 保留在 renderer，编辑后旧结果不再使用；已知测试失败会展示原因并留在 Agent 配置步骤，原生账号或其他供应商可用时仍可继续，不强制发起测试。侧栏环境提示也识别供应商配置，避免误报未登录。descriptor 的 `setup` 声明原生账号、原生供应商或首次使用授权，客户端不按 Agent 名称判断。core 在环境检查中可选返回 `problem`，区分 `incompatible-version` 与 `probe-failed`；旧 core 未说明的原因保持未知。
+Web 前端在首次连接且环境、供应商和任务来源数据到齐后启动检查，不再自动打开整篇指导。引导只检查一个 Agent 的安装和可用条件，再提出接着聊终端里的会话、询问是否配置任务来源，自己不创建会话、不发送模型请求。`agent-readiness.ts`（protocol）统一供引导和外部智能体 设置页使用：先看启用、安装及兼容性，再看原生登录或兼容且有密钥的供应商。供应商已配置与连接测试成功是两件事，测试结果按配置 revision 保留在前端，编辑后旧结果不再使用；已知测试失败会展示原因并留在 Agent 配置步骤，原生账号或其他供应商可用时仍可继续，不强制发起测试。侧栏环境提示也识别供应商配置，避免误报未登录。descriptor 的 `setup` 声明原生账号、原生供应商或首次使用授权，客户端不按 Agent 名称判断。core 在环境检查中可选返回 `problem`，区分 `incompatible-version` 与 `probe-failed`；旧 core 未说明的原因保持未知。
 
 `setup-progress.ts` 计算当前步骤，本机偏好保存状态、所选 Agent、原生配置确认、接着聊和任务来源选择。原生配置未知时用户可自行确认；确认按 Agent、实际路径和版本绑定，不改写检测事实，不能越过已知未登录、检测失败或版本不兼容。首次使用才授权的 Agent 可以明确推迟授权，不为此创建会话。已看过旧指导或已有任务、会话的用户不会自动触发，完成或主动退出后也不会自动重弹，可从左下角帮助 → 检查使用环境手动继续。任务来源凭证及必填设置保存后即可完成，是否启用同步、同步成功和导入任务不属于完成条件。
 
@@ -469,7 +477,7 @@ Agent 可用之后、任务来源之前是「接着聊」一步：从零用一�
 - Codex：可写时作为每个回合 `sandboxPolicy` 的可写根；只读沙箱不收可写根，所以规划和只读阶段写不了。规则用 `-c developer_instructions=…` 传入。
 - Cursor：可写时 `--add-dir`；ACP 没有系统提示词，规则拼在进程第一条提示的 `wire` 上，`logged` 不带，聊天记录、搜索和移交都看不到。
 
-回复里的 `obsidian://` 链接由桌面端主进程用 `shell.openExternal` 打开，是回复里唯一允许启动的应用协议。
+回复里的 `obsidian://` 链接交给浏览器处理，由浏览器和操作系统决定是否打开对应应用；它是回复链接解析器允许的应用协议。
 
 ### 技能库
 
@@ -485,7 +493,7 @@ Agent 可用之后、任务来源之前是「接着聊」一步：从零用一�
 
 ### Conclave 管理工具
 
-内置 MCP 的管理工具（`mcp-management-tools.ts`）把现有 core RPC 开放给聊天 Agent，名称集中在 protocol 的 `mcp-management.ts`。工具只解析参数、检查调用会话并转发 RPC；校验、持久化和变更通知仍由原服务负责，桌面端照常收到配置变化。不新增数据库结构或 RPC，不改变协议版本。
+内置 MCP 的管理工具（`mcp-management-tools.ts`）把现有 core RPC 开放给聊天 Agent，名称集中在 protocol 的 `mcp-management.ts`。工具只解析参数、检查调用会话并转发 RPC；校验、持久化和变更通知仍由原服务负责，Web 客户端照常收到配置变化。不新增数据库结构或 RPC，不改变协议版本。
 
 | 工具 | 对应 RPC |
 | --- | --- |
@@ -554,22 +562,15 @@ Claude Code 和 Codex 可以登录多个账号（描述符的 `capabilities.acco
 - **自动换号**（默认开）：一轮撞上额度上限时（`UsageLimitResumes.observe`），阶段在账号 X 上、当前账号还是 X，就按 `pickAccount`（有余量的优先、再看用得少的，跳过未登录和已用完的）换当前账号；别的会话已经换走、新账号还有额度，就直接用它。然后建一个立即执行的续跑（`ScheduledTarget.switchedTo`），续跑先把空闲在旧账号上的阶段停掉（`leaveSpentAccount`），再在新账号上恢复同一个 session、发「继续」；卡片显示「已换到账号…继续」。没有可换的账号就和以前一样等重置。轮询发现当前账号已用完时也会换。
 - **待实测**：两个真实订阅账号下，钥匙串命名、跨账号恢复同一个 session（Claude 的思考签名、Codex 的加密推理是否被另一个账号拒绝）、Codex 的 sqlite 经软链读写。若跨账号恢复被拒，就把账号并进 route key，换号改走移交。
 
-## 5. 内置浏览器
+## 5. 浏览器宿主兼容与书签
 
+**当前源码不提供浏览器宿主。** 旧桌面端曾用 Electron `WebContentsView` 承载网页，该实现已不在本仓库。Web 前端保留浏览器状态、历史操作卡片及部分兼容快捷键，但没有可用的浏览器面板；现有显示/切换面板函数是空操作。它也不能把用户当前使用的系统浏览器变成 Agent 的受控浏览器。
 
-聊天界面里的 Agent 可以用 Conclave 托管的浏览器看页面：Conclave 的 MCP 服务给每个聊天会话提供一组 `browser_*` 工具——`browser_navigate` 打开页面，`browser_snapshot` 读无障碍树快照（每个可交互元素带 ref），`browser_click` / `browser_type` / `browser_press` / `browser_hover` / `browser_scroll` / `browser_select` 按 ref 操作，`browser_wait` 等待，`browser_screenshot` 截图，`browser_console` 读控制台和失败的请求，`browser_tabs` 管标签页，`browser_bookmarks` 在用户的收藏里找地址。截图会显示在对话的卡片里。
+保留的兼容链路为：`BrowserService` 读取 `~/.conclave/browser/host.json`，核对 `BROWSER_HOST_PROTOCOL_VERSION`，通过本地 WebSocket 连接外部宿主。没有宿主时，操作返回 `browser-app-closed`；宿主不兼容时返回 `browser-app-outdated`。core 仍保留标签页的会话归属、站点授权、RPC、事件通知和 MCP 工具，包括导航、快照、截图、点击与输入等。协议能力标签表示 core 实现了这些接口，不表示这台机器已有可用宿主。
 
-- **运行位置**：浏览器就是 Conclave 应用自带的 Chromium，标签页由桌面端主进程持有：关窗口、刷新界面都不影响它，退出应用才结束。应用没开时，Agent 的浏览器工具会提示先打开 Conclave。不用下载任何东西。
-- **隔离与登录态**：所有标签页共用一份持久会话（Electron 的 `persist:conclave-browser` 分区），所以登录态在所有会话间共享；标签页按会话隔离，Agent 只看到自己会话的标签页，删除会话时它的标签页一并关闭。
-- **User-Agent**：这个会话的 User-Agent 换成本机 Chrome 会发的样子（同样的平台，`Chrome/<主版本>.0.0.0`），去掉 Electron 默认带的应用名和 `Electron/…`（`user-agent.ts`）。否则 Google 登录会把它当作内嵌在应用里的浏览器而拒绝，用 Google 账号登录的网站就进不去。客户端提示（`Sec-CH-UA`）仍是 Chromium 自己的。
-- **站点确认**：`localhost`、`127.0.0.1`、`[::1]`、`*.localhost`、`*.test` 直接打开；其他站点在一个会话里第一次访问时，对话里弹出确认卡：允许一次、本会话允许或拒绝。25 秒没有回答时 Agent 会收到「等待用户确认」，你回答后它再试一次就能打开。门禁拦的是顶层导航（Agent 的打开、你在画面里点的链接、重定向都算），页面自己加载的资源不拦。
-- **浏览器面板**：状态栏右下角的浏览器按钮（或 Ctrl+Shift+`）打开右侧的浏览器面板，和终端面板一样可以拖宽、最大化。它列出所有会话的标签页（标签上带会话名），也能用「＋」开你自己的标签页：这种标签页不属于任何会话，Agent 看不到，打开什么站点也不会问你。Agent 用浏览器时，对话里出现一个浏览器示意窗（这一回合访问过的标签页、当前页的地址和「打开」），浏览器在后台跑，点标签或「打开」才展开面板并选中那个标签页；标签页关闭后示意窗保留最后一次成功操作的标题和地址，「打开」改为不可点击的「已关闭」，关闭的标签仍可在卡片内切换回看；当前聊天订阅自身标签列表，其他回合或浏览器面板中的关闭操作也会同步到历史卡片（工具结果的格式见 `describeClosedTab`）；在 设置 → 集成 → 浏览器 里可以改成 Agent 第一次用浏览器时自动打开。
-- **页面**：面板里直接显示选中的标签页本身，铺满面板，和普通浏览器一样可以点击、输入（Esc 回到应用，Shift+Esc 把 Esc 发给页面）、改地址、后退刷新，也能关标签页、截图存成图片。地址栏右侧可以把页面固定成手机、平板等尺寸，固定尺寸的页面在面板里等比居中显示；Agent 调用 `browser_navigate` 或 `browser_tabs new` 时也可以传 `viewport`，之后一直保持到再改。你操作时标签页标为「你在操作」，Agent 对它的调用会被拒绝并被告知等待，5 秒没动作或点「交还给 Agent」后恢复。
-- **升级**：早期版本下载到 `~/.conclave/browser/` 的 Chromium 和 profile，在新版 core 第一次启动时自动删除；网站需要重新登录。
-- **收藏**：地址栏的星标收藏或取消收藏当前页，旁边的收藏按钮列出全部收藏，可搜索；点一条在当前标签页打开，按住 ⌘（Windows 上 Ctrl）在新标签页打开。收藏存在 core 的 `bookmarks` 表，一个地址只存一条，最多 5000 条，变动经 `bookmarks.changed` 同步到所有窗口。只收 http(s) 网址，书签小程序（`javascript:`）和 `chrome://` 之类的页面导入时跳过。
-- **导入收藏**：收藏菜单里的「从其他浏览器导入」由桌面端主进程读文件（`bookmark-import.ts`），渲染进程分批（每批 500 条）交给 core 的 `bookmarks.import`，已有的地址跳过。Chromium 系浏览器（Chrome、Edge、Brave、Arc（仅 macOS）、Vivaldi、Chromium）直接读各 profile 的 `Bookmarks` 文件，profile 名取自 `Local State`，所在文件夹记成「书签栏 / 工作」这样的路径。Safari、Firefox 的收藏库要额外权限或被浏览器锁着，所以走它们导出的 HTML 收藏文件（Netscape 格式，各浏览器都能导出）。只读收藏，不碰 cookie 和密码。
-- **Agent 查收藏**：`browser_bookmarks` 按关键词在收藏里找地址（标题、网址、文件夹都匹配，多个词要同时出现），用户说「去后台看看」却没给地址时用。它是只读工具，和浏览器工具一起提供，只读工作区和群聊成员也有。
-- **Codex**：Codex 对 Conclave 的 MCP 工具不弹自己的确认，所以站点确认是它唯一的闸；Claude Code 对打开页面和点击、输入会弹它自己的确认，只读的快照、截图、滚动、等待、控制台、标签页列表和查收藏已放行。
+有兼容宿主时，core 只向 Agent 开放所属会话的标签页；只读会话仅能执行允许的读取操作。网页渲染、持久登录态和用户直接操作页面的方式由宿主实现，本仓库的 Web 源码不提供这些保证。聊天中的历史浏览器操作和截图继续保留，普通文件、图片预览不依赖浏览器宿主。
+
+书签独立保存在 core 的 `bookmarks` 表，一个地址只存一条，最多 5000 条，通过 `bookmarks.changed` 同步；只接受 http(s) 地址。`browser_bookmarks` 可按标题、网址和文件夹搜索收藏，是独立的只读工具。浏览器导航 RPC 仍需要宿主，当前纯 Web 源码也不提供旧桌面端扫描系统浏览器收藏文件的实现。
 
 ## 6. 终端与端口
 
@@ -587,7 +588,7 @@ Claude Code 和 Codex 可以登录多个账号（描述符的 `capabilities.acco
 ### 开发服务端口
 
 
-状态栏右下角的端口按钮打开独立的端口面板，列出 Conclave 托管终端和 Agent 子进程正在监听的 TCP 端口，按任务、会话或终端分组。可以切换为只看当前任务 / 会话，打开内置浏览器、定位所属终端或停止监听进程；停止前会重新核验进程身份和端口归属，不会结束其他终端或 Agent。普通终端里的 shell 保留，Agent 命令结束后标签保留输出。面板打开时每两秒刷新，隐藏后停止扫描。
+状态栏右下角的端口按钮打开独立的端口面板，列出 Conclave 托管终端和 Agent 子进程正在监听的 TCP 端口，按任务、会话或终端分组。可以切换为只看当前任务 / 会话、在系统浏览器新标签打开端口地址、定位所属终端或停止监听进程；打开端口直接使用 `window.open`，不依赖浏览器宿主。停止前会重新核验进程身份和端口归属，不会结束其他终端或 Agent。普通终端里的 shell 保留，Agent 命令结束后标签保留输出。面板打开时每两秒刷新，隐藏后停止扫描。
 
 端口归属优先跟随终端 / Agent 的进程树。用户自己的 shell 只有在实际工作目录能唯一对应任务 worktree 或会话时才关联，多个会话共用目录时仍按终端显示。macOS 和 Linux 能读取实际工作目录；Windows 的普通 shell 按终端显示。core 启动 Agent 和终端时会在环境变量 `CONCLAVE_OWNER` 里写上归属（`conversation:<会话 id>` 或 `terminal:<终端 id>`），它们启动的进程都会继承。进程树断了的服务（启动它的 shell 退出、Agent 已停止，进程被系统接管），daemon 会读它的环境变量，仍归到原来的会话或还开着的终端下，也能停止；Agent 让终端里的命令起的服务归到会话，关掉标签也找得到。环境变量在 macOS 上用 `ps -E` 读，只读得到当前用户、非 Apple 自带程序的进程；Linux 读 `/proc/<pid>/environ`；Windows 读不到，只看进程树。没有归属的系统服务、Docker 容器内服务、只监听 unix socket 的进程，以及环境变量被清空后启动的服务不在列表中。端口发现依赖 macOS 的 `lsof` / `ps`、Linux 的 `ss`（或 `lsof`）/ `ps`、Windows 的 PowerShell。
 
@@ -607,7 +608,7 @@ Claude Code 和 Codex 可以登录多个账号（描述符的 `capabilities.acco
 
 配置始终从项目本身的 checkout 读取，不读 worktree，所以 Agent 改 worktree 里那份不会改变要运行的命令。命令由用户的登录 shell 执行，cwd 是 worktree 根目录，另有环境变量 `CONCLAVE_ROOT_PATH`（项目）和 `CONCLAVE_WORKTREE_PATH`。命令显示在终端面板的独立标签里（`Terminal.purpose`），Agent 也能用 `terminal_read` 读取；用户可以在面板里停止。
 
-命令来自仓库，不一定是用户写的，所以第一次运行前要用户确认：core 在 `~/.conclave/project-trust.json` 里按仓库记下 setup 和 check 的哈希，哈希对不上时拒绝启动或提交（`project-config-untrusted`）。桌面端随后显示这些命令，用户允许后再试一次。只改 `copy` 不需要重新确认。文件格式有误时同样拒绝（`project-config-invalid`），不会悄悄跳过 setup。
+命令来自仓库，不一定是用户写的，所以第一次运行前要用户确认：core 在 `~/.conclave/project-trust.json` 里按仓库记下 setup 和 check 的哈希，哈希对不上时拒绝启动或提交（`project-config-untrusted`）。Web 客户端随后显示这些命令，用户允许后再试一次。只改 `copy` 不需要重新确认。文件格式有误时同样拒绝（`project-config-invalid`），不会悄悄跳过 setup。
 
 这个文件也可以在应用里填：设置 → 项目，每个最近用过的项目一行，显示配置了哪几项，「项目配置」打开表单（复制的文件每行一个，setup 和 check 各一个文本框）。保存由 core 写回项目里的 `.conclave/project.json`（`projects.writeConfig`，格式化后写，空项不写，全部清空则删除文件；原文件损坏也直接覆盖），并把写入的命令记为已允许：是用户自己填的，不必再确认。不是 Git 仓库的目录用不到 worktree，拒绝写入。表单上的「按项目填入建议」请 core 看项目根目录（`projects.suggestConfig`）：已有给 Superset（`.superset/config.json`）或 Conductor（`conductor.json`）写的 setup 就沿用；否则按清单文件认项目类型——Node 按锁文件选 pnpm、yarn、bun 或 npm，check 用 package.json 里的 typecheck 和 test 脚本；Go、Cargo、uv / Poetry / pip、Maven / Gradle、Bundler、Composer 各有一套命令，认出几种就依次串起来；根目录下的 `.env`、`.env.local` 这类本地文件列进复制。只填表单里还空着的项，不改用户已经写的；只看根目录，子目录里的项目（如 `server/go.mod`）认不出来。
 
@@ -633,10 +634,10 @@ pnpm dev:web
 手动测试或截图时，用 `CONCLAVE_HOME` 指向独立数据目录，避免修改 `~/.conclave` 中的真实数据。daemon 和 core 使用该目录下的数据库、socket、worktree 和 core.json，Web 页面连接这套 core：
 
 ```bash
-CONCLAVE_HOME=~/.conclave-demo pnpm dev
+CONCLAVE_HOME=~/.conclave-demo CONCLAVE_HOST=127.0.0.1 pnpm dev
 ```
 
-Windows 的 PowerShell 使用 `$env:CONCLAVE_HOME = "$HOME\.conclave-demo"; pnpm dev`。分开启动时，给 daemon 和 core 设置相同的 `CONCLAVE_HOME`。
+Windows 的 PowerShell 使用 `$env:CONCLAVE_HOME = "$HOME\.conclave-demo"; pnpm dev`。分开启动时，给 daemon 和 core 设置相同的 `CONCLAVE_HOME`；core 可额外设置 `CONCLAVE_HOST=127.0.0.1`。
 
 ## 8. 源码构建
 
@@ -659,6 +660,10 @@ pnpm test               # 构建插件 SDK，再运行 Vitest
 pnpm build              # 构建 DSH runtime 和 Web 静态资源
 pnpm verify:plugin-sdk  # 独立消费者验证 SDK 打包、类型和插件协议
 ```
+
+涉及 RPC 或跨进程数据的新功能先在 `packages/protocol` 定义 schema，再实现 core/daemon，最后由 Web 通过 RPC 接入。前端不得直接越过 core 操作服务端文件、Git 或 PTY；模型与推理选项以当前 Agent 的实时目录为准，不能拿上一阶段的旧状态覆盖。仅文档或局部展示修改不需要为此虚构协议变更。
+
+维护时按职责定位：`ConversationService` / `ChatHost` 管会话与恢复，`TaskService` / worktree 服务管任务隔离，`DiscussionService` 管讨论轮次，`SquadService` 管团队编排，RPC server 与 daemon client 管连接。数据库变更使用增量迁移，保留旧记录可读性。进程恢复、权限、发送去重或 worktree 生命周期的修改应覆盖相应回归测试；UI 及构建改动还需构建检查。
 
 [CI](../.github/workflows/ci.yml) 在 PR 和 main 推送时运行这些检查，不发布应用或安装包。SDK 与外部来源插件的打包验证仍是独立能力，见 [插件开发指南](PLUGINS.md)。
 

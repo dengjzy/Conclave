@@ -1,6 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { AGENT_KINDS, activatedSkillNames, agentDescriptor, skillNameConflicts, type AgentKind, type SkillActivation, type SkillRef, type SkillRepo } from '@conclave/protocol'
-import { useOccludesBrowser } from '../browser-occlusion'
 import { perform } from '../core-store'
 import { t } from '../i18n'
 import { agentLabel } from '../labels'
@@ -10,7 +9,6 @@ import { Segmented, SettingsRow } from './SettingsControls'
 const takers = AGENT_KINDS.filter((kind) => agentDescriptor(kind).capabilities.skills)
 
 export function SkillActivationDialog({ repo, repos, fallback, onClose, onManage }: { repo: SkillRepo; repos: readonly SkillRepo[]; fallback: readonly SkillRef[]; onClose: () => void; onManage: (id: string) => void }) {
-  useOccludesBrowser()
   const dialog = useRef<HTMLDialogElement>(null)
   const titleId = useId()
   const [draft, setDraft] = useState<SkillActivation>(() => repo.activation ?? { mode: 'selected', skills: activatedSkillNames(repo, fallback), agents: null })

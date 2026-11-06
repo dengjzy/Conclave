@@ -436,8 +436,8 @@ export const MESSAGES = {
     "en": "Interface language"
   },
   "language.description": {
-    "zh": "跟随系统或手动选择，仅改变应用界面，不影响 Agent 回复与翻译设置。",
-    "en": "Follow the system or choose a language. Applies to the interface; Agent replies and translation settings remain independent."
+    "zh": "选择应用界面的语言，不影响 Agent 回复。",
+    "en": "Choose the interface language. Agent replies remain independent."
   },
   "App.chooseOrCreateAGroupChat": {
     "zh": "选择或新建一个群聊",
@@ -1067,24 +1067,6 @@ export const MESSAGES = {
     "zh": "git 状态",
     "en": "Git status"
   },
-  "BrowserBookmarks.bookmarks": {"zh":"收藏","en":"Bookmarks"},
-  "BrowserBookmarks.bookmarkThisPage": {"zh":"收藏这个页面","en":"Bookmark this page"},
-  "BrowserBookmarks.removeBookmark": {"zh":"取消收藏","en":"Remove bookmark"},
-  "BrowserBookmarks.deleteBookmark": {"zh":"删除收藏 {title}","en":"Delete bookmark {title}"},
-  "BrowserBookmarks.searchBookmarks": {"zh":"搜索收藏，回车打开第一个","en":"Search bookmarks, Enter opens the first"},
-  "BrowserBookmarks.noBookmarksYet": {"zh":"还没有收藏。点地址栏的星标收藏当前页面，或从其他浏览器导入。","en":"No bookmarks yet. Click the star in the address bar to keep a page, or import from another browser."},
-  "BrowserBookmarks.noMatchingBookmarks": {"zh":"没有匹配的收藏","en":"No matching bookmarks"},
-  "BrowserBookmarks.moreBookmarks": {"zh":"还有 {count} 个，搜索可以缩小范围","en":"{count} more. Search to narrow them down."},
-  "BrowserBookmarks.importFromOtherBrowsers": {"zh":"从其他浏览器导入…","en":"Import from other browsers…"},
-  "BrowserBookmarks.importBookmarks": {"zh":"导入收藏","en":"Import bookmarks"},
-  "BrowserBookmarks.lookingForBrowsers": {"zh":"正在查找本机的浏览器…","en":"Looking for browsers on this computer…"},
-  "BrowserBookmarks.noBrowserBookmarksFound": {"zh":"本机没有找到 Chrome、Edge、Brave、Arc 等浏览器的收藏。","en":"No bookmarks found from Chrome, Edge, Brave, Arc or similar browsers on this computer."},
-  "BrowserBookmarks.profileCount": {"zh":"{profile} · {count} 个","en":"{profile} · {count}"},
-  "BrowserBookmarks.fromHtmlFile": {"zh":"从 HTML 文件导入…","en":"Import from HTML file…"},
-  "BrowserBookmarks.safariFirefoxExport": {"zh":"Safari、Firefox 等导出的收藏文件","en":"Bookmarks exported from Safari, Firefox and others"},
-  "BrowserBookmarks.importedCount": {"zh":"已导入 {added} 个，跳过 {skipped} 个（已收藏或超出上限）","en":"Imported {added}, skipped {skipped} (already kept or over the limit)"},
-  "BrowserBookmarks.couldNotReadBookmarks": {"zh":"没能读取这些收藏","en":"Could not read these bookmarks"},
-  "BrowserBookmarks.backToBookmarks": {"zh":"返回收藏","en":"Back to bookmarks"},
   "chatTools.findBookmarks": {"zh":"查找收藏","en":"Find bookmarks"},
   "BrowserPanel.newTab": {
     "zh": "新标签页",
@@ -1632,10 +1614,6 @@ export const MESSAGES = {
     "zh": "无法访问文件",
     "en": "Cannot access file"
   },
-  "ChatContextMenu.translationOfSelection": {
-    "zh": "选中内容的翻译",
-    "en": "Translation of selection"
-  },
   "ChatContextMenu.chatContent": {
     "zh": "聊天内容",
     "en": "Chat content"
@@ -1671,22 +1649,6 @@ export const MESSAGES = {
   "ChatContextMenu.nothingToCopy": {
     "zh": "没有可复制的内容",
     "en": "Nothing to copy"
-  },
-  "ChatContextMenu.translateTo": {
-    "zh": "译成{value1}{value2}",
-    "en": "Translate to {value1}{value2}"
-  },
-  "ChatContextMenu.translatedBy": {
-    "zh": " · 由 {value1} 翻译",
-    "en": " · Translated by {value1}"
-  },
-  "ChatContextMenu.translating": {
-    "zh": "{value1}翻译中…",
-    "en": "{value1}Translating…"
-  },
-  "ChatContextMenu.copyTranslation": {
-    "zh": "复制译文",
-    "en": "Copy translation"
   },
   "ChatContextMenu.retry": {
     "zh": "重试",
@@ -6459,14 +6421,6 @@ export const MESSAGES = {
     "zh": "允许并继续",
     "en": "Allow and continue"
   },
-  "RequestPopup.openInConclave": {
-    "zh": "在 Conclave 中打开",
-    "en": "Open in Conclave"
-  },
-  "RequestPopup.collapseShowAgainForNewRequests": {
-    "zh": "收起，有新的请求再弹出",
-    "en": "Collapse; show again for new requests"
-  },
   "RoutineEditor.daily": {
     "zh": "每天",
     "en": "Daily"
@@ -6959,14 +6913,6 @@ export const MESSAGES = {
     "zh": "窗口不在前台时，Agent 等你确认、做完一轮、异常退出或定时任务完成时通知你，点击回到对应会话。",
     "en": "When the window is in the background, notify you when Agent needs approval, finishes a turn, exits unexpectedly, or a routine finishes. Click to open the conversation."
   },
-  "SettingsPage.showPendingRequestsAtTheTopOfThe": {
-    "zh": "离开时在屏幕顶部弹出待处理的请求",
-    "en": "Show pending requests at the top of the screen when away"
-  },
-  "SettingsPage.whileUsingAnotherAppApprovalRequestsAppearAs": {
-    "zh": "在别的应用里时，待确认的请求以卡片弹出，可直接选择，不抢焦点；这类请求不再另发系统通知。",
-    "en": "While using another app, approval requests appear as cards you can answer without stealing focus. These requests do not also trigger system notifications."
-  },
   "SettingsPage.automatic": {
     "zh": "自动（{cheapestLabel}）",
     "en": "Automatic ({cheapestLabel})"
@@ -6986,30 +6932,6 @@ export const MESSAGES = {
   "SettingsPage.automatic_1569": {
     "zh": "自动",
     "en": "Automatic"
-  },
-  "SettingsPage.theConnectedCoreIsTooOldToTranslate": {
-    "zh": "正在连接的 core 版本较旧，还不能翻译；更新后可用。",
-    "en": "The connected core is too old to translate. Update it to enable this feature."
-  },
-  "SettingsPage.translateTo": {
-    "zh": "翻译成",
-    "en": "Translate to"
-  },
-  "SettingsPage.aTranslateButtonAppearsWhenAReplyIs": {
-    "zh": "回复不是这种语言时，会出现「翻译」按钮。",
-    "en": "A “Translate” button appears when a reply is in another language."
-  },
-  "SettingsPage.autoTranslate": {
-    "zh": "自动翻译",
-    "en": "Auto-translate"
-  },
-  "SettingsPage.translateOnlyRepliesVisibleOnScreenClickOriginal": {
-    "zh": "只翻译显示在屏幕上的回复，点「原文」查看原文。",
-    "en": "Translate only replies visible on screen. Click “Original” to see the source."
-  },
-  "SettingsPage.usesTheConversationSAgentChooseTheModel": {
-    "zh": "由会话所用的 Agent 翻译，模型在 设置 → 会话 →「轻量任务用的模型」里选。翻译单独请求，不占会话上下文，但计入该 Agent 的用量；同一条回复只翻一次。",
-    "en": "Uses the conversation's Agent. Choose the model in Settings → Conversations → “Model for quick tasks”. Translation is a separate request and uses no conversation context, but counts toward the Agent's usage. Each reply is translated only once."
   },
   "SettingsPage.showUsageQuotaInStatusBar": {
     "zh": "显示使用情况",
@@ -7148,8 +7070,8 @@ export const MESSAGES = {
     "en": "Model for quick tasks"
   },
   "SettingsPage.useThisAgentSModelForTranslationCommit": {
-    "zh": "翻译、提交信息、会话标题等小活用同一 Agent 的这个模型；默认用它最便宜的模型。",
-    "en": "Use this Agent's model for translation, commit messages, conversation titles, and other small jobs. Defaults to its cheapest model."
+    "zh": "提交信息、会话标题等小活用同一 Agent 的这个模型；默认用它最便宜的模型。",
+    "en": "Use this Agent's model for commit messages, conversation titles, and other small jobs. Defaults to its cheapest model."
   },
   "SettingsPage.access": {
     "zh": "访问",
@@ -7276,37 +7198,9 @@ export const MESSAGES = {
     "zh": "工作了",
     "en": "Worked"
   },
-  "SettingsPage.translateAgentRepliesIntoYourLanguage": {
-    "zh": "把 Agent 的回复翻译成你的语言。",
-    "en": "Translate Agent replies into your language."
-  },
   "SettingsPage.language": {
     "zh": "语言",
     "en": "Language"
-  },
-  "SettingsPage.chinese": {
-    "zh": "中文",
-    "en": "Chinese"
-  },
-  "SettingsPage.english": {
-    "zh": "英文",
-    "en": "English"
-  },
-  "SettingsPage.japanese": {
-    "zh": "日语",
-    "en": "Japanese"
-  },
-  "SettingsPage.korean": {
-    "zh": "韩语",
-    "en": "Korean"
-  },
-  "SettingsPage.original": {
-    "zh": "原文",
-    "en": "Original"
-  },
-  "SettingsPage.translation": {
-    "zh": "译文",
-    "en": "Translation"
   },
   "SettingsPage.usageQuota": {
     "zh": "用量额度",
@@ -7371,18 +7265,6 @@ export const MESSAGES = {
   "SettingsPage.unexpectedExit": {
     "zh": "异常退出",
     "en": "Unexpected exit"
-  },
-  "SettingsPage.popup": {
-    "zh": "弹窗",
-    "en": "Popup"
-  },
-  "SettingsPage.card": {
-    "zh": "卡片",
-    "en": "Card"
-  },
-  "SettingsPage.top": {
-    "zh": "顶部",
-    "en": "Top"
   },
   "SettingsPage.approval": {
     "zh": "审批",
@@ -9436,34 +9318,6 @@ export const MESSAGES = {
     "zh": "每行一项",
     "en": "One item per line"
   },
-  "TranslateButton.translatedBy": {
-    "zh": "由 {value1} 翻译",
-    "en": "Translated by {value1}"
-  },
-  "TranslateButton.translatedByThisAgentSDefaultModel": {
-    "zh": "由这个 Agent 的默认模型翻译",
-    "en": "Translated by this Agent's default model"
-  },
-  "TranslateButton.viewTranslation": {
-    "zh": "看译文（{by}）",
-    "en": "View translation ({by})"
-  },
-  "TranslateButton.viewOriginalTranslationBy": {
-    "zh": "看原文（这是{by}的译文）",
-    "en": "View original (translation by {by})"
-  },
-  "TranslateButton.clickToRetry": {
-    "zh": "{value1}，点击重试",
-    "en": "{value1}; click to retry"
-  },
-  "TranslateButton.translateUsingThisAgentSSmallModel": {
-    "zh": "用这个 Agent 的小模型翻译{what}",
-    "en": "Translate {what} using this Agent's small model"
-  },
-  "TranslateButton.retryTranslation": {
-    "zh": "重试翻译",
-    "en": "Retry translation"
-  },
   "UsageBar.signInCredentialsExpiredRunToRefresh": {
     "zh": "登录凭据已过期，运行一次 {value1} 即可刷新",
     "en": "Sign-in credentials expired. Run {value1} to refresh"
@@ -11104,18 +10958,6 @@ export const MESSAGES = {
     "zh": "{value1}额度已重置，可以继续用了",
     "en": "{value1} quota has reset and is ready to use"
   },
-  "requestPopup.hasAQuestion": {
-    "zh": "有个问题",
-    "en": "Has a question"
-  },
-  "requestPopup.planAwaitingApproval": {
-    "zh": "计划待批准",
-    "en": "Plan awaiting approval"
-  },
-  "requestPopup.awaitingYourPermission": {
-    "zh": "等你允许",
-    "en": "Awaiting your permission"
-  },
   "routineTemplates.dailyCodeReview": {
     "zh": "每日代码审查",
     "en": "Daily code review"
@@ -11610,7 +11452,7 @@ export const MESSAGES = {
   "ModelProviderSettings.restorePresetModels": { "zh": "恢复预设的模型列表", "en": "Restore the preset's models" },
   "ModelProviderSettings.defaultModel": { "zh": "默认模型", "en": "Default model" },
   "ModelProviderSettings.smallModel": { "zh": "小模型", "en": "Small model" },
-  "ModelProviderSettings.smallModelHint": { "zh": "标题、翻译、提交说明这类小任务用它。", "en": "Used for small jobs such as titles, translations and commit messages." },
+  "ModelProviderSettings.smallModelHint": { "zh": "标题、提交说明这类小任务用它。", "en": "Used for small jobs such as titles and commit messages." },
   "ModelProviderSettings.agents": { "zh": "给哪些 Agent 用", "en": "Agents that use it" },
   "ModelProviderSettings.agentsUnservable": { "zh": "{value1} 用不了这个服务商的接口，只能用自己的账号。", "en": "{value1} cannot use this provider's endpoints and keep their own accounts." },
   "ModelProviderSettings.addresses": { "zh": "地址", "en": "Addresses" },

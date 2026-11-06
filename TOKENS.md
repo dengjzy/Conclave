@@ -8,10 +8,9 @@
 | Format | Location |
 |---|---|
 | CSS Custom Properties (`light-dark()`) | [`packages/web/src/styles.css`](packages/web/src/styles.css) |
-| TypeScript Token Definitions | [`packages/web/src/tokens/index.ts`](packages/web/src/tokens/index.ts) |
 | Visual Principles & Rationale | [`DESIGN.md`](DESIGN.md) |
 
-Theming and dark mode resolve automatically through CSS `light-dark()` driven by `color-scheme` (following the system preference, or pinned in user settings via `[data-theme='light'|'dark']`). Two curated minimal palettes (`studio`, `ember`) apply via `[data-palette]` attributes.
+CSS custom properties are the runtime source of truth; components use them directly. The semantic names in this document describe their intent and are not a separate TypeScript API. Theming and dark mode resolve automatically through CSS `light-dark()` driven by `color-scheme` (following the system preference, or pinned in user settings via `[data-theme='light'|'dark']`). Two curated minimal palettes (`studio`, `ember`) apply via `[data-palette]` attributes.
 
 ---
 

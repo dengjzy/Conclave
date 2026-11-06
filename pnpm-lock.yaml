@@ -170,9 +170,6 @@ catalogs:
     '@types/ws':
       specifier: 8.18.1
       version: 8.18.1
-    playwright-core:
-      specifier: 1.63.0
-      version: 1.63.0
     tsx:
       specifier: 4.23.15
       version: 4.23.15
@@ -381,9 +378,6 @@ importers:
       '@fontsource-variable/geist-mono':
         specifier: 5.3.0
         version: 5.3.0
-      playwright-core:
-        specifier: 'catalog:'
-        version: 1.63.0
     devDependencies:
       '@codemirror/commands':
         specifier: 6.11.1
@@ -427,9 +421,6 @@ importers:
       '@types/react-dom':
         specifier: 19.3.0
         version: 19.3.0(@types/react@19.3.0)
-      '@types/ws':
-        specifier: 'catalog:'
-        version: 8.18.1
       '@vitejs/plugin-react':
         specifier: 5.2.0
         version: 5.2.0(supports-color@7.2.0)(vite@7.3.6(@types/node@26.6.2)(tsx@4.23.15)(yaml@2.9.1))
@@ -481,9 +472,6 @@ importers:
       vite:
         specifier: ^7.3.0
         version: 7.3.6(@types/node@26.6.2)(tsx@4.23.15)(yaml@2.9.1)
-      ws:
-        specifier: 'catalog:'
-        version: 8.21.3
       zod:
         specifier: 'catalog:'
         version: 4.6.5
@@ -2844,11 +2832,6 @@ packages:
   pkce-challenge@5.0.1:
     resolution: {integrity: sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==}
     engines: {node: '>=16.20.0'}
-
-  playwright-core@1.63.0:
-    resolution: {integrity: sha512-rYCsBF/M5HjUch52bbtVONEFjv6Xu8sm8h72dNlR5bzIE1fvC/bxgspzkjSfU+MweEMmPM8KJebG6nnyxo5mCg==}
-    engines: {node: '>=20'}
-    hasBin: true
 
   points-on-curve@0.2.0:
     resolution: {integrity: sha512-0mYKnYYe9ZcqMCWhUjItv/oHjvgEsfKvnUTg8sAtnHr3GVy7rGkXCb6d5cSyqrWqL4k81b9CPg3urd+T7aop3A==}
@@ -5872,8 +5855,6 @@ snapshots:
   picomatch@4.0.7: {}
 
   pkce-challenge@5.0.1: {}
-
-  playwright-core@1.63.0: {}
 
   points-on-curve@0.2.0: {}
 

@@ -8,8 +8,7 @@ export function toggleSidebar(): void {
   setPreference('sidebarHidden', !usePreferences.getState().sidebarHidden)
 }
 
-// The app's name and the sidebar's switch, in the title bar beside the traffic lights. It stays
-// put whether the sidebar shows or not, so the switch is always where it was.
+// Keep the sidebar switch in place whether the sidebar is shown or hidden.
 export function WindowBrand() {
   const hidden = usePreferences((s) => s.sidebarHidden)
 

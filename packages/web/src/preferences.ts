@@ -1,4 +1,4 @@
-import { AgentKind, LanguagePreference, TranslateLanguage } from '@conclave/protocol'
+import { AgentKind, LanguagePreference } from '@conclave/protocol'
 import { z } from 'zod'
 import { create } from 'zustand'
 import { PALETTES } from './palettes'
@@ -46,11 +46,8 @@ const Preferences = z.object({
   showUsage: z.boolean().catch(true),
   // Hidden only from the status bar; quota tracking and agent availability stay unchanged.
   hiddenUsageAgents: z.array(AgentKind).catch([]),
-  // Off, nothing is said when the window is not in front; the dock count stays.
+  // Off, nothing is said when the window is not in front; the badge count stays.
   notifications: z.boolean().catch(true),
-  // On, an agent held up on the user while they are in another app comes up on a card at the top
-  // of the screen, to answer there.
-  requestPopup: z.boolean().catch(true),
   usageDisplay: z.enum(['used', 'remaining']).catch('used'),
   // On, the usage card says how to spend each agent's quota against its clock, pickers mark the
   // agent best used now, and notifications tell of quota about to go unused or running out early.
@@ -103,11 +100,7 @@ const Preferences = z.object({
   showArchivedDiscussions: z.boolean().catch(false),
   // On, a group chat's first round shows its independent answers side by side, for comparing them.
   discussionSideBySide: z.boolean().catch(true),
-  // What an agent's reply in another language is translated into, and whether that happens as it
-  // comes into view rather than when asked.
-  translateTo: TranslateLanguage.catch('zh-CN'),
-  autoTranslate: z.boolean().catch(false),
-  // The model each agent does small jobs with (helpers, translation, commit messages), where
+  // The model each agent does small jobs with (helpers, titles, commit messages), where
   // the user picked one; otherwise its cheapest.
   quickModels: z.partialRecord(AgentKind, z.string().min(1)).catch({})
 })

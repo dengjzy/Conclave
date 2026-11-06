@@ -7,7 +7,6 @@ import { gitGraph } from '../git-graph'
 import { commitRefs } from '../git-refs'
 import { branchNodes, type BranchNode } from '../git-branches'
 import { openResolvedFile, showResolvedFile } from '../file-actions'
-import { useOccludesBrowser } from '../browser-occlusion'
 import { BranchStatusDetails, type BranchTarget } from './BranchStatus'
 import { CommitMessageButton } from './CommitMessageButton'
 import { commitSubject, commitWithWrittenMessage, useCanWriteCommitMessage, useWritingCommit } from '../written-commits'
@@ -462,7 +461,6 @@ function resultNote(action: GitAction, result: GitResult, rebasing: boolean): st
   return result.stash === 'kept' ? `${done} ${t('GitInspector.stashKept', { branch: branch || 'HEAD' })}` : done
 }
 function ActionDialog({ choice, target, status, busy, run, commitWritten, close }: { choice: DialogChoice; target: GitTarget; status: GitStatus; busy: boolean; run: (action: GitAction) => Promise<boolean>; commitWritten: (push: boolean) => void; close: () => void }) {
-  useOccludesBrowser()
   const dialog = useRef<HTMLDialogElement>(null)
   const [name, setName] = useState(choice.kind === 'push' ? status.upstream?.split('/').slice(1).join('/') || status.branch || '' : choice.kind === 'rename' ? choice.branch?.name ?? '' : '')
   const [source, setSource] = useState(choice.commit?.sha ?? choice.branch?.ref ?? 'HEAD')

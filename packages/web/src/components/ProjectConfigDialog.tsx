@@ -1,7 +1,6 @@
 import { localized, t, tr } from '../i18n'
 import { useEffect, useRef, useState } from 'react'
 import { tidyProjectConfig, type ProjectConfig } from '@conclave/protocol'
-import { useOccludesBrowser } from '../browser-occlusion'
 import { perform, useCore } from '../core-store'
 import { CloseIcon, SparkIcon } from './icons'
 
@@ -43,7 +42,6 @@ export function configOf(draft: Draft): ProjectConfig {
 // command that readies it, and the one a task's work must pass before review. Saving writes the
 // file in the project, where it is meant to be committed.
 export function ProjectConfigDialog({ projectPath, onClose, onSaved }: { projectPath: string; onClose: () => void; onSaved?: (config: ProjectConfig | null) => void }) {
-  useOccludesBrowser()
   const dialog = useRef<HTMLDialogElement>(null)
   const rpc = useCore((s) => s.rpc)
   const [loaded, setLoaded] = useState<Loaded>({ state: 'loading' })

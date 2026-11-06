@@ -2,7 +2,7 @@ import { AgentProfileStore } from './agent-profile-store'
 import { AgentProfileService } from './agent-profile-service'
 import { AgentCliMaintenance } from './agent-cli-maintenance'
 import { randomBytes } from 'node:crypto'
-import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { AGENT_KINDS, agentDescriptor, PROTOCOL_VERSION, quotaVerdict, usageAccount, usageReadable, type AgentKind, type AgentUsage, type ChatItem } from '@conclave/protocol'
@@ -187,14 +187,9 @@ const browser = new BrowserService(
     }
   }
 )
-// The desktop app runs the browser; core follows its host file to connect, and connects now in
-// case the app is already up. Earlier versions kept a Chromium download and profile beside it.
+// Browser hosts are external to this workspace; reconnect when their endpoint appears.
 watchBrowserHostFile(paths.browserHostFile, () => browser.hostFileChanged())
 browser.hostFileChanged()
-for (const stale of ['ms-playwright', 'profile']) {
-  const dir = path.join(paths.browser, stale)
-  void stat(dir).then(() => rm(dir, { recursive: true, force: true }).then(() => console.log(`[conclave-core] removed ${dir}: the browser now runs in the app`)), () => {})
-}
 
 const service = new TaskService(
   store,

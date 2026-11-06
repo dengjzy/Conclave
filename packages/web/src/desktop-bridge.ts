@@ -1,14 +1,13 @@
 import { t } from './i18n'
 import { z } from 'zod'
-import { AgentKind, BookmarkFields } from '@conclave/protocol'
-import type { ActionableTarget, Notice } from './attention'
+import { AgentKind } from '@conclave/protocol'
+import type { Notice } from './attention'
 
 // What an Electron preload or native container exposes; absent when the UI runs in a plain browser.
 declare global {
   interface Window {
     conclave?: {
       platform: string
-      onFullScreenChange(listener: (fullScreen: boolean) => void): () => void
       getCoreEndpoint(): Promise<unknown>
       appVersion?(): Promise<unknown>
       pickPlugin?(kind: 'directory' | 'zip'): Promise<unknown>
@@ -22,18 +21,6 @@ declare global {
       notify?(notice: unknown): Promise<unknown>
       setBadge?(count: number): Promise<unknown>
       onNotificationClick?(listener: (target: unknown) => void): () => void
-      requestPopup?(wanted: boolean): Promise<unknown>
-      onRequestPopupWanted?(listener: (wanted: boolean) => void): () => void
-      requestPopupLayout?(layout: { visible: boolean; height: number }): void
-      openFromRequestPopup?(target: unknown): Promise<unknown>
-      browserShow?(tabId: string | null): Promise<unknown>
-      browserBounds?(bounds: { x: number; y: number; width: number; height: number }): void
-      browserOccluded?(occluded: boolean): Promise<unknown>
-      bookmarkSources?(): Promise<unknown>
-      readBookmarks?(id: string): Promise<unknown>
-      pickBookmarksFile?(): Promise<unknown>
-      onBrowserFocused?(listener: (event: unknown) => void): () => void
-      onBrowserShortcut?(listener: (event: unknown) => void): () => void
     }
   }
 }
@@ -45,21 +32,6 @@ export function detectedPlatform(): string {
   if (ua.includes('Mac')) return 'darwin'
   if (ua.includes('Win')) return 'win32'
   return 'linux'
-}
-
-export function applyTitleBar(): void {
-  if (window.conclave?.platform !== 'darwin') {
-    return
-  }
-  const root = document.documentElement
-  root.dataset.titlebar = 'inset'
-  window.conclave.onFullScreenChange((fullScreen) => {
-    if (fullScreen) {
-      root.dataset.fullscreen = ''
-    } else {
-      delete root.dataset.fullscreen
-    }
-  })
 }
 
 export async function appVersion(): Promise<string | null> {
@@ -200,85 +172,6 @@ export function onNotificationClick(listener: (target: Notice['target']) => void
   }
   notificationListeners.add(listener)
   return () => notificationListeners.delete(listener)
-}
-
-export function canShowRequestPopup(): boolean {
-  return window.conclave?.requestPopup !== undefined
-}
-
-export function wantRequestPopup(wanted: boolean): void {
-  void window.conclave?.requestPopup?.(wanted).catch(() => {})
-}
-
-export function onRequestPopupWanted(listener: (wanted: boolean) => void): () => void {
-  return window.conclave?.onRequestPopupWanted?.(listener) ?? (() => {})
-}
-
-export function layoutRequestPopup(visible: boolean, height: number): void {
-  window.conclave?.requestPopupLayout?.({ visible, height })
-}
-
-export function openFromRequestPopup(target: ActionableTarget): void {
-  void window.conclave?.openFromRequestPopup?.(target).catch(() => {})
-}
-
-export function canShowNativeBrowser(): boolean {
-  return window.conclave?.browserShow !== undefined
-}
-
-export function showNativeBrowserTab(tabId: string | null): void {
-  void window.conclave?.browserShow?.(tabId).catch(() => {})
-}
-
-export function reportBrowserBounds(rect: { x: number; y: number; width: number; height: number }): void {
-  window.conclave?.browserBounds?.({ x: rect.x, y: rect.y, width: rect.width, height: rect.height })
-}
-
-export function setBrowserOccluded(occluded: boolean): void {
-  void window.conclave?.browserOccluded?.(occluded).catch(() => {})
-}
-
-export function canImportBookmarks(): boolean {
-  return window.conclave?.bookmarkSources !== undefined
-}
-
-const BookmarkSource = z.object({ id: z.string(), browser: z.string(), profile: z.string(), count: z.number() })
-export type BookmarkSource = z.infer<typeof BookmarkSource>
-
-export async function bookmarkSources(): Promise<BookmarkSource[]> {
-  const found = await window.conclave?.bookmarkSources?.().catch(() => [])
-  return z.array(BookmarkSource).catch([]).parse(found ?? [])
-}
-
-export async function readBookmarks(id: string): Promise<BookmarkFields[]> {
-  return z.array(BookmarkFields).parse(await window.conclave?.readBookmarks?.(id))
-}
-
-export async function pickBookmarksFile(): Promise<BookmarkFields[] | null> {
-  const picked = await window.conclave?.pickBookmarksFile?.()
-  return picked === null || picked === undefined ? null : z.array(BookmarkFields).parse(picked)
-}
-
-const Focused = z.object({ tabId: z.string(), focused: z.boolean() })
-
-export function onBrowserFocused(listener: (tabId: string, focused: boolean) => void): () => void {
-  return (
-    window.conclave?.onBrowserFocused?.((event) => {
-      const parsed = Focused.safeParse(event)
-      if (parsed.success) listener(parsed.data.tabId, parsed.data.focused)
-    }) ?? (() => {})
-  )
-}
-
-const Shortcut = z.object({ kind: z.enum(['toggle-browser', 'settings']) })
-
-export function onBrowserShortcut(listener: (kind: 'toggle-browser' | 'settings') => void): () => void {
-  return (
-    window.conclave?.onBrowserShortcut?.((event) => {
-      const parsed = Shortcut.safeParse(event)
-      if (parsed.success) listener(parsed.data.kind)
-    }) ?? (() => {})
-  )
 }
 
 export function setNativeTheme(theme: 'system' | 'light' | 'dark'): void {

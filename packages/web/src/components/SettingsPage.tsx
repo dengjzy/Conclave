@@ -2,9 +2,9 @@ import { UsageSettings } from './UsageSettings'
 import { getLocale, localized, messageSearchText, t, tr, useLocale } from '../i18n'
 import type { BrowserStatus, WireUsage } from '@conclave/protocol'
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
-import { AGENT_KINDS, agentDescriptor, agentModeText, LANGUAGE_NAMES, PROTOCOL_VERSION, quickModel, TRANSLATE_LANGUAGES, UNATTENDED_MODES, type AgentKind, type SourceDescriptor } from '@conclave/protocol'
+import { AGENT_KINDS, agentDescriptor, agentModeText, PROTOCOL_VERSION, quickModel, UNATTENDED_MODES, type AgentKind, type SourceDescriptor } from '@conclave/protocol'
 import packageJson from '../../package.json'
-import { perform, setAwakeMode, setChatSettings, setSettingsOpen, useAwakeSupported, useCore, useBrowserSupported, useChatCommandsSupported, useKnowledgeBaseSupported, useMcpServersSupported, useModelProvidersSupported, useSessionImportSupported, useAccountsSupported, useProjectConfigEditSupported, useSkillsSupported, useTranslateSupported, useWireLogSupported } from '../core-store'
+import { perform, setAwakeMode, setChatSettings, setSettingsOpen, useAwakeSupported, useCore, useBrowserSupported, useChatCommandsSupported, useKnowledgeBaseSupported, useMcpServersSupported, useModelProvidersSupported, useSessionImportSupported, useAccountsSupported, useProjectConfigEditSupported, useSkillsSupported, useWireLogSupported } from '../core-store'
 import { setPreference, usePreferences } from '../preferences'
 import { UNATTENDED_LABEL } from '../schedules'
 import { detectedAgents, useInstalledAgents } from '../installed-agents'
@@ -15,7 +15,7 @@ import { InstalledAgentsSettings } from './InstalledAgentsSettings'
 import { TitleNamingSettings } from './TitleNamingSettings'
 import { AutoArchiveSettings } from './AutoArchiveSettings'
 import { agentLabel } from '../labels'
-import { appVersion, canNotify, canShowRequestPopup } from '../desktop-bridge'
+import { appVersion, canNotify } from '../desktop-bridge'
 import { formatBytes } from '../wire-entries'
 import {
   AgentIcon,
@@ -41,8 +41,7 @@ import {
   BoltIcon,
   RobotIcon,
   PulseIcon,
-  TerminalIcon,
-  TranslateIcon
+  TerminalIcon
 } from './icons'
 import { ChatCommandSettings } from './ChatCommandSettings'
 import { KnowledgeBaseSettings } from './KnowledgeBaseSettings'
@@ -59,30 +58,18 @@ import { projectName } from './ProjectPicker'
 import { Segmented, SettingsGroup, SettingsRow, Stepper, Toggle } from './SettingsControls'
 import { SupportSettings } from './SupportSettings'
 import { ProjectConfigDialog, projectConfigSummary } from './ProjectConfigDialog'
-import { useOccludesBrowser } from '../browser-occlusion'
 import { AppearanceSettings } from './AppearanceSettings'
 import './settings-page.css'
 
 function NotificationSettings() {
   const notifications = usePreferences((s) => s.notifications)
-  const requestPopup = usePreferences((s) => s.requestPopup)
+  if (!canNotify()) return <></>
   return (
-    <>
-      {canNotify() && (
-        <SettingsRow
-          label={t('SettingsPage.systemNotifications')}
-          description={t('SettingsPage.whenTheWindowIsInTheBackgroundNotify')}
-          control={(labelId) => <Toggle labelId={labelId} checked={notifications} onChange={(next) => setPreference('notifications', next)} />}
-        />
-      )}
-      {canShowRequestPopup() && (
-        <SettingsRow
-          label={t('SettingsPage.showPendingRequestsAtTheTopOfThe')}
-          description={t('SettingsPage.whileUsingAnotherAppApprovalRequestsAppearAs')}
-          control={(labelId) => <Toggle labelId={labelId} checked={requestPopup} onChange={(next) => setPreference('requestPopup', next)} />}
-        />
-      )}
-    </>
+    <SettingsRow
+      label={t('SettingsPage.systemNotifications')}
+      description={t('SettingsPage.whenTheWindowIsInTheBackgroundNotify')}
+      control={(labelId) => <Toggle labelId={labelId} checked={notifications} onChange={(next) => setPreference('notifications', next)} />}
+    />
   )
 }
 
@@ -96,8 +83,7 @@ function QuickModelPicker({ agent }: { agent: AgentKind }) {
   const options = [
     { value: '', label: t('SettingsPage.automatic', { cheapestLabel: cheapestLabel }), description: t('SettingsPage.cheapestSmallModel') },
     ...(catalog?.models ?? []).map((model) => ({ value: model.id, label: model.label, description: model.description || undefined })),
-    // A pick the catalog no longer lists stays shown, saying what translates in its place, so it can
-    // be changed; core falls back on the cheapest the same way.
+    // Keep a missing pick visible so it can be changed; core uses the cheapest model instead.
     ...(picked && !catalog?.models.some((model) => model.id === picked)
       ? [{ value: picked, label: catalog ? t('SettingsPage.unavailableUsingAutomatic', { picked: picked, cheapestLabel: cheapestLabel }) : picked }]
       : [])
@@ -531,12 +517,11 @@ const SECTIONS: readonly Section[] = localized(() => ([
     grouped: true
   },
   {
-    // In Electron only: a plain browser has no dock icon and nothing to click back to.
     id: 'notifications',
     group: t('SettingsPage.interface'),
     title: t('SettingsPage.notifications'),
     description: t('SettingsPage.howToNotifyYouWhenAgentsNeedYou'),
-    keywords: [t('SettingsPage.notifications'), t('SettingsPage.alert'), t('SettingsPage.badge'), 'dock', t('SettingsPage.foreground'), t('chatTools.wait'), t('SettingsPage.confirm'), t('SettingsPage.finished'), t('SettingsPage.unexpectedExit'), t('SettingsPage.popup'), t('SettingsPage.card'), t('SettingsPage.top'), t('SettingsPage.approval'), t('approvalChoiceText.allow')],
+    keywords: [t('SettingsPage.notifications'), t('SettingsPage.alert'), t('SettingsPage.badge'), t('SettingsPage.foreground'), t('chatTools.wait'), t('SettingsPage.confirm'), t('SettingsPage.finished'), t('SettingsPage.unexpectedExit'), t('SettingsPage.approval'), t('approvalChoiceText.allow')],
     Icon: BellIcon,
     Body: NotificationSettings
   },
@@ -760,7 +745,7 @@ export function SettingsPage() {
   const permissions = usePermissionSettingsShown()
   const sections = useMemo(() => {
     const information = SECTIONS.filter((section) => section.id === 'support' || section.id === 'about')
-    const own = SECTIONS.filter((section) => section.id !== 'about' && section.id !== 'support' && (section.id !== 'notifications' || canNotify() || canShowRequestPopup()))
+    const own = SECTIONS.filter((section) => section.id !== 'about' && section.id !== 'support' && (section.id !== 'notifications' || canNotify()))
       .flatMap((section) => (section.id === 'agents' ? [
         section, ...(accounts ? [ACCOUNTS_SECTION] : []), ...(modelProviders ? [MODEL_PROVIDERS_SECTION] : []), ...(run ? [RUN_SECTION] : []), ...(permissions ? [PERMISSIONS_SECTION] : []),
         CONVERSATION_SECTION, ...(chatCommands ? [CHAT_COMMANDS_SECTION] : []), ...(sessionImport ? [SESSION_IMPORT_SECTION] : []),
@@ -821,7 +806,6 @@ export function SettingsPage() {
       </aside>
 
       <main className="settings-content" ref={content}>
-        <div className="titlebar-drag" aria-hidden="true" />
         <div className="settings-inner" data-section={active?.id}>
           {active ? (
             <section aria-labelledby={`settings-${active.id}`}>

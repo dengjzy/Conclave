@@ -1,6 +1,8 @@
 # Conclave user guide
 
-Look up configuration and features here when you need them. On first use, the pet checks whether an agent is installed and usable, then asks whether to configure task sources. To check again, open **Help → Check your setup** at the bottom left.
+Look up configuration and features here when you need them. The Web setup guide checks whether an agent is installed and usable, then asks whether to configure task sources. To check again, open **Help → Check your setup** at the bottom left.
+
+Open Conclave in a browser after starting its Node services; see [Run from source](ARCHITECTURE.md#7-从源码运行). Closing the page leaves daemon-owned agents running. This repository does not provide an embedded browser host.
 
 ## Agent installation and sign-in
 
@@ -95,21 +97,11 @@ When it is due, the agent runs unattended in the mode shown in the popover; **Ch
 
 Each side has its own input, progress and approvals.
 
-### Helper and translation
+### Helper
 
 ![The right-click menu on selected text](assets/guide/helper.en.png)
 
-Select part of a reply and right-click:
-
-- **Ask helper**: opens on the right with a light model and its own context, to explain or dig in without touching the main conversation.
-- **Translate**: translates just the selection. When a reply is in another language, a **Translate** button under it translates the whole reply.
-
-![Translate in Settings](assets/guide/translate.en.png)
-
-| Setting | Where |
-|---|---|
-| Language to translate into, auto-translate | **Settings → Translate** |
-| Model used for translation | [**Settings → Conversations → "Model for quick tasks"**](conclave:settings/conversation) |
+Select part of a reply, right-click and choose **Ask helper**. It opens on the right with a light model and its own context, to explain or dig in without touching the main conversation. Choose its model in [**Settings → Conversations → "Model for quick tasks"**](conclave:settings/conversation).
 
 ### Also worth knowing
 

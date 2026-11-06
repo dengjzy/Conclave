@@ -4,11 +4,10 @@ Task-first multi-agent manager. See docs/ARCHITECTURE.md for the architecture di
 
 ## Process boundaries
 
-- **daemon** owns every agent process and PTY. **core** owns tasks, git and persistence. **desktop** is a client only, and so is core's MCP server (`mcp-main.ts`), a process of its own that agents start.
-- **desktop main** holds the built-in browser's tabs (`WebContentsView`) and runs the browser host; core connects to it over its loopback WebSocket, finding it through the host file, and keeps the policy (which conversation owns a tab, which sites the user allowed). With no app running there is no browser.
-- Electron main stays thin: no task logic, no git, no PTYs. Browser tabs are the one exception, and they live in main rather than in a window for the same reason: a window closing or crashing must never touch a running agent, nor a page it is on.
-- Native modules (node-pty) load only in the daemon, which runs on plain Node. Never import a native module into Electron.
-- core must stay free of Electron imports so it can run headless on a server.
+- **daemon** owns every agent process and PTY. **core** owns tasks, git and persistence, and serves the built Web client over HTTP. **web** is a browser client only, and so is core's MCP server (`mcp-main.ts`), a process of its own that agents start.
+- **web** uses React, Vite, xterm.js and CodeMirror. It calls core over WebSocket; task logic, git and PTY ownership stay out of the client. Closing a browser tab must not stop an agent.
+- Native modules (node-pty) load only in the daemon, which runs on plain Node. core and web must stay free of Electron imports.
+- The browser-host protocol and core client remain for compatibility. This repository does not provide a browser host; running the Web client does not create embedded browser tabs. Keep this boundary explicit when documenting or changing browser features.
 
 ## Protocol
 
@@ -20,7 +19,7 @@ Task-first multi-agent manager. See docs/ARCHITECTURE.md for the architecture di
 
 ## Safety
 
-- core binds to 127.0.0.1 only and requires the token from `core.json`: any web page can open a localhost WebSocket.
+- core's listening address is configurable (`--host` / `CONCLAVE_HOST`): `pnpm start` defaults to `127.0.0.1`; direct core startup defaults to `0.0.0.0`. WebSocket RPC requires the token from `core.json`: any web page can open a localhost WebSocket. Keep local test instances bound to `127.0.0.1` unless network access is needed.
 - Agent commands are argv arrays with `--` before the prompt. Never go through a shell.
 - Only a refused connection proves a daemon socket is stale. A timeout or EPERM proves nothing.
 - Worktrees are never deleted automatically: they may hold the only copy of an agent's work. A worktree goes only when the user cleans it, or when it provably holds nothing: a planning checkout once its task runs. Either way it is removed without force, and never one with changes or a commit no ref contains.

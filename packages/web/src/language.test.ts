@@ -41,8 +41,6 @@ describe('desktop language preference', () => {
     expect(getLocale()).toBe('zh-CN')
     expect(document.documentElement.lang).toBe('zh-CN')
     expect(JSON.parse(environment.stored.get('conclave.preferences') ?? '{}').language).toBe('zh-CN')
-    expect(usePreferences.getState().translateTo).toBe('zh-CN')
-    expect(usePreferences.getState().autoTranslate).toBe(false)
   })
 
   it('responds to system changes only when following the system', () => {
@@ -57,13 +55,13 @@ describe('desktop language preference', () => {
     expect(environment.listeners.get('languagechange')).toEqual([])
   })
 
-  it('follows another window without resetting other preferences or translation settings', () => {
+  it('follows another window without resetting other preferences', () => {
     stop = startUiLanguage()
     followPreferences()
-    environment.stored.set('conclave.preferences', JSON.stringify({ ...DEFAULT_PREFERENCES, language: 'zh-CN', theme: 'dark', translateTo: 'ja' }))
+    environment.stored.set('conclave.preferences', JSON.stringify({ ...DEFAULT_PREFERENCES, language: 'zh-CN', theme: 'dark' }))
     for (const listener of environment.listeners.get('storage') ?? []) listener({ key: 'conclave.preferences' })
     expect(getLocale()).toBe('zh-CN')
-    expect(usePreferences.getState()).toMatchObject({ language: 'zh-CN', theme: 'dark', translateTo: 'ja' })
+    expect(usePreferences.getState()).toMatchObject({ language: 'zh-CN', theme: 'dark' })
   })
 
   it('loads old and invalid language values as system, preserving existing preferences', () => {

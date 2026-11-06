@@ -1,6 +1,5 @@
 import { t } from '../i18n'
 import { useEffect, useRef } from 'react'
-import { useOccludesBrowser } from '../browser-occlusion'
 import { useProjectTrust } from '../project-trust'
 import { CloseIcon } from './icons'
 
@@ -12,7 +11,6 @@ export function ProjectTrustDialog() {
 }
 
 function TrustForm() {
-  useOccludesBrowser()
   const dialog = useRef<HTMLDialogElement>(null)
   const asking = useProjectTrust((state) => state.asking)
   useEffect(() => { dialog.current?.showModal(); return () => dialog.current?.close() }, [])

@@ -15,7 +15,6 @@ import { ChatModelPicker, ChatPicker } from './ChatPicker'
 import { ProjectPicker } from './ProjectPicker'
 import { SettingsLink } from './SchedulePicker'
 import { Segmented } from './SettingsControls'
-import { useOccludesBrowser } from '../browser-occlusion'
 
 type Kind = RoutineSchedule['kind']
 const KIND_OPTIONS: readonly { value: Kind; label: string }[] = localized(() => ([
@@ -47,7 +46,6 @@ function scheduleFrom(kind: Kind, time: string, days: readonly number[], every: 
 // unattended in the mode the settings give every scheduled run. A new one may start from a
 // template, which fills in the title, the instruction and the schedule to change at will.
 export function RoutineEditor({ routine, template = null, onClose }: { routine: Routine | null; template?: RoutineTemplate | null; onClose: () => void }) {
-  useOccludesBrowser()
   const dialog = useRef<HTMLDialogElement>(null)
   const titleInput = useRef<HTMLInputElement>(null)
   const ids = useId()

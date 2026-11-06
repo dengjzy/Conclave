@@ -5,7 +5,6 @@ import { resolveModel, useAgentCatalog, type ModelChoice } from '../agent-models
 import { dismissError, openChatWhileStarting, perform, updateTask, useCore } from '../core-store'
 import { useInstalledAgents } from '../installed-agents'
 import { agentLabel, reasonText } from '../labels'
-import { useOccludesBrowser } from '../browser-occlusion'
 import { AgentQuotaHint, confirmQuota, modelText, useRecommendation } from './AgentQuota'
 import { AgentModelPicker } from './AgentModelPicker'
 import { modeOptions, startModes } from './ChatOptionsBar'
@@ -32,7 +31,6 @@ export function TaskLaunchDialog({ taskId }: { taskId: string }) {
 }
 
 function LaunchForm({ task, onSquad }: { task: Task; onSquad(): void }) {
-  useOccludesBrowser()
   const dialog = useRef<HTMLDialogElement>(null)
   const installed = useInstalledAgents()
   const recommended = useRecommendation(installed)?.agent ?? null

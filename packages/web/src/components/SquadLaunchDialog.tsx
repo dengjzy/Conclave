@@ -2,14 +2,12 @@ import { t, tr } from '../i18n'
 import { useEffect, useRef, useState } from 'react'
 import { ChatPermissionMode, checkSquadStart, squadModes, type Task } from '@conclave/protocol'
 import { dismissError, openChatWhileStarting, perform, selectSquad, useCore } from '../core-store'
-import { useOccludesBrowser } from '../browser-occlusion'
 import { reasonText } from '../labels'
 import { useEditsInPlace } from './TaskLaunch'
 import { ChatPicker } from './ChatPicker'
 import { CloseIcon, SquadIcon } from './icons'
 
 export function SquadLaunchDialog({ task, onSingle }: { task: Task; onSingle(): void }) {
-  useOccludesBrowser()
   const dialog = useRef<HTMLDialogElement>(null)
   const squads = useCore((state) => state.squads)
   const tasks = useCore((state) => state.tasks)
