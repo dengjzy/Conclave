@@ -41,10 +41,18 @@ export function dshRuntimeConfig(launch: AgentLaunch): DshRuntimeConfig {
   }
 }
 
+// DSH's flock addon probes libc with a report; reporting connected sockets can block on PTR DNS.
+function excludeReportNetwork(options: string): string {
+  const last = options.match(/(?:^|\s)"?--(?:no-)?report-exclude-network"?(?=\s|$)/g)?.at(-1)
+  return last?.includes('--report-exclude-network') ? options : `${options}${options ? ' ' : ''}--report-exclude-network`
+}
+
 export function dshCommand(launch: AgentLaunch): AgentCommand {
   return {
     command: 'dsh', args: ['--profile', 'conclave'],
     env: {
+      ...launch.account?.env,
+      NODE_OPTIONS: excludeReportNetwork(launch.account?.env.NODE_OPTIONS ?? process.env.NODE_OPTIONS ?? ''),
       [DSH_CONFIG_ENV]: JSON.stringify(dshRuntimeConfig(launch)),
       ...(launch.provider ? {
         [DSH_PROVIDER_ENV]: JSON.stringify(dshProvider(launch.provider)),

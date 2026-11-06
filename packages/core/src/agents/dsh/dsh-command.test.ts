@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import { execFileSync } from 'node:child_process'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DSH_CONFIG_ENV, DSH_PROVIDER_KEY_ENV } from '@conclave/protocol'
 import type { AgentLaunch } from '../agent-adapter'
 import type { ProviderLaunch } from '../../provider-launch'
@@ -13,7 +14,36 @@ const provider: ProviderLaunch = {
   models: [{ id: 'model', label: 'Test model', contextWindow: 32000, maxOutput: 4096, efforts: ['high', 'turbo'] }]
 }
 
+afterEach(() => vi.unstubAllEnvs())
+
 describe('DSH launch configuration', () => {
+  it.each([
+    [undefined, '--report-exclude-network'],
+    ['', '--report-exclude-network'],
+    ['--trace-warnings', '--trace-warnings --report-exclude-network'],
+    ['--report-exclude-network --trace-warnings', '--report-exclude-network --trace-warnings'],
+    ['"--report-exclude-network" --trace-warnings', '"--report-exclude-network" --trace-warnings'],
+    ['--report-exclude-network --no-report-exclude-network', '--report-exclude-network --no-report-exclude-network --report-exclude-network']
+  ])('disables report network diagnostics without changing the inherited options %s', (inherited, expected) => {
+    vi.stubEnv('NODE_OPTIONS', inherited)
+    const command = dshCommand(launch)
+    expect(command.env?.NODE_OPTIONS).toBe(expected)
+    expect(process.env.NODE_OPTIONS).toBe(inherited)
+    const enabled = execFileSync(process.execPath, ['-e', 'process.stdout.write(String(process.report.excludeNetwork))'], {
+      env: { ...process.env, ...command.env }, encoding: 'utf8', timeout: 5000
+    })
+    expect(enabled).toBe('true')
+  })
+
+  it('preserves account options and provider credentials in the child environment', () => {
+    vi.stubEnv('NODE_OPTIONS', '--trace-warnings')
+    const account = { id: 'test-account', env: { NODE_OPTIONS: '--no-warnings', DSH_HOME: '/account' } }
+    const command = dshCommand({ ...launch, provider, account })
+    expect(command.env).toMatchObject({ NODE_OPTIONS: '--no-warnings --report-exclude-network', DSH_HOME: '/account', [DSH_PROVIDER_KEY_ENV]: provider.apiKey })
+    expect(account.env.NODE_OPTIONS).toBe('--no-warnings')
+    expect(process.env.NODE_OPTIONS).toBe('--trace-warnings')
+  })
+
   it('keeps the provider key out of argv and configuration, with stable opaque model ids', () => {
     const command = dshCommand({ ...launch, provider })
     expect(command.args).toEqual(['--profile', 'conclave'])
