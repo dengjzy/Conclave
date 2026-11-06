@@ -1,13 +1,12 @@
 import { getLocale, localized, t, tr } from '../i18n'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { create } from 'zustand'
 import { AGENT_KINDS, type AgentKind, type Task } from '@conclave/protocol'
 import { timeAgo } from '../conversation-state'
 import { selectTask, setNewTaskOpen, useCore } from '../core-store'
 import { agentLabel, STATUS_LABEL } from '../labels'
 import { setPreference, TASK_SORTS, usePreferences } from '../preferences'
 import { TASK_SHORTCUT_LABEL } from '../shortcut-keys'
-import { boardColumns, boardProjects, type BoardColumn, type BoardFilter, type TaskSort } from '../task-board'
+import { boardColumns, boardProjects, useBoardFilter, focusWorkflowTask, type BoardColumn, type BoardFilter, type TaskSort } from '../task-board'
 import { waitingOn } from '../task-waiting'
 import { saveTaskText } from '../unsaved-edits'
 import { ChatPicker } from './ChatPicker'
@@ -22,6 +21,9 @@ import { TitleEditor } from './TitleEditor'
 import { TaskActivity } from './TaskActivity'
 import { TaskDependencies } from './TaskDependencies'
 import { useTaskActivity } from '../work-activity'
+import { workflowGroups } from '../workflow-board'
+import { WorkflowBoard } from './WorkflowBoard'
+import { NewWorkflowDialog } from './NewWorkflowDialog'
 
 // The way back from a task to the board, at the start of its header; Esc goes there too.
 export function BoardCrumb() {
@@ -35,14 +37,13 @@ export function BoardCrumb() {
 
 const SORT_LABEL: Record<TaskSort, string> = localized(() => ({ recent: t('TaskBoard.byRecentActivity'), created: t('TaskBoard.byCreationTime'), title: t('TaskBoard.byTitle') }))
 
-// Kept while a task is open, so going back finds the board as it was left.
-const useBoardFilter = create<BoardFilter & { allDone: boolean }>(() => ({ query: '', project: null, agent: null, allDone: false }))
-
 // The tasks, one column per status. Each card offers the step that moves its task on; the rest is
 // in the task itself, which a click opens.
 export function TaskBoard() {
   const tasks = useCore((s) => s.tasks)
   const filter = useBoardFilter()
+  const workflowSupported = useCore((s) => s.rpc?.features.includes('workflow-lanes') ?? false)
+  const [workflowDraft, setWorkflowDraft] = useState<Task | 'new' | null>(null)
   const sort = usePreferences((p) => p.taskSort)
   const abandoned = usePreferences((p) => p.showAbandonedTasks)
   const list = useMemo(() => Object.values(tasks), [tasks, getLocale()])
@@ -72,10 +73,17 @@ export function TaskBoard() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
+  const workflowMode = workflowSupported && filter.mode === 'workflow'
+  const renderTask = (task: Task) => <TaskCard key={task.id} task={task} tasks={tasks} now={now} fresh={freshId === task.id}
+    renaming={renamingId === task.id} menuOpen={menu?.id === task.id} onRenamed={() => setRenamingId(null)} onMenu={(at) => setMenu({ id: task.id, at })} workflowMode={workflowMode} />
   return (
     <section className="task-board" aria-label={t('GitInspector.task')}>
       <header className="task-board-header">
         <h2>{t('GitInspector.task')}</h2>
+        {workflowSupported && <div className="workflow-view-switch" role="group" aria-label={t('Workflow.view')}>
+          <button type="button" className="task-board-chip" aria-pressed={!workflowMode} onClick={() => useBoardFilter.setState({ mode: 'status' })}>{t('Workflow.statusView')}</button>
+          <button type="button" className="task-board-chip" aria-pressed={workflowMode} onClick={() => useBoardFilter.setState({ mode: 'workflow' })}>{t('Workflow.view')}</button>
+        </div>}
         <input
           className="input task-board-search"
           type="search"
@@ -94,29 +102,19 @@ export function TaskBoard() {
           onClick={() => setPreference('showAbandonedTasks', !abandoned)}
         >{t('ChatRequestCards.cancelled')}</button>
         <SortButton value={sort} />
-        <button type="button" className="button primary task-board-new" onClick={() => setNewTaskOpen(true)}>{tr('TaskBoard.newTask', { value1: <span className="task-board-key">{TASK_SHORTCUT_LABEL}</span> })}</button>
+        {workflowSupported && <button type="button" className={workflowMode ? 'button primary' : 'button'} onClick={() => setWorkflowDraft('new')}>{t('Workflow.new')}</button>}
+        {!workflowMode && <button type="button" className="button primary task-board-new" onClick={() => setNewTaskOpen(true)}>{tr('TaskBoard.newTask', { value1: <span className="task-board-key">{TASK_SHORTCUT_LABEL}</span> })}</button>}
       </header>
-      <TaskDependencies columns={columns}>
+      {workflowMode ? <WorkflowBoard groups={workflowGroups(list, filter, sort, abandoned)} renderTask={renderTask} onAdd={setWorkflowDraft} onNew={() => setWorkflowDraft('new')} /> : <TaskDependencies columns={columns}>
         <div className="task-board-columns">
           {columns.map((column) => (
             <Column key={column.status} column={column} narrowed={narrowed} top={column.status === 'pending' && <TaskQuickAdd onCreated={setFreshId} />}>
-              {column.tasks.map((task) => (
-                <TaskCard
-                  key={task.id}
-                  task={task}
-                  tasks={tasks}
-                  now={now}
-                  fresh={freshId === task.id}
-                  renaming={renamingId === task.id}
-                  menuOpen={menu?.id === task.id}
-                  onRenamed={() => setRenamingId(null)}
-                  onMenu={(at) => setMenu({ id: task.id, at })}
-                />
-              ))}
+              {column.tasks.map(renderTask)}
             </Column>
           ))}
         </div>
-      </TaskDependencies>
+      </TaskDependencies>}
+      {workflowDraft && <NewWorkflowDialog source={workflowDraft === 'new' ? undefined : workflowDraft} onClose={() => setWorkflowDraft(null)} onCreated={(task) => { focusWorkflowTask(task.id); setWorkflowDraft(null) }} />}
       {menu && menuTask && (
         <TaskContextMenu task={menuTask} at={menu.at} onClose={closeMenu} onRename={() => setRenamingId(menuTask.id)} />
       )}
@@ -142,7 +140,7 @@ function Column({ column, narrowed, top, children }: { column: BoardColumn; narr
   )
 }
 
-function TaskCard({ task, tasks, now, fresh, renaming, menuOpen, onRenamed, onMenu }: {
+function TaskCard({ task, tasks, now, fresh, renaming, menuOpen, onRenamed, onMenu, workflowMode }: {
   task: Task
   tasks: Readonly<Record<string, Task>>
   now: number
@@ -151,6 +149,7 @@ function TaskCard({ task, tasks, now, fresh, renaming, menuOpen, onRenamed, onMe
   menuOpen: boolean
   onRenamed: () => void
   onMenu: (at: MenuPoint) => void
+  workflowMode?: boolean
 }) {
   const turn = useChatTurn(task)
   const activity = useTaskActivity(task)
@@ -167,7 +166,13 @@ function TaskCard({ task, tasks, now, fresh, renaming, menuOpen, onRenamed, onMe
       data-fresh={fresh || undefined}
       data-abandoned={task.status === 'abandoned' || undefined}
       onClick={(event) => {
-        if (!renaming && !(event.target instanceof Element && event.target.closest('.task-card-action'))) selectTask(task.id)
+        if (!renaming && !(event.target instanceof Element && event.target.closest('.task-card-action'))) {
+          if (workflowMode) {
+            focusWorkflowTask(task.id)
+          } else {
+            selectTask(task.id)
+          }
+        }
       }}
       onContextMenu={(event) => {
         event.preventDefault()

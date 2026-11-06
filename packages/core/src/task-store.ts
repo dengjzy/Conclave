@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
 import { z } from 'zod'
-import { SourceSnapshot, Task, TaskAttempt, TaskImage, TaskLaunchOptions, TaskPlan, TaskSource, TaskStart, type TaskStatus } from '@conclave/protocol'
+import { SourceSnapshot, Task, TaskAttempt, TaskImage, TaskLaunchOptions, TaskPlan, TaskSource, TaskStart, TaskWorkflow, type TaskStatus } from '@conclave/protocol'
 
 const TASK_AUTO_RUN_MIGRATION = 'ALTER TABLE tasks ADD COLUMN auto_run INTEGER NOT NULL DEFAULT 0;'
+const DISCUSSION_SUMMARIZE_MIGRATION = 'ALTER TABLE discussions ADD COLUMN summarize INTEGER NOT NULL DEFAULT 1;'
+const TASK_WORKFLOW_MIGRATION = 'ALTER TABLE tasks ADD COLUMN workflow TEXT;'
 
 // Append-only: each entry upgrades PRAGMA user_version by one.
 export const MIGRATIONS = [
@@ -366,7 +368,7 @@ export const MIGRATIONS = [
   `ALTER TABLE scheduled_runs ADD COLUMN released_at INTEGER;
    ALTER TABLE scheduled_runs ADD COLUMN held_by TEXT;`,
   // Keep the concluding chair turn for groups created before the summary became optional.
-  `ALTER TABLE discussions ADD COLUMN summarize INTEGER NOT NULL DEFAULT 1;`,
+`ALTER TABLE discussions ADD COLUMN summarize INTEGER NOT NULL DEFAULT 1;`,
   `CREATE TABLE conversation_deletions (root_id TEXT PRIMARY KEY, data TEXT NOT NULL);
    CREATE TABLE conversation_native_sessions (
      conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -374,13 +376,15 @@ export const MIGRATIONS = [
      PRIMARY KEY (conversation_id, agent, provider_session_id, cwd)
    );`,
   `ALTER TABLE conversations ADD COLUMN initial_message TEXT;`,
-  `ALTER TABLE conversation_native_sessions ADD COLUMN artifacts TEXT;`
+  `ALTER TABLE conversation_native_sessions ADD COLUMN artifacts TEXT;`,
+  TASK_WORKFLOW_MIGRATION
+
 ]
 
 
 const SELECT = `SELECT id, title, slug, details, status, agent, squad_id AS squadId,
   derived_from AS derivedFrom, abandon_reason AS abandonReason, source, source_snapshot AS sourceSnapshot, images,
-  awaiting_input AS awaitingInput, auto_run AS autoRun, plan, launch, attempts,
+  awaiting_input AS awaitingInput, auto_run AS autoRun, plan, launch, attempts, workflow,
   (SELECT id FROM conversations WHERE task_id = tasks.id ORDER BY created_at DESC LIMIT 1) AS conversationId,
   created_at AS createdAt, updated_at AS updatedAt FROM tasks`
 
@@ -395,7 +399,8 @@ const TaskRow = Task.omit({
   autoRun: true,
   plan: true,
   launch: true,
-  attempts: true
+  attempts: true,
+  workflow: true
 }).extend({
   source: z.string().nullable(),
   sourceSnapshot: z.string().nullable(),
@@ -404,7 +409,8 @@ const TaskRow = Task.omit({
   autoRun: z.number(),
   plan: z.string().nullable(),
   launch: z.string().nullable(),
-  attempts: z.string().nullable()
+  attempts: z.string().nullable(),
+  workflow: z.string().nullable()
 })
 const TaskImages = z.array(TaskImage)
 const TaskAttempts = z.array(TaskAttempt)
@@ -520,9 +526,17 @@ export class TaskStore {
       })
       version = 51
     }
+    // Local workflow builds used schema 60 for discussion attribution and 61 for workflow.
+    if (version >= 60 && !this.db.prepare("SELECT 1 FROM pragma_table_info('discussions') WHERE name = 'summarize'").get()) {
+      this.transaction(() => this.db.exec(DISCUSSION_SUMMARIZE_MIGRATION))
+    }
     MIGRATIONS.slice(version).forEach((sql, offset) => {
       this.transaction(() => {
-        this.db.exec(sql)
+        if (sql === TASK_WORKFLOW_MIGRATION && this.db.prepare("SELECT 1 FROM pragma_table_info('tasks') WHERE name = 'workflow'").get()) {
+          // already added by legacy local workflow build
+        } else {
+          this.db.exec(sql)
+        }
         this.db.exec(`PRAGMA user_version = ${version + offset + 1}`)
       })
     })
@@ -568,6 +582,7 @@ export class TaskStore {
     )
     return rows.map((row) => ({
       ...row,
+      workflow: parseColumn(TaskWorkflow, row.workflow, `workflow of task ${row.id}`),
       source: parseColumn(TaskSource, row.source, `source of task ${row.id}`),
       sourceSnapshot: parseColumn(SourceSnapshot, row.sourceSnapshot, `source snapshot of task ${row.id}`),
       images: parseColumn(TaskImages, row.images, `images of task ${row.id}`) ?? [],
@@ -644,6 +659,23 @@ export class TaskStore {
       )
       .run(id, title, at, at)
     return this.require(id)
+  }
+
+  createLanes(entries: readonly Pick<Task, 'title' | 'details' | 'agent' | 'workflow'>[], repos: Task['repos']): Task[] {
+    const ids: string[] = []
+    this.transaction(() => {
+      const insert = this.db.prepare(`INSERT INTO tasks (id, title, details, status, agent, workflow, created_at, updated_at)
+        VALUES (?, ?, ?, 'pending', ?, ?, ?, ?)`)
+      const insertRepo = this.db.prepare('INSERT INTO task_repos (task_id, position, path, worktree_path, branch, start_ref, start) VALUES (?, ?, ?, NULL, NULL, NULL, ?)')
+      for (const entry of entries) {
+        const id = randomUUID()
+        const at = this.now()
+        insert.run(id, entry.title, entry.details, entry.agent, JSON.stringify(entry.workflow), at, at)
+        repos.forEach((repo, position) => insertRepo.run(id, position, repo.path, repo.start ? JSON.stringify(repo.start) : null))
+        ids.push(id)
+      }
+    })
+    return ids.map((id) => this.require(id))
   }
 
   update(id: string, patch: TaskPatch): Task {

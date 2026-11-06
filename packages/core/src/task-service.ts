@@ -1,8 +1,14 @@
+import { randomUUID } from 'node:crypto'
 import type { AgentProfile } from '@conclave/protocol'
 import { stat } from 'node:fs/promises'
 import path from 'node:path'
 import {
   agentDescriptor,
+  MAX_WORKFLOW_LANES,
+  WorkflowFields,
+  WorkflowLaneFields,
+  MAX_DETAILS_LENGTH,
+  type TaskWorkflow,
   checkCancel,
   checkAutoRun,
   checkChatResume,
@@ -50,11 +56,12 @@ import type { ConversationService, HandoffChoice, ModelChoice } from './conversa
 import type { ProjectRegistry } from './project-registry'
 import { needsSlug } from './branch-slug'
 import { Rejection } from './rejection'
+import { gitOrNull } from './git-changes'
 import { fileDiff, repoChanges } from './task-changes'
 import type { TaskPatch, TaskStore } from './task-store'
 import type { TrustedSetup } from './project-config'
 import type { WorktreeSetup } from './worktree-setup'
-import { normalizeRepoPath, prepareRefineWorkspace, prepareWorkspace, projectHead, removePlanningCheckouts, restartBranches, startOptions, withKnownWorktrees } from './workspace'
+import { gitTopLevel, normalizeRepoPath, prepareRefineWorkspace, prepareWorkspace, projectHead, removePlanningCheckouts, restartBranches, startOptions, withKnownWorktrees } from './workspace'
 
 export type TaskEvent = { type: 'changed'; task: Task } | { type: 'deleted'; id: string }
 
@@ -168,6 +175,62 @@ export class TaskService {
     return this.named(this.changed(hasFields ? this.store.update(task.id, patch) : task))
   }
 
+  async createWorkflow(input: RpcParsedParams<'tasks.createWorkflow'>): Promise<Task[]> {
+    const fields = WorkflowFields.parse(input)
+    const paths = [...new Set(fields.repos.map(normalizeRepoPath))]
+    const bases: TaskWorkflow['bases'] = []
+    const tops = new Set<string>()
+    for (const project of paths) {
+      const top = await gitTopLevel(project)
+      if (!top) throw new Rejection('worktree-not-git', `泳道需要已提交过的 Git 项目：${project}`)
+      if (tops.has(top)) throw new Rejection('repo-duplicate')
+      tops.add(top)
+      const commit = await gitOrNull(top, ['rev-parse', '--verify', 'HEAD^{commit}'])
+      if (!commit) throw new Rejection('worktree-not-git', `请先为项目创建一次提交：${project}`)
+      bases.push({ path: project, commit })
+    }
+    const workflow = { id: randomUUID(), title: fields.title, request: fields.details, bases, createdAt: Date.now() }
+    const entries = fields.lanes.map((lane, position) => this.laneEntry(workflow, lane, position))
+    const tasks = this.store.createLanes(entries, this.laneRepos(workflow))
+    this.projects.remember(paths)
+    const preparedTasks: Task[] = []
+    for (const task of tasks) {
+      try {
+        const workspace = await prepareWorkspace(await this.withSlug(task), [], this.worktreesRoot)
+        const updated = this.store.update(task.id, { repos: workspace.repos })
+        preparedTasks.push(this.changed(updated))
+      } catch {
+        preparedTasks.push(this.changed(task))
+      }
+    }
+    return preparedTasks
+  }
+
+  addWorkflowLane({ id, ...input }: RpcParsedParams<'tasks.addWorkflowLane'>): Task {
+    const lane = WorkflowLaneFields.parse(input)
+    const source = this.get(id)
+    const workflow = source.workflow
+    if (!workflow) throw new Rejection('invalid-params', '这项任务不属于泳道')
+    const siblings = this.list().filter((task) => task.workflow?.id === workflow.id)
+    if (siblings.length >= MAX_WORKFLOW_LANES) throw new Rejection('invalid-params', `每个泳道最多 ${MAX_WORKFLOW_LANES} 条车道`)
+    if (siblings.some((task) => task.workflow?.lane.toLowerCase() === lane.name.toLowerCase())) throw new Rejection('invalid-params', '车道名称不能重复')
+    const position = Math.max(...siblings.map((task) => task.workflow?.position ?? 0)) + 1
+    const [task] = this.store.createLanes([this.laneEntry(workflow, lane, position)], this.laneRepos(workflow))
+    if (!task) throw new Error('lane was not created')
+    return this.changed(task)
+  }
+
+  private laneRepos(workflow: Pick<TaskWorkflow, 'bases' | 'createdAt'>): TaskRepo[] {
+    return workflow.bases.map(({ path, commit }) => ({ path, worktreePath: null, branch: null, startRef: null,
+      start: { ref: 'HEAD', commit, note: null, at: workflow.createdAt } }))
+  }
+
+  private laneEntry(workflow: Omit<TaskWorkflow, 'lane' | 'position'>, lane: { name: string; agent: AgentKind | null; instructions?: string }, position: number): Pick<Task, 'title' | 'details' | 'agent' | 'workflow'> {
+    const details = [workflow.request, lane.instructions?.trim() ? `车道目标（${lane.name}）：\n${lane.instructions.trim()}` : ''].filter(Boolean).join('\n\n')
+    if (details.length > MAX_DETAILS_LENGTH) throw new Rejection('invalid-params', '需求和车道目标合计过长')
+    return { title: `${workflow.title} · ${lane.name}`, details, agent: lane.agent, workflow: { ...workflow, lane: lane.name, position } }
+  }
+
   // A task made from an issue: the issue's text stays in its snapshot and the details start empty,
   // for the user (or a refining agent) to write the plan in. No repos yet: issues rarely say which.
   importTask({ title, agent, source, snapshot }: { title: string; agent: AgentKind | null; source: TaskSource; snapshot: SourceSnapshot }): Task {
@@ -244,6 +307,7 @@ export class TaskService {
 
   update({ id, title, details, repos, dependsOn, agent, squadId, starts, references, launch, autoRun }: RpcParsedParams<'tasks.update'>): Task {
     const task = this.get(id)
+    if (task.workflow && (repos !== undefined || starts !== undefined || references !== undefined)) throw new Rejection('workflow-projects-fixed', '泳道车道使用创建时的项目和共同起点；如需其他项目，请新建泳道')
     if (squadId !== undefined && squadId !== task.squadId) {
       if (this.isLaunching(task.id) || task.status !== 'pending' || this.squads?.busy(task.id)) throw new Rejection('squad-busy', '开发开始后不能更换团队')
     }

@@ -87,6 +87,7 @@ const Preferences = z.object({
   showAbandonedTasks: z.boolean().catch(false),
   // Creation order preserves the task list's original behavior.
   taskSort: z.enum(TASK_SORTS).catch('created'),
+  workflowFollow: z.boolean().catch(true),
   // How the Git page takes in a remote that rejected a push before pushing again; ask leaves it to the user.
   gitPushRejectedUpdate: z.enum(['ask', 'merge', 'rebase']).catch('ask'),
   conversationGroup: z.enum(CONVERSATION_GROUPS).catch('project'),

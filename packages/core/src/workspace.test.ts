@@ -89,6 +89,26 @@ describe('prepareWorkspace', () => {
   const task = (repoPath: string) => ({ id: '76b8c0de-0000-4000-8000-000000000000', title: 'Fix login', repos: [{ path: repoPath, worktreePath: null, branch: null, startRef: null, start: null }], source: null })
   const registered = (dir: string) => git(dir, 'worktree', 'list', '--porcelain')
 
+  it('plans in a separate checkout at the frozen workflow commit, excluding later source edits', async () => {
+    const source = repo()
+    const base = git(source, 'rev-parse', 'HEAD')
+    const lane = { ...task(source), workflow: { id: '00000000-0000-4000-8000-000000000001', title: 'Compare', request: '', lane: 'A', position: 0, bases: [{ path: source, commit: base }], createdAt: 1 } }
+    writeFileSync(path.join(source, 'later.txt'), 'not part of the workflow')
+    git(source, 'add', 'later.txt')
+    git(source, 'commit', '-q', '-m', 'later')
+    const planning = await prepareRefineWorkspace(lane, [], tempDir())
+    expect(planning.cwd).not.toBe(source)
+    expect(git(planning.cwd, 'rev-parse', 'HEAD')).toBe(base)
+    expect(existsSync(path.join(planning.cwd, 'later.txt'))).toBe(false)
+  })
+
+  it('refuses workflow planning and execution in a project that is no longer git', async () => {
+    const source = tempDir()
+    const lane = { ...task(source), workflow: { id: '00000000-0000-4000-8000-000000000001', title: 'Compare', request: '', lane: 'A', position: 0, bases: [{ path: source, commit: 'a'.repeat(40) }], createdAt: 1 } }
+    await expect(prepareWorkspace(lane, [], tempDir())).rejects.toMatchObject({ reason: 'worktree-not-git' })
+    await expect(prepareRefineWorkspace(lane, [], tempDir())).rejects.toMatchObject({ reason: 'worktree-not-git' })
+  })
+
   it('says which start laid a worktree out, for setup to run there once', async () => {
     const source = repo()
     const root = tempDir()

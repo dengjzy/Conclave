@@ -405,6 +405,8 @@ export function createRpcHandlers(
     'tasks.list': ({ status }) => service.list(status),
     'tasks.get': ({ id }) => service.get(id),
     'tasks.create': (params) => service.createTask(params),
+    'tasks.createWorkflow': (params) => service.createWorkflow(params),
+    'tasks.addWorkflowLane': (params) => service.addWorkflowLane(params),
     'tasks.update': (params) => service.update(params),
     'tasks.startOptions': ({ id }) => service.startOptions(id),
     'tasks.move': async ({ id, status }) => {

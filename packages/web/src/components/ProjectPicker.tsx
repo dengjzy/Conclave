@@ -115,7 +115,8 @@ export function ProjectPicker({
   locked = false,
   primaryLocked = false,
   maxProjects = MAX_TASK_REPOS,
-  compact = false
+  compact = false,
+  preferPathEntry = false
 }: {
   projects: readonly ProjectEntry[]
   onChange: (paths: string[]) => void
@@ -123,6 +124,7 @@ export function ProjectPicker({
   primaryLocked?: boolean
   maxProjects?: number
   compact?: boolean
+  preferPathEntry?: boolean
 }) {
   // Open menu → the recent projects it offers; null while closed.
   const [menu, setMenu] = useState<string[] | null>(null)
@@ -156,7 +158,7 @@ export function ProjectPicker({
       (projectPath) => !paths.includes(projectPath)
     )
     // Nothing to choose from yet: go straight to the folder dialog.
-    if (recent.length === 0 && canPickFolder()) {
+    if (recent.length === 0 && canPickFolder() && !preferPathEntry) {
       await browse(recent)
     } else {
       setMenu(recent)

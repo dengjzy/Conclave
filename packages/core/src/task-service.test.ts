@@ -132,6 +132,76 @@ describe('TaskService', () => {
     return schedules
   }
 
+  it('runs workflow lanes concurrently from one captured commit and retains lane files through a handoff', async () => {
+    const repo = initRepo('lane-app')
+    const base = git(repo, 'rev-parse', 'HEAD')
+    const [a, b] = await service.createWorkflow({ title: 'Compare routes', details: 'Keep login working', repos: [repo], lanes: [
+      { name: 'Minimal', agent: 'claude', instructions: 'Smallest change' }, { name: 'Refactor', agent: 'claude', instructions: 'Separate concerns' }
+    ] })
+    if (!a || !b) throw new Error('missing lanes')
+    expect(a.dependsOn).toEqual([])
+    expect(b.dependsOn).toEqual([])
+    expect(a.details).toContain('Smallest change')
+    expect(b.details).not.toContain('Smallest change')
+    // A later HEAD and an uncommitted file must not leak into either route.
+    writeFileSync(path.join(repo, 'later.txt'), 'later')
+    git(repo, 'add', 'later.txt')
+    git(repo, 'commit', '-q', '-m', 'later')
+    writeFileSync(path.join(repo, 'private.txt'), 'source only')
+    const [ra, rb] = await Promise.all([service.start(a.id), service.start(b.id)])
+    const wa = ra.repos[0]?.worktreePath ?? ''
+    const wb = rb.repos[0]?.worktreePath ?? ''
+    expect(wa).not.toBe(wb)
+    expect(ra.repos[0]?.branch).not.toBe(rb.repos[0]?.branch)
+    expect(git(wa, 'rev-parse', 'HEAD')).toBe(base)
+    expect(git(wb, 'rev-parse', 'HEAD')).toBe(base)
+    expect(existsSync(path.join(wa, 'later.txt'))).toBe(false)
+    expect(existsSync(path.join(wb, 'private.txt'))).toBe(false)
+    writeFileSync(path.join(wa, 'delivery.txt'), 'route A uncommitted work')
+    expect(existsSync(path.join(wb, 'delivery.txt'))).toBe(false)
+    await handIn(a.id)
+    const handing = service.handoff(a.id, 'codex', 'Review route A')
+    const codexSession = `pipe-${daemon.spawns.length + 1}`
+    const asked = (method: string) => daemon.written(codexSession).some((frame) => JSON.stringify(frame).includes(`"method":"${method}"`))
+    while (!asked('initialize')) await settle()
+    daemon.emit(codexSession, { id: 'conclave-init', result: {} })
+    while (!asked('thread/start')) await settle()
+    daemon.emit(codexSession, { id: 'conclave-thread', result: { thread: { id: 'lane-thread' } } })
+    const handed = await handing
+    expect(handed.repos[0]?.worktreePath).toBe(wa)
+    expect(daemon.spawns.at(-1)?.cwd).toBe(realpathSync(wa))
+    expect(readFileSync(path.join(wa, 'delivery.txt'), 'utf8')).toBe('route A uncommitted work')
+    expect(service.get(b.id).agent).toBe('claude')
+    expect(existsSync(path.join(repo, 'delivery.txt'))).toBe(false)
+    expect(readFileSync(path.join(repo, 'private.txt'), 'utf8')).toBe('source only')
+    const appended = service.addWorkflowLane({ id: b.id, name: 'Third', agent: 'claude' })
+    const rc = await service.start(appended.id)
+    expect(git(rc.repos[0]?.worktreePath ?? '', 'rev-parse', 'HEAD')).toBe(base)
+    expect(appended.workflow?.position).toBe(2)
+    expect(appended.details).not.toContain('Separate concerns')
+    writeFileSync(path.join(wb, 'attempt.txt'), 'preserve previous attempt')
+    await handIn(b.id)
+    const redone = await service.redo(b.id, 'Try again from the shared base')
+    expect(git(wb, 'rev-parse', 'HEAD')).toBe(base)
+    expect(redone.workflow?.id).toBe(a.workflow?.id)
+    expect(git(repo, 'show', `${rb.repos[0]?.branch}-try1:attempt.txt`)).toBe('preserve previous attempt')
+    expect(() => service.addWorkflowLane({ id: b.id, name: 'MINIMAL', agent: null })).toThrow(/重复/)
+    expect(() => service.update({ id: b.id, repos: [repo] })).toThrow(/共同起点/)
+  })
+
+  it('creates no workflow tasks or notifications when a project is not a committed git repo', async () => {
+    const valid = initRepo('valid-lane')
+    const plain = path.join(dir, 'plain-lane')
+    mkdirSync(plain)
+    const fields = { title: 'No in-place lanes', details: '', repos: [valid, plain], lanes: [{ name: 'A', agent: 'claude' as const }] }
+    await expect(service.createWorkflow(fields)).rejects.toMatchObject({ reason: 'worktree-not-git' })
+    expect(service.list()).toEqual([])
+    expect(events).toEqual([])
+    expect(daemon.spawns).toHaveLength(0)
+    await expect(service.createWorkflow({ ...fields, repos: [valid, path.join(valid, '.git')] })).rejects.toBeDefined()
+    expect(service.list()).toEqual([])
+  })
+
   it('automatically starts in a worktree after the final dependency is accepted, with no client or second start', async () => {
     const first = service.create({ title: 'First' })
     const second = service.create({ title: 'Second' })

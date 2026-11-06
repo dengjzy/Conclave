@@ -1,5 +1,6 @@
 import type { AgentProfile, AgentSmokeTestResult } from '@conclave/protocol'
 import { mergeCliStatuses } from './agent-cli-state'
+import { focusWorkflowTask } from './task-board'
 import { getLocale, t } from './i18n'
 import { accountsSupported, activeAccount, isHelper, usageAccount, type AgentAccounts } from '@conclave/protocol'
 import { useEffect, useMemo, useState } from 'react'
@@ -45,7 +46,7 @@ import {
 import { receiveChatDelta, receiveChatItems } from './chat-state'
 import { forgetDiscussionPosts, receiveDiscussionPosts } from './discussions'
 import { fileScopeKey, forgetFileTabs, type FileScope } from './file-tabs'
-import { usePreferences } from './preferences'
+import { setPreference, usePreferences } from './preferences'
 import { closePane, panesAfterSelect, panesBeside, restorePanes, shownPanes, splitPanesOf, type SplitPanes } from './conversation-split'
 import { activeInboxes, inboxKey } from './source-inboxes'
 import type { BrowserStatus } from '@conclave/protocol'
@@ -347,6 +348,13 @@ export function selectTask(id: string | null): void {
       inspectorOpen: review || s.inspectorOpen
     }
   })
+  if (id) {
+    const task = useCore.getState().tasks[id]
+    if (task?.workflow) {
+      focusWorkflowTask(task.id)
+      setPreference('workflowFollow', true)
+    }
+  }
 }
 
 export function setTaskInspectorTab(tab: InspectorTab): void {

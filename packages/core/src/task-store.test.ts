@@ -131,6 +131,42 @@ describe('TaskStore migrations', () => {
     store.close()
   })
 
+  it('persists workflow membership and rolls back all lanes if a later insert fails', () => {
+    const store = new TaskStore(file)
+    const workflow = { id: '00000000-0000-4000-8000-000000000001', title: 'Compare', request: 'Shared request', lane: 'A', position: 0, bases: [{ path: '/repo', commit: 'a'.repeat(40) }], createdAt: 1 }
+    const repos = [{ path: '/repo', worktreePath: null, branch: null, startRef: null, start: null }]
+    const raw = new DatabaseSync(file)
+    raw.exec("CREATE TRIGGER reject_second BEFORE INSERT ON tasks WHEN NEW.title = 'second' BEGIN SELECT RAISE(ABORT, 'injected failure'); END")
+    const first = { title: 'first', details: '', agent: null, workflow }
+    expect(() => store.createLanes([first, { ...first, title: 'second' }], repos)).toThrow(/injected failure/)
+    expect(store.list()).toEqual([])
+    raw.exec('DROP TRIGGER reject_second')
+    raw.close()
+    const [created] = store.createLanes([first], repos)
+    store.close()
+    const reopened = new TaskStore(file)
+    expect(reopened.get(created?.id ?? '')?.workflow).toEqual(workflow)
+    expect(reopened.get(created?.id ?? '')?.repos).toEqual(repos)
+    reopened.close()
+  })
+
+  it('preserves a lane saved by the old local workflow build and adds the upstream discussion preference', () => {
+    const raw = new DatabaseSync(file)
+    applyLegacyMigrations(raw, MIGRATIONS.slice(0, -1))
+    raw.exec('ALTER TABLE tasks ADD COLUMN workflow TEXT;')
+    const workflow = { id: '00000000-0000-4000-8000-000000000001', title: 'Compare', request: '', lane: 'A', position: 0, bases: [{ path: '/repo', commit: 'a'.repeat(40) }], createdAt: 1 }
+    raw.prepare("INSERT INTO tasks (id, title, status, workflow, created_at, updated_at) VALUES ('lane', 'A', 'pending', ?, 1, 1)").run(JSON.stringify(workflow))
+    raw.close()
+
+    const store = new TaskStore(file)
+    expect(store.get('lane')?.workflow).toEqual(workflow)
+    store.close()
+    const migrated = new DatabaseSync(file)
+    try {
+      expect(migrated.prepare("SELECT dflt_value FROM pragma_table_info('discussions') WHERE name = 'summarize'").get()?.dflt_value).toBe('1')
+    } finally { migrated.close() }
+  })
+
   it('stores repos in order and dependencies alongside', () => {
     const store = new TaskStore(file)
     const a = store.create('A')
