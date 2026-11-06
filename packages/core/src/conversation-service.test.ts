@@ -14,6 +14,7 @@ import { TaskStore } from './task-store'
 import { CredentialStore } from './credential-store'
 import { ModelProviderStore } from './model-providers'
 import type { ModelProviderInput } from '@conclave/protocol'
+import { adapterOf } from './agents'
 
 // The store an image a message names is looked up in; made on the way in.
 function attachmentsAt(root: string): AttachmentStore {
@@ -887,6 +888,62 @@ describe('ConversationService', () => {
     expect(existsSync(path.join(root, 'sessions', created.id, 'stages', `${failed!.id}.jsonl`))).toBe(true)
     await service.delete(created.id)
     expect(removed).toEqual([failed!.providerSessionId])
+  })
+
+  it('captures new artifact homes when a session resumes on another account and passes only that session’s newest scopes', async () => {
+    let active = 'a'
+    const scope = (account: string, id: string) => ({ root: path.join(root, account, 'brain'), locator: path.join(root, account, 'brain', id) })
+    service.setAccounts({ activeOf: () => active, launch: async () => ({ id: active, env: { CLAUDE_CONFIG_DIR: path.join(root, active) } }) })
+    service.setNativeDeletion({
+      adapter: () => ({ capture: (target) => ({ ...target, artifacts: [scope(active, target.providerSessionId)] }),
+        resolve: async (target) => ({ id: target.providerSessionId, root: '/shared-history', locator: `/shared-history/${target.providerSessionId}.db`, cwd: target.cwd, artifacts: target.artifacts }),
+        children: async () => [], remove: async () => {} }),
+      executor: { command: async () => '', acp: async () => ({}) }, home: () => undefined
+    }, async () => {})
+    const command = vi.spyOn(adapterOf('claude'), 'command')
+    try {
+      const created = await service.create('claude', [])
+      await service.send(created.id, 'save this session')
+      await settle()
+      await service.stop(created.id)
+      const provider = service.stages(created.id)[0]!.providerSessionId!
+      store.rememberNativeSession(created.id, 'claude', 'unrelated', '/project', null,
+        { id: 'unrelated', root: '/other', locator: '/other/unrelated.db', cwd: '/project', artifacts: [scope('unrelated', 'unrelated')] })
+      active = 'b'
+      await service.continue(created.id)
+      await settle()
+      expect(command.mock.calls.at(-1)?.[0].sessionArtifacts).toEqual([scope('a', provider)])
+      expect(store.nativeSessions([created.id]).find((entry) => entry.providerSessionId === provider)?.session.artifacts).toEqual([scope('b', provider), scope('a', provider)])
+      await service.stop(created.id)
+      active = 'c'
+      await service.continue(created.id)
+      expect(command.mock.calls.at(-1)?.[0].sessionArtifacts).toEqual([scope('b', provider), scope('a', provider)])
+    } finally { command.mockRestore() }
+  })
+
+  it('resumes a legacy native artifact locator after its original home is no longer the default', async () => {
+    const created = await service.create('claude', [])
+    await service.send(created.id, 'old session')
+    await settle()
+    await service.stop(created.id)
+    const provider = service.stages(created.id)[0]!.providerSessionId!
+    const old = { root: path.join(root, 'old', 'brain'), locator: path.join(root, 'old', 'brain', provider) }
+    const current = { root: path.join(root, 'new', 'brain'), locator: path.join(root, 'new', 'brain', provider) }
+    store.rememberNativeSession(created.id, 'claude', provider, created.workspacePath, null,
+      { id: provider, root: '/shared-history', locator: old.locator, cwd: created.workspacePath })
+    service.setNativeDeletion({
+      adapter: () => ({ capture: (target) => ({ ...target, artifacts: [current] }),
+        resolve: async (target) => ({ id: target.providerSessionId, root: '/shared-history', locator: `/shared-history/${provider}.db`, cwd: target.cwd, artifacts: target.artifacts }),
+        children: async () => [], remove: async () => {} }),
+      executor: { command: async () => '', acp: async () => ({}) }, home: () => path.join(root, 'new')
+    }, async () => {})
+    const command = vi.spyOn(adapterOf('claude'), 'command')
+    try {
+      await service.continue(created.id)
+      await settle()
+      expect(command.mock.calls.at(-1)?.[0].sessionArtifacts).toEqual([old])
+      expect(store.nativeSessions([created.id])[0]?.session.artifacts).toEqual([current, old])
+    } finally { command.mockRestore() }
   })
 
   it('keeps archived helper native ownership on the parent for later deletion', async () => {

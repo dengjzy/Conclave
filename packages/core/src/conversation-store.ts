@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { z } from 'zod'
-import type { NativeSession } from './native-session'
+import { NativeArtifact, NativeSession, NativeSessionTarget, mergeNativeArtifacts, mergeNativeSessions, nativeSessionArtifacts } from './native-session'
 import { ConversationDeletionJob } from './conversation-deletion'
 import { AgentKind, AgentProfile, Conversation, ConversationInitialMessage, ConversationMessage, ConversationStage, ProviderRoute, TaskSource } from '@conclave/protocol'
 
@@ -283,9 +283,10 @@ export class ConversationStore {
     return row ? stage(row) : null
   }
 
-  // The agent's newest chat stage in any conversation on its own account.
-  latestChatStage(agent: AgentKind): ConversationStage | null {
-    const row = this.db.prepare(`${STAGE_SELECT} WHERE agent = ? AND provider_route IS NULL ORDER BY started_at DESC, rowid DESC LIMIT 1`).get(agent)
+  // Null account on an older stage means it ran on the local login.
+  latestChatStage(agent: AgentKind, account: string): ConversationStage | null {
+    const row = this.db.prepare(`${STAGE_SELECT} WHERE agent = ? AND provider_route IS NULL AND COALESCE(account, 'default') = ?
+      ORDER BY started_at DESC, rowid DESC LIMIT 1`).get(agent, account)
     return row ? stage(row) : null
   }
 
@@ -420,47 +421,61 @@ export class ConversationStore {
     return [...ids]
   }
 
-  rememberNativeTarget(conversationId: string, agent: z.infer<typeof AgentKind>, providerSessionId: string, cwd: string, account: string | null, home?: string): string | undefined {
-    this.db.prepare(`INSERT INTO conversation_native_sessions (conversation_id, agent, provider_session_id, cwd, account, home)
-      VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(conversation_id, agent, provider_session_id, cwd)
-      DO UPDATE SET home = COALESCE(conversation_native_sessions.home, excluded.home)`)
-      .run(conversationId, agent, providerSessionId, cwd, account, home ?? null)
+  rememberNativeTarget(conversationId: string, agent: z.infer<typeof AgentKind>, providerSessionId: string, cwd: string, account: string | null, home?: string, artifacts?: readonly NativeArtifact[]): string | undefined {
+    const previous = this.db.prepare(`SELECT native, artifacts FROM conversation_native_sessions
+      WHERE conversation_id = ? AND agent = ? AND provider_session_id = ? AND cwd = ?`).get(conversationId, agent, providerSessionId, cwd)
+    const native = parsedJson(previous?.native, NativeSession)
+    const scopes = mergeNativeArtifacts(artifacts, native ? nativeSessionArtifacts(native) : undefined, parsedJson(previous?.artifacts, z.array(NativeArtifact)) ?? undefined)
+    const updated = native && scopes ? { ...native, artifacts: scopes } : native
+    this.db.prepare(`INSERT INTO conversation_native_sessions (conversation_id, agent, provider_session_id, cwd, account, home, artifacts, native)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(conversation_id, agent, provider_session_id, cwd)
+      DO UPDATE SET home = COALESCE(conversation_native_sessions.home, excluded.home), artifacts = excluded.artifacts,
+        native = COALESCE(excluded.native, conversation_native_sessions.native)`)
+      .run(conversationId, agent, providerSessionId, cwd, account, home ?? null, scopes ? JSON.stringify(scopes) : null, updated ? JSON.stringify(updated) : null)
     const saved = this.db.prepare(`SELECT home FROM conversation_native_sessions
       WHERE conversation_id = ? AND agent = ? AND provider_session_id = ? AND cwd = ?`).get(conversationId, agent, providerSessionId, cwd)
     return typeof saved?.home === 'string' ? saved.home : undefined
   }
 
   rememberNativeSession(conversationId: string, agent: z.infer<typeof AgentKind>, providerSessionId: string, cwd: string, account: string | null, native: NativeSession): void {
+    const previous = this.db.prepare(`SELECT native, artifacts FROM conversation_native_sessions
+      WHERE conversation_id = ? AND agent = ? AND provider_session_id = ? AND cwd = ?`).get(conversationId, agent, providerSessionId, cwd)
+    const saved = parsedJson(previous?.native, NativeSession)
+    const merged = saved ? mergeNativeSessions(saved, native) : native
+    const artifacts = mergeNativeArtifacts(merged.artifacts, parsedJson(previous?.artifacts, z.array(NativeArtifact)) ?? undefined)
+    const session = artifacts ? { ...merged, artifacts } : merged
     this.db.prepare(`INSERT INTO conversation_native_sessions (conversation_id, agent, provider_session_id, cwd, account, native)
       VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(conversation_id, agent, provider_session_id, cwd)
-      DO UPDATE SET native = COALESCE(conversation_native_sessions.native, excluded.native)`)
-      .run(conversationId, agent, providerSessionId, cwd, account, JSON.stringify(native))
+      DO UPDATE SET native = excluded.native`)
+      .run(conversationId, agent, providerSessionId, cwd, account, JSON.stringify(session))
   }
 
   nativeSessions(ids: readonly string[]): Array<{ agent: z.infer<typeof AgentKind>; providerSessionId: string; session: NativeSession }> {
     const selected = new Set(ids)
-    const Native = z.object({ id: z.string(), root: z.string(), locator: z.string(), cwd: z.string() })
-    return this.db.prepare('SELECT conversation_id, agent, provider_session_id, native FROM conversation_native_sessions WHERE native IS NOT NULL').all()
+    return this.db.prepare('SELECT conversation_id, agent, provider_session_id, native FROM conversation_native_sessions WHERE native IS NOT NULL ORDER BY rowid').all()
       .filter((row) => selected.has(String(row.conversation_id)))
-      .map((row) => ({ agent: AgentKind.parse(row.agent), providerSessionId: String(row.provider_session_id), session: Native.parse(JSON.parse(String(row.native))) }))
+      .map((row) => ({ agent: AgentKind.parse(row.agent), providerSessionId: String(row.provider_session_id), session: NativeSession.parse(JSON.parse(String(row.native))) }))
   }
 
-  nativeTargets(ids: readonly string[]): Array<{ agent: z.infer<typeof AgentKind>; providerSessionId: string; cwd: string; account: string | null; home?: string }> {
-    const NativeTarget = z.object({ agent: AgentKind, providerSessionId: z.string(), cwd: z.string(), account: z.string().nullable(), home: z.string().nullable().transform((value) => value ?? undefined) })
+  nativeTargets(ids: readonly string[]): Array<NativeSessionTarget & { agent: z.infer<typeof AgentKind>; account: string | null }> {
+    const NativeTarget = NativeSessionTarget.extend({ agent: AgentKind, account: z.string().nullable() })
     const selected = new Set(ids)
-    const resolved = new Set(this.nativeSessions(ids).map((entry) => JSON.stringify([entry.agent, entry.providerSessionId])))
+    const resolved = new Set(this.db.prepare('SELECT conversation_id, agent, provider_session_id FROM conversation_native_sessions WHERE native IS NOT NULL').all()
+      .map((row) => JSON.stringify([row.conversation_id, row.agent, row.provider_session_id])))
     const found = new Map<string, z.infer<typeof NativeTarget>>()
     for (const conversation of this.list().filter((each) => selected.has(each.id))) {
-      const rows = this.db.prepare(`SELECT agent, provider_session_id AS providerSessionId, cwd, account, home
+      const rows = this.db.prepare(`SELECT agent, provider_session_id AS providerSessionId, cwd, account, home, artifacts
         FROM conversation_native_sessions WHERE conversation_id = ?
-        UNION SELECT agent, provider_session_id AS providerSessionId, ? AS cwd, account, NULL AS home FROM conversation_stages
+        UNION SELECT agent, provider_session_id AS providerSessionId, ? AS cwd, account, NULL AS home, NULL AS artifacts FROM conversation_stages
           WHERE conversation_id = ? AND provider_session_id IS NOT NULL
-        UNION SELECT agent, provider_session_id AS providerSessionId, ? AS cwd, NULL AS account, NULL AS home FROM session_imports WHERE conversation_id = ?`)
+        UNION SELECT agent, provider_session_id AS providerSessionId, ? AS cwd, NULL AS account, NULL AS home, NULL AS artifacts FROM session_imports WHERE conversation_id = ?`)
         .all(conversation.id, conversation.workspacePath, conversation.id, conversation.workspacePath, conversation.id)
       for (const row of rows) {
-        const target = NativeTarget.parse(row)
-        if (resolved.has(JSON.stringify([target.agent, target.providerSessionId]))) continue
-        found.set(JSON.stringify([target.agent, target.providerSessionId, target.cwd, target.account, target.home]), target)
+        const target = NativeTarget.parse({ ...row, home: row.home ?? undefined, artifacts: parsedJson(row.artifacts, z.array(NativeArtifact)) ?? undefined })
+        if (resolved.has(JSON.stringify([conversation.id, target.agent, target.providerSessionId]))) continue
+        const key = JSON.stringify([target.agent, target.providerSessionId, target.cwd, target.account, target.home])
+        const artifacts = mergeNativeArtifacts(target.artifacts, found.get(key)?.artifacts)
+        found.set(key, artifacts ? { ...target, artifacts } : target)
       }
     }
     const captured = new Set([...found.values()].filter((target) => target.home !== undefined).map((target) => JSON.stringify([target.agent, target.providerSessionId, target.cwd])))

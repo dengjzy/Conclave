@@ -24,6 +24,14 @@ Conclave 用 `oauth-personal`（Google 账号）认证：
 
 服务使用默认的 `GEMINI_HOME`（`~/.gemini`），所以会读取用户自己的全局规则（`~/.gemini/GEMINI.md` 等）和 `~/.gemini/config/mcp_config.json`。会话保存在 `~/.gemini/antigravity-acp/conversations`，与 `agy` CLI 的会话互不相通。
 
+设置 → 账号 可以添加和切换 Google 账号。每个托管账号使用 `~/.conclave/agent-accounts/antigravity/<id>` 作为 `GEMINI_HOME`，凭据各自保存；本机账号沿用原来的目录。账号共享 `config`、CLI 技能和 ACP 的 `conversations`，因此切号后仍能继续原生会话，不提供账号之间的历史隔离。
+
+`brain` 是账号自己的真实目录，用于 MCP 工具说明、日志和生成产物。官方文件工具按真实路径检查访问范围，不能把它链接到另一个账号目录。旧版共享的 `brain` 链接会在没有托管 Antigravity 进程运行时迁移；原共享目录保留，恢复会话时仅复制该会话已登记的产物。删除账号清除登录凭据和账号记录，保留历史产物；删除会话时再按登记的路径清理，并保护其他会话仍引用的共享历史。
+
+重新登录在独立临时目录中完成，成功后才原子替换凭据；取消或关闭登录终端保留原登录。同一账号同时只能进行一次登录。切换当前账号只影响之后启动的进程，已经运行的回合继续使用原账号。模型目录和额度按账号读取，额度轮询可为之后启动的进程选择其他账号，不会自动重试当前失败的模型请求。
+
+ACP 进程会缓存凭证并在刷新时写回。为避免旧进程覆盖新登录或重新创建已删除的账号目录，登录和删除账号要求 Conclave 托管的 Antigravity 进程已结束，登录期间暂停启动新的 Antigravity 进程；已有回合不会被自动停止。
+
 ## 权限模式
 
 | Conclave | Antigravity | 行为 |
@@ -44,12 +52,13 @@ Conclave 用 `oauth-personal`（Google 账号）认证：
 - 凭据文件里没有访问令牌，只有 `refresh_token`、OAuth client 和登录时解析出的 `project_id`。Conclave 用它向 Google 换一个访问令牌，只保存在内存里，提前一分钟过期，从不改写凭据文件。
 - 向 `v1internal:retrieveUserQuotaSummary` POST `{"project": project_id}`，先请求 `daily-cloudcode-pa`，失败再请求 `cloudcode-pa`。服务按账号是否走 Cloud 条款选其中一个，但选择结果不保存。User-Agent 与服务发出的格式相同，`host_path` 是 `conclave/1`。
 - 每个桶按 `window`（或 `bucketId` 的后缀）分成 5 小时和每周两种窗口，`remainingFraction` 换算成已用百分比，标了 `disabled` 的桶不显示。Gemini 的桶是账号自己的额度；其他组（Claude 和 GPT 共用的额度）以组名标出。
-- Google 拒绝刷新（`invalid_grant`）时显示登录已过期，需要在 Antigravity 会话里重新登录。
+- Google 拒绝刷新（`invalid_grant`）时显示登录已过期，可以在 设置 → 账号 里重新登录。
 
 ## 已知边界
 
+- 发送后 30 秒没有任何回合事件时显示等待提示，6 分钟仍无事件则停止并提供重试入口，不自动重发。该计时只针对首次响应；工具已开始后，后续模型请求仍可能较慢。
 - 模型调用失败（例如额度用尽）不会作为 JSON-RPC 错误返回，而是作为一段回复文字，回合照常以 `end_turn` 结束。
 - 服务的 harness 会往 `~/.gemini/antigravity/bin` 写辅助程序，即使设置了 `GEMINI_HOME` 也一样。
 - 会话不接受 `additionalDirectories`。其他项目的路径会写在第一条消息前的说明里。
-- 用个人 Google 账号登录时，服务的文件读写工具只能访问工作目录（主项目）、`~/.gemini` 和技能目录，访问别处直接报错（1.4.1 的 `make_safe_view_file` 和 harness 都是这样）。所以多项目任务和多项目会话里，附加项目和只读参考项目只能通过运行命令访问；默认和 Auto Edit 模式下每条命令都要批准。描述里的 `primaryOnlyFiles` 让启动任务和新建会话时给出提醒。企业账号按管理员的文件访问策略处理，可能允许访问工作区外。
+- 用个人 Google 账号登录时，服务的文件读写工具只能访问工作目录（主项目）、当前账号的 ACP 数据目录和技能目录，访问别处直接报错（1.4.1 的 `make_safe_view_file` 和 harness 都是这样）。所以多项目任务和多项目会话里，附加项目和只读参考项目只能通过运行命令访问；默认和 Auto Edit 模式下每条命令都要批准。描述里的 `primaryOnlyFiles` 让启动任务和新建会话时给出提醒。企业账号按管理员的文件访问策略处理，可能允许访问工作区外。
 - 只读参考项目：文件工具碰不到它，所以改不了；Default 模式下发来的编辑审批也由 Conclave 直接拒绝。Auto Edit 和 YOLO 下编辑不发审批，企业账号又允许访问工作区外时，Conclave 拦不住；命令写文件同样拦不住，只靠提示约束。

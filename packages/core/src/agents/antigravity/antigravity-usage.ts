@@ -57,6 +57,25 @@ async function accessToken(credential: Credential, now = Date.now()): Promise<st
   return granted.data.access_token
 }
 
+export async function readAntigravityUserEmail(file = antigravityTokenFile()): Promise<string | null> {
+  const credential = await readAntigravityCredential(file)
+  if (!credential) return null
+  try {
+    const token = await accessToken(credential)
+    const dispatcher = getProxyDispatcher()
+    const response = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(10_000),
+      ...(dispatcher ? { dispatcher: dispatcher as any } : {})
+    })
+    if (!response.ok) return null
+    const data = z.object({ email: z.string().optional() }).safeParse(await response.json()).data
+    return data?.email ?? null
+  } catch {
+    return null
+  }
+}
+
 // The structured User-Agent the server sends for a client (useragent.build_user_agent), Conclave named
 // as the surface: the backend attributes the call to Antigravity by it.
 export function antigravityUserAgent(platform: NodeJS.Platform = process.platform, arch = process.arch): string {
@@ -93,8 +112,8 @@ export function parseAntigravityQuota(body: unknown): UsageWindow[] {
   }))
 }
 
-export async function readAntigravityUsage(): Promise<UsageReading> {
-  const credential = await readAntigravityCredential()
+export async function readAntigravityUsage(home?: string): Promise<UsageReading> {
+  const credential = await readAntigravityCredential(antigravityTokenFile(home))
   if (!credential) return { signedIn: false }
   // Saved before its onboarding finished: the server resolves the project at its next start.
   if (!credential.project_id) return { signedIn: true, windows: [], plan: null }

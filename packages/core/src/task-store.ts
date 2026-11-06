@@ -373,7 +373,8 @@ export const MIGRATIONS = [
      agent TEXT NOT NULL, provider_session_id TEXT NOT NULL, cwd TEXT NOT NULL, account TEXT, home TEXT, native TEXT,
      PRIMARY KEY (conversation_id, agent, provider_session_id, cwd)
    );`,
-  `ALTER TABLE conversations ADD COLUMN initial_message TEXT;`
+  `ALTER TABLE conversations ADD COLUMN initial_message TEXT;`,
+  `ALTER TABLE conversation_native_sessions ADD COLUMN artifacts TEXT;`
 ]
 
 
