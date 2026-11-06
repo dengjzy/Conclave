@@ -143,4 +143,14 @@ describe('SessionImports', () => {
     await expect(imports.import([{ agent: 'claude', sessionId: '../../etc/passwd' }])).rejects.toMatchObject({ reason: 'invalid-params' })
     await expect(imports.import([{ agent: 'codex', sessionId: SESSION }])).rejects.toMatchObject({ reason: 'session-not-found' })
   })
+
+  it('imports DSH sessions formatted with session- prefix', async () => {
+    const dshSessionId = `session-${SESSION}`
+    const dshOrigin = { agent: 'dsh' as const, transcripts: { scan: async () => [summary(dshSessionId)], read: async () => turn('u1', 100, 'DSH prompt', 'DSH reply') } }
+    const dshImports = new SessionImports(store, service, path.join(root, 'home'), [dshOrigin], [])
+    const [imported] = await dshImports.import([{ agent: 'dsh', sessionId: dshSessionId }])
+    expect(imported).toBeDefined()
+    expect(imported!.agent).toBe('dsh')
+    expect(service.stages(imported!.id)[0]!.providerSessionId).toBe(dshSessionId)
+  })
 })

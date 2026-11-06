@@ -1,8 +1,8 @@
 import { createReadStream, type Dirent } from 'node:fs'
-import { readdir, stat } from 'node:fs/promises'
+import { readdir, readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { createInterface } from 'node:readline'
-import { createZstdDecompress } from 'node:zlib'
+import { createZstdDecompress, zstdDecompressSync } from 'node:zlib'
 import type { ChatItemBody } from './chat-items'
 
 // A session an agent kept in its own transcript, as a quick look at the file tells it.
@@ -34,10 +34,76 @@ export interface TranscriptSource {
 }
 
 const HEAD_BYTES = 256 * 1024
+const ZSTD_MAGIC = 0xFD2FB528
 
-// The lines of a transcript, decompressed where Codex packed it, while `take` wants more. A
+function* decodeMultiFrameZstd(buffer: Buffer): Generator<string> {
+  let offset = 0
+  let leftover = ''
+  while (offset < buffer.length) {
+    const start = offset
+    if (buffer.length - offset < 4) break
+    if (buffer.readUInt32LE(offset) !== ZSTD_MAGIC) break
+    offset += 4
+    if (offset >= buffer.length) break
+    const descriptor = buffer.readUInt8(offset++)
+    const contentSizeFlag = descriptor >>> 6
+    const singleSegment = (descriptor & 32) !== 0
+    const checksum = (descriptor & 4) !== 0
+    const dictionaryFlag = descriptor & 3
+    const dictionaryBytes = dictionaryFlag === 3 ? 4 : dictionaryFlag
+    const contentSizeBytes = contentSizeFlag === 0 ? (singleSegment ? 1 : 0) : 1 << contentSizeFlag
+    const remainingHeaderBytes = (singleSegment ? 0 : 1) + dictionaryBytes + contentSizeBytes
+    if (buffer.length - offset < remainingHeaderBytes) break
+    offset += remainingHeaderBytes
+    let corrupt = false
+    for (;;) {
+      if (buffer.length - offset < 3) { corrupt = true; break }
+      const blockHeader = buffer.readUIntLE(offset, 3)
+      offset += 3
+      const lastBlock = (blockHeader & 1) !== 0
+      const blockType = (blockHeader >>> 1) & 3
+      const blockSize = blockHeader >>> 3
+      const payloadBytes = blockType === 1 ? 1 : blockSize
+      if (buffer.length - offset < payloadBytes) { corrupt = true; break }
+      offset += payloadBytes
+      if (lastBlock) break
+    }
+    if (corrupt) break
+    if (checksum) {
+      if (buffer.length - offset < 4) break
+      offset += 4
+    }
+    try {
+      const frame = buffer.subarray(start, offset)
+      const text = leftover + zstdDecompressSync(frame).toString('utf8')
+      const lines = text.split(/\r?\n/)
+      leftover = lines.pop() ?? ''
+      for (const line of lines) {
+        yield line
+      }
+    } catch {
+      break
+    }
+  }
+  if (leftover) yield leftover
+}
+
+// The lines of a transcript, decompressed where Codex or DSH packed it, while `take` wants more. A
 // line cut short by the byte limit is left out.
 export async function readLines(file: string, take: (line: string) => boolean, limit = Infinity): Promise<void> {
+  if (file.endsWith('.zstd')) {
+    let read = 0
+    try {
+      const raw = await readFile(file)
+      for (const line of decodeMultiFrameZstd(raw)) {
+        read += Buffer.byteLength(line) + 1
+        if (read > limit || !take(line)) break
+      }
+    } catch {
+      // An unreadable or truncated file reads as far as it went.
+    }
+    return
+  }
   const raw = createReadStream(file)
   const input = file.endsWith('.zst') ? raw.pipe(createZstdDecompress()) : raw
   const lines = createInterface({ input, crlfDelay: Infinity })

@@ -3,12 +3,15 @@ import type { ModelPrice } from '../model-cost'
 import type { ProviderWire } from '../model-provider'
 
 export type AgentModeText = { label: string; description: string }
+export type AgentPresetOption = { id: string; label: string; description?: string }
 
 // What core and every client know of an agent without running it: plain data, so a client reads
 // the agent's rules here rather than re-encoding them, and a new agent is one more descriptor.
 export type AgentDescriptor = {
   label: string
-  translations?: { en: Partial<Pick<AgentDescriptor, 'modes' | 'environment' | 'usageWhere' | 'nativePlanRun'>> }
+  translations?: { en: Partial<Pick<AgentDescriptor, 'modes' | 'environment' | 'usageWhere' | 'nativePlanRun'>> & { agentPresets?: { options: readonly AgentPresetOption[] } } }
+  // Dedicated operational presets an agent natively offers (such as DSH's Standard, Creator, PTC, Minimal modes).
+  agentPresets?: { options: readonly AgentPresetOption[]; defaultPreset: string }
   // The command the user runs themselves, to sign in or refresh its credentials.
   cli: string
   // Where native credentials come from; separate from Conclave-managed model providers.

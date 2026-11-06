@@ -1989,6 +1989,10 @@ export const MESSAGES = {
     "zh": "回合结束后才能换模型和推理强度",
     "en": "Change model and reasoning effort after this turn ends"
   },
+  "ChatOptionsBar.agentPreset": {
+    "zh": "预设模式",
+    "en": "Preset mode"
+  },
   "ChatPicker.defaultModel": {
     "zh": "默认模型",
     "en": "Default model"

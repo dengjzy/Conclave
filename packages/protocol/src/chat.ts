@@ -120,7 +120,7 @@ export const TaskLaunchOptions = z.object({
 })
 export type TaskLaunchOptions = z.infer<typeof TaskLaunchOptions>
 
-export const CHAT_OPTIONS = ['permissionMode', 'model', 'effort'] as const
+export const CHAT_OPTIONS = ['permissionMode', 'model', 'effort', 'agentPreset'] as const
 export const ChatOption = z.enum(CHAT_OPTIONS)
 export type ChatOption = z.infer<typeof ChatOption>
 

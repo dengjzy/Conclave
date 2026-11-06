@@ -15,6 +15,15 @@ export const dsh: AgentDescriptor = {
   defaultStartMode: 'ask',
   discussionMode: 'readOnly',
   readOnlyMode: 'readOnly',
+  agentPresets: {
+    defaultPreset: 'standard',
+    options: [
+      { id: 'standard', label: '标准模式', description: '功能完整的全能编码 Agent，支持文件编辑、Shell、检索、Skills、目标规划等' },
+      { id: 'cordis', label: '创造模式', description: '用于创建自定义 Agent preset，具备标准模式全部能力，并提供运行时检查与插件实验' },
+      { id: 'ptc', label: 'PTC 模式', description: '通过 TypeScript 脚本编排多步工具调用' },
+      { id: 'minimal', label: '极简模式', description: '仅提供持久化 Shell 的单工具极简模式' }
+    ]
+  },
   capabilities: { unattended: true, bypass: true, autoMode: false, pathMentions: false, optionsWhileBusy: false, skills: true, userMcp: true, modelProviders: ['openai-chat', 'openai-responses', 'anthropic'], accounts: false },
   environment: {
     role: '通过 Conclave 专用 profile 运行；首次使用时准备随应用提供的运行时插件。',
@@ -30,6 +39,14 @@ export const dsh: AgentDescriptor = {
       plan: { label: 'Plan', description: 'Explore read-only and submit a plan; execute after approval' },
       readOnly: { label: 'Read only', description: 'Read and search files; refuse edits and tools with side effects' },
       bypass: { label: 'Allow everything', description: 'Unrestricted file access without tool approval prompts' }
+    },
+    agentPresets: {
+      options: [
+        { id: 'standard', label: 'Standard', description: 'Full coding agent with editing, shell, search, skills, and planning' },
+        { id: 'cordis', label: 'Creator', description: 'For authoring custom agent presets with runtime inspection and plugin experimentation' },
+        { id: 'ptc', label: 'PTC', description: 'Orchestrates multi-step tool calls via TypeScript scripts' },
+        { id: 'minimal', label: 'Minimal', description: 'Single-tool persistent shell agent' }
+      ]
     },
     environment: {
       role: 'Runs in an Conclave profile; prepares the bundled runtime plugin on first use.',

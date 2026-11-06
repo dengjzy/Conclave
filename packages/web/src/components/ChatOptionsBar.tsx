@@ -148,6 +148,8 @@ export function ChatOptionsBar({ conversation, state, compact = false }: { conve
 
   const modes = withCurrent(offered, permissionMode)
   const models = availableModels
+  const presets = descriptor.agentPresets
+  const currentPreset = next?.agentPreset ?? presets?.defaultPreset ?? null
   const later = running ? null : t('ChatOptionsBar.appliesWhenYouSendTheNextMessage')
   return (
     <>
@@ -161,6 +163,17 @@ export function ChatOptionsBar({ conversation, state, compact = false }: { conve
           disabled={managed || (!descriptor.capabilities.optionsWhileBusy && !idle)}
           title={managed ? t(conversation.profile ? 'AgentProfiles.fixedConfig' : 'ChatOptionsBar.useThisSquadSConfiguration') : later ?? undefined}
           onChange={(mode) => set('permissionMode', mode)}
+        />
+      )}
+      {presets && (
+        <ChatPicker
+          label={t('ChatOptionsBar.agentPreset')}
+          value={currentPreset}
+          placeholder={t('ChatOptionsBar.agentPreset')}
+          options={presets.options.map((opt) => ({ value: opt.id, label: opt.label, description: opt.description ?? null }))}
+          disabled={managed || (!descriptor.capabilities.optionsWhileBusy && !idle)}
+          title={managed ? t(conversation.profile ? 'AgentProfiles.fixedConfig' : 'ChatOptionsBar.useThisSquadSConfiguration') : later ?? undefined}
+          onChange={(preset) => set('agentPreset', preset)}
         />
       )}
       <span className="chat-dock-spacer" />

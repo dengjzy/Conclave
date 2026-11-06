@@ -104,7 +104,7 @@ export type ChatStageOptions = {
   providerModels?: readonly ChatModel[]
 }
 
-export type ChatPreferences = { permissionMode?: string; model?: string; effort?: string }
+export type ChatPreferences = { permissionMode?: string; model?: string; effort?: string; agentPreset?: string }
 
 // What a frame means to the turn Conclave watches: going out, the prompt that starts one, a session
 // being opened, or a cancel; coming in, a frame that belongs to it.

@@ -16,6 +16,7 @@ export const DshRuntimeConfig = z.object({
   noEdit: z.array(z.string()).default([]),
   readTools: z.array(z.string()).default([]),
   skills: z.array(z.string()).default([]),
+  agentPreset: z.string().nullable().default(null),
   initialModel: z.object({ provider: z.string(), model: z.string() }).optional()
 })
 export type DshRuntimeConfig = z.infer<typeof DshRuntimeConfig>

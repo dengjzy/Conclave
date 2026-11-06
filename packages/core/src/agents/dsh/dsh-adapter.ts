@@ -5,6 +5,7 @@ import { dshDialect } from './dsh-dialect'
 import { dshCommand, dshProviderModels } from './dsh-command'
 import { detectDsh, dshCatalog, dshInstallation, prepareDsh } from './dsh-cli'
 import { readDshUsage } from './dsh-usage'
+import { dshTranscripts } from './dsh-transcripts'
 
 export const dsh: AgentAdapter = {
   kind: 'dsh',
@@ -16,6 +17,7 @@ export const dsh: AgentAdapter = {
   permissionModes: DSH_MODES,
   fallbackMode: 'ask',
   session: { preassignedId: false, folderBound: true, nativeFork: 'none' },
+  transcripts: dshTranscripts(),
   startTimeoutMs: 60_000,
   mcpApproval: 'conclave',
   catalog: dshCatalog,

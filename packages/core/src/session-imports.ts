@@ -9,8 +9,8 @@ import type { ConversationStore, SessionImport } from './conversation-store'
 import { Rejection } from './rejection'
 
 const MAX_LISTED = 500
-// ZCode names its sessions sess_<uuid>.
-const SESSION_ID = /^(?:sess_)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+// ZCode names its sessions sess_<uuid>, DSH names them session-<uuid>.
+const SESSION_ID = /^(?:sess_|session-)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 // A file written just as a stage of Conclave's own ended still counts as that stage's.
 const SETTLE_MS = 2_000
 

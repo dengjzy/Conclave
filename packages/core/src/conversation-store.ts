@@ -23,7 +23,7 @@ const MESSAGE_SELECT = `SELECT sequence, conversation_id AS conversationId, stag
 
 // A model and effort name one agent's catalog, so each agent keeps its own; the permission mode
 // and the bypass allowance are the conversation's.
-const AgentChoice = z.object({ model: z.string().optional(), effort: z.string().optional() })
+const AgentChoice = z.object({ model: z.string().optional(), effort: z.string().optional(), agentPreset: z.string().optional() })
 const ChatOptions = z.object({
   permissionMode: z.string().optional(),
   allowBypass: z.boolean().optional()

@@ -181,6 +181,17 @@ export function apply(ctx: Context): void {
       const opened = Configs.parse(frame.result)
       sessionId = opened.sessionId ?? z.string().parse(request.params?.sessionId)
       setMode(mode)
+      if (config.agentPreset) {
+        try {
+          const current = agent()
+          const presetsService = (ctx as unknown as { agentPresets?: { select(agent: Agent, preset: string): Promise<string> } }).agentPresets
+          if (presetsService?.select) {
+            void presetsService.select(current, config.agentPreset).catch(() => {})
+          } else {
+            (current.session as unknown as { append(type: string, data: unknown): void }).append('agent-preset/selected', { agentPreset: config.agentPreset })
+          }
+        } catch {}
+      }
     }
     const result = Configs.safeParse(frame.result)
     if (request && sessionId && result.success && result.data.configOptions) {

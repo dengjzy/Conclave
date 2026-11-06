@@ -36,6 +36,7 @@ export function dshRuntimeConfig(launch: AgentLaunch): DshRuntimeConfig {
     noEdit: [...(launch.planOnly?.dirs ?? launch.readOnly?.dirs ?? []), ...(launch.references ?? []), ...(launch.knowledgeBase && !launch.knowledgeBase.write ? [launch.knowledgeBase.path] : [])],
     readTools: conclaveReadTools(launch.todos !== false).map((tool) => `mcp__conclave__${tool}`),
     skills: launch.skills ? [path.join(launch.skills.dir, '.agents', 'skills')] : [],
+    agentPreset: launch.preferred?.agentPreset ?? null,
     ...(launch.provider ? { initialModel: { provider: providerName(launch.provider), model: launch.provider.defaultModel } } : {})
   }
 }

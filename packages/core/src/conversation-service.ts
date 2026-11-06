@@ -1283,12 +1283,12 @@ export class ConversationService {
   // the provider no longer serves is dropped, so the stage starts on its default model rather than
   // fail, and its effort goes too unless that model takes it. Never another provider's or the
   // agent's own account: the stage stays on its provider's models.
-  private rememberedOnProvider(remembered: { model?: string; effort?: string } | undefined, offered: readonly ChatModel[] | undefined): { preferred: { model?: string; effort?: string }; dropped: string | null; instead: string | null } {
+  private rememberedOnProvider(remembered: { model?: string; effort?: string; agentPreset?: string } | undefined, offered: readonly ChatModel[] | undefined): { preferred: { model?: string; effort?: string; agentPreset?: string }; dropped: string | null; instead: string | null } {
     const preferred = remembered ?? {}
     if (!offered || !preferred.model || offered.some((model) => model.id === preferred.model)) return { preferred, dropped: null, instead: null }
     const fallback = offered.find((model) => model.isDefault) ?? offered[0]
     const effort = preferred.effort && fallback?.efforts.includes(preferred.effort) ? { effort: preferred.effort } : {}
-    return { preferred: effort, dropped: preferred.model, instead: fallback ? fallback.label : null }
+    return { preferred: { ...effort, ...(preferred.agentPreset ? { agentPreset: preferred.agentPreset } : {}) }, dropped: preferred.model, instead: fallback ? fallback.label : null }
   }
 
   private agentStage(conversationId: string, stage: ConversationStage): AgentStage {
@@ -1303,6 +1303,14 @@ export class ConversationService {
     if (conversation.squadRunId || conversation.parentConversationId || conversation.workspaceReadOnly) throw new Rejection(conversation.profile ? 'profile-managed' : 'squad-managed', conversation.profile ? '本次运行沿用智能体配置' : '本次运行沿用团队配置')
     if (isHelper(conversation) && option === 'permissionMode' && !helperAllowsMode(value)) throw new Rejection('chat-option-invalid', '小助手不能只做规划')
     const { agent } = conversation
+    if (option === 'agentPreset') {
+      const presets = agentDescriptor(agent).agentPresets
+      if (!presets || !presets.options.some((o) => o.id === value)) throw new Rejection('chat-option-invalid', `${agent} offers no agent preset ${value}`)
+      const chosen = this.store.chatOptions(id)
+      this.store.setChatOptions(id, { [agent]: { ...chosen[agent], agentPreset: value } })
+      this.changed(this.get(id))
+      return
+    }
     if (isHelper(conversation) && this.chats.activity(id) === null && this.store.stages(id).length === 0) {
       if (option === 'permissionMode') {
         await this.validateStartOptions(conversation.agent, { permissionMode: value })
@@ -1335,6 +1343,14 @@ export class ConversationService {
 
   private async chooseForNextStart(conversation: Conversation, option: ChatOption, value: string): Promise<void> {
     const { id, agent } = conversation
+    if (option === 'agentPreset') {
+      const presets = agentDescriptor(agent).agentPresets
+      if (!presets || !presets.options.some((o) => o.id === value)) throw new Rejection('chat-option-invalid', `${agent} offers no agent preset ${value}`)
+      const chosen = this.store.chatOptions(id)
+      const current = chosen[agent] ?? {}
+      this.store.setChatOptions(id, { [agent]: { ...current, agentPreset: value } })
+      return
+    }
     const stage = this.store.stages(id).at(-1)
     const state = stage?.agent === agent
       ? this.chats.items(this.chatStage(conversation, stage)).findLast((item) => item.kind === 'state')
@@ -2043,10 +2059,12 @@ export class ConversationService {
   private withChat(conversation: Conversation): Conversation {
     const turn = conversation.sessionId ? this.chats.activity(conversation.id) : null
     const chosen = this.store.chatOptions(conversation.id)
+    const preset = chosen[conversation.agent]?.agentPreset ?? agentDescriptor(conversation.agent).agentPresets?.defaultPreset
     const chatOptions = {
       permissionMode: chosen.permissionMode ?? null,
       model: chosen[conversation.agent]?.model ?? null,
-      effort: chosen[conversation.agent]?.effort ?? null
+      effort: chosen[conversation.agent]?.effort ?? null,
+      ...(preset !== undefined ? { agentPreset: preset } : {})
     }
     // A suggestion is for the idle composer; one the settings turned off since is not shown.
     const suggestion = turn === 'idle' && this.promptSuggestions ? this.chats.suggestion(conversation.id) : null

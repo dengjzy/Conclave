@@ -21,7 +21,13 @@ export const AGENT_DESCRIPTORS = { claude, codex, cursor, opencode, pi, dsh, ant
 
 export function agentDescriptor(kind: AgentKind, locale: UiLocale = 'zh-CN'): AgentDescriptor {
   const descriptor = AGENT_DESCRIPTORS[kind]
-  return locale === 'en' ? { ...descriptor, ...descriptor.translations?.en } : descriptor
+  if (locale !== 'en' || !descriptor.translations?.en) return descriptor
+  const en = descriptor.translations.en
+  return {
+    ...descriptor,
+    ...en,
+    agentPresets: en.agentPresets && descriptor.agentPresets ? { ...descriptor.agentPresets, options: en.agentPresets.options } : descriptor.agentPresets
+  }
 }
 
 // A mode a stage reports, as the agent names it; undefined for one Conclave has no name for.
