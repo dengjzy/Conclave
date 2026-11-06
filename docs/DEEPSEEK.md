@@ -25,7 +25,7 @@ core 读取以下凭据，不向界面或日志发送 Key：
 
 ## 专用 profile 与分发
 
-`packages/dsh-runtime` 是随 Conclave 提供的 DSH 插件，不需要发布到 npm。`scripts/build-plugins.mjs` 构建并打包它；桌面后端打包时将 tarball 放入 `plugins/dsh/runtime.tgz`。
+`packages/dsh-runtime` 是随 Conclave 提供的 DSH 插件，不需要发布到 npm。`scripts/build-plugins.mjs` 构建并打包为 `packages/dsh-runtime/dist/runtime.tgz`，当前源码运行的 core 从这里读取插件。根目录的 `pnpm build` 和 core 的启动脚本会生成该文件；`pnpm start` 的源码启动器也会在文件缺失时补建。
 
 首次读取模型目录或启动 DSH 时，core 通过 argv 调用 `dsh plugin --profile conclave add <tarball>`。profile 位于 `$DSH_HOME/profiles/conclave`，默认 `~/.dsh/profiles/conclave`；DSH 自己准备基础依赖，因此主机需要可用的 pnpm 和网络。首次准备可能比正常启动久。
 
@@ -57,7 +57,7 @@ core 使用通用 ACP driver，按握手能力调用 `session/resume`。计划�
 
 删除 Conclave 会话时，会清理其 DSH 原生会话、确认为子 Agent 的后代以及对应投影缓存。专用 profile 的 runtime 将创建的会话写入继承的归属日志，所以工具进程直接启动 `dsh --profile conclave` 产生的空白诊断会话也能随所属会话清理。独立分叉不按 `parentSession` 单独判定为子 Agent；普通 DSH profile 和未登记的旧记录不按标题猜测删除。
 
-新增 Agent 类型将 core 协议递增到 16，旧客户端会拒绝不匹配的 core；桌面端与远程 core 同步更新即可，数据库无需迁移，daemon 协议不变。
+客户端和 core 需使用匹配的 RPC 协议，具体版本以 `packages/protocol/src/rpc.ts` 为准；涉及协议变更时同步更新 Web 客户端与远程 core。DSH 接入不改变 daemon 协议。
 
 ## 验证
 

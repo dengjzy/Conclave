@@ -8,12 +8,12 @@ Claude Code · Codex · Antigravity · Pi · OpenCode · Cursor · DeepSeek Harn
 
 Quota Telemetry · Concurrent Fan-out · Multi-turn Debates · Agent Squads · Automations & Scheduled Runs · Isolated Worktrees
 
-[![Version](https://img.shields.io/badge/version-0.0.1--web-blue)](CHANGELOG.md)
+![Version](https://img.shields.io/badge/version-0.0.1--web-blue)
 ![Platform](https://img.shields.io/badge/platform-Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-green)
 ![Agents](https://img.shields.io/badge/agents-10%20supported-8A2BE2)
 ![Architecture](https://img.shields.io/badge/architecture-Node%20Daemon%20%2B%20Core%20%2B%20Web-orange)
 
-[Quick Start](#quick-start) · [Core Capabilities](#core-capabilities) · [Architecture](#architecture) · [Supported Agents](#supported-agents) · [Shortcuts](#shortcuts) · [Changelog](CHANGELOG.md)
+[Quick Start](#quick-start) · [Core Capabilities](#core-capabilities) · [Architecture](#architecture) · [Supported Agents](#supported-agents) · [Shortcuts](#shortcuts)
 
 </div>
 

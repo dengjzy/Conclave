@@ -430,6 +430,7 @@ export const MESSAGES = {
   "squad.memberDuplicate": { "zh": "成员标识和名称不能重复", "en": "Member IDs and names must be unique" },
   "SettingsPage.theme": { "zh": "主题", "en": "Theme" },
   "common.off": { "zh": "关闭", "en": "Off" },
+  "common.retry": { "zh": "重试", "en": "Retry" },
   "language.interfaceLanguage": {
     "zh": "界面语言",
     "en": "Interface language"
@@ -7230,6 +7231,7 @@ export const MESSAGES = {
     "zh": "项目地址",
     "en": "Project website"
   },
+  "SettingsPage.about": { "zh": "关于", "en": "About" },
   "SettingsPage.desktopVersion": {
     "zh": "Web端版本",
     "en": "Web version"
@@ -7517,9 +7519,9 @@ export const MESSAGES = {
     "zh": "验收",
     "en": "Review"
   },
-  "SettingsPage.versionsUpdatesConnectionAndGit": {
-    "zh": "版本、更新、连接状态与 Git。",
-    "en": "Versions, updates, connection status and Git."
+  "SettingsPage.versionsConnectionAndGit": {
+    "zh": "版本、连接状态与 Git。",
+    "en": "Versions, connection status and Git."
   },
   "SettingsPage.protocol": {
     "zh": "协议",
@@ -11593,190 +11595,6 @@ export const MESSAGES = {
   "labels.dateAndTime": {
     "zh": "{value1}月{value2}日 {value3}",
     "en": "{value1}/{value2} {value3}"
-  },
-  "AppUpdate.newVersion": {
-    "zh": "新版本 {version}",
-    "en": "New version {version}"
-  },
-  "AppUpdate.available": {
-    "zh": "Conclave {version} 可以更新了",
-    "en": "Conclave {version} is available"
-  },
-  "AppUpdate.current": {
-    "zh": "当前版本 {version}",
-    "en": "You have {version}"
-  },
-  "AppUpdate.installAndRestart": {
-    "zh": "下载并安装",
-    "en": "Download and install"
-  },
-  "AppUpdate.installDownloaded": {
-    "zh": "安装并重启",
-    "en": "Install and restart"
-  },
-  "AppUpdate.downloadInstaller": {
-    "zh": "下载安装包",
-    "en": "Download installer"
-  },
-  "AppUpdate.details": {
-    "zh": "更新详情",
-    "en": "Update details"
-  },
-  "AppUpdate.releasePage": {
-    "zh": "发布页",
-    "en": "Release page"
-  },
-  "AppUpdate.skipVersion": {
-    "zh": "跳过此版本",
-    "en": "Skip this version"
-  },
-  "AppUpdate.downloading": {
-    "zh": "正在下载 {percent}%",
-    "en": "Downloading {percent}%"
-  },
-  "AppUpdate.installing": {
-    "zh": "正在安装，完成后自动重启…",
-    "en": "Installing; Conclave restarts when done…"
-  },
-  "AppUpdate.restartNote": {
-    "zh": "只重启 Conclave 的窗口，正在运行的 Agent 和终端不受影响。",
-    "en": "Only the Conclave window restarts; running agents and terminals carry on."
-  },
-  "AppUpdate.manualMac": {
-    "zh": "下载后打开 dmg，把 Conclave 拖进「应用程序」替换旧版本。打开时被拦的话，到 系统设置 → 隐私与安全性 点「仍要打开」。",
-    "en": "Open the dmg and drag Conclave into Applications to replace the old version. If macOS blocks it, go to System Settings → Privacy & Security and click Open Anyway."
-  },
-  "AppUpdate.manualWindows": {
-    "zh": "下载后运行安装程序，它会替换旧版本。",
-    "en": "Run the installer once downloaded; it replaces the old version."
-  },
-  "AppUpdate.failed": {
-    "zh": "更新失败：{reason}",
-    "en": "Update failed: {reason}"
-  },
-  "AppUpdate.retry": {
-    "zh": "重试",
-    "en": "Retry"
-  },
-  "AppUpdate.errorDownload": {
-    "zh": "下载失败，请检查网络",
-    "en": "the download failed; check your connection"
-  },
-  "AppUpdate.errorNetwork": {
-    "zh": "连不上 GitHub，换个网络或开关 VPN 后再试",
-    "en": "could not reach GitHub; try another network, or turn your VPN on or off"
-  },
-  "AppUpdate.errorRateLimited": {
-    "zh": "GitHub 暂时拒绝了查询，多半是同一网络查得太频繁，稍后再试或换个网络",
-    "en": "GitHub refused for now, usually because this network asked too often; try later or on another network"
-  },
-  "AppUpdate.errorIncomplete": {
-    "zh": "安装包没有下载完整",
-    "en": "the installer did not download completely"
-  },
-  "AppUpdate.errorDigest": {
-    "zh": "安装包校验不通过",
-    "en": "the installer failed its checksum"
-  },
-  "AppUpdate.errorBadInstaller": {
-    "zh": "安装包内容不对",
-    "en": "the installer is not the expected Conclave build"
-  },
-  "AppUpdate.updates": {
-    "zh": "更新",
-    "en": "Updates"
-  },
-  "AppUpdate.checkNow": {
-    "zh": "检查更新",
-    "en": "Check for updates"
-  },
-  "AppUpdate.checking": {
-    "zh": "正在检查…",
-    "en": "Checking…"
-  },
-  "AppUpdate.upToDate": {
-    "zh": "已是最新版本",
-    "en": "Up to date"
-  },
-  "AppUpdate.checkFailed": {
-    "zh": "检查失败：{reason}",
-    "en": "Check failed: {reason}"
-  },
-  "AppUpdate.lastChecked": {
-    "zh": "上次检查 {time}",
-    "en": "Last checked {time}"
-  },
-  "AppUpdate.skipped": {
-    "zh": "已跳过 {version}",
-    "en": "Skipped {version}"
-  },
-  "AppUpdate.unskip": {
-    "zh": "取消跳过",
-    "en": "Undo skip"
-  },
-  "AppUpdate.automatic": {
-    "zh": "后台自动更新",
-    "en": "Automatic background updates"
-  },
-  "AppUpdate.automaticDescription": {
-    "zh": "自动检查并下载新版本，下次启动时安装。下载后也可点击左下角「安装并重启」立即更新。",
-    "en": "Check for updates and download them in the background. Install on the next launch, or click “Install and restart” in the bottom-left corner to update now."
-  },
-  "AppUpdate.installOnNextLaunch": {
-    "zh": "更新已下载，下次启动时自动安装，也可以立即安装并重启。",
-    "en": "Update downloaded. It will install on the next launch, or you can install and restart now."
-  },
-  "AppUpdate.automaticSaveFailed": {
-    "zh": "自动更新设置未能保存，请重试。",
-    "en": "Could not save the automatic update preference. Please try again."
-  },
-  "AppUpdate.prerelease": {
-    "zh": "接收测试版",
-    "en": "Include pre-releases"
-  },
-  "AppUpdate.prereleaseDescription": {
-    "zh": "也提示带 beta 等后缀的预发布版本，可能不稳定。",
-    "en": "Also offer beta and other pre-release versions, which may be unstable."
-  },
-  "AppUpdate.updatesDescription": {
-    "zh": "每 6 小时到 GitHub 查一次新版本。",
-    "en": "Looks for a new version on GitHub every 6 hours."
-  },
-  "AppUpdate.restartNoteWindows": {
-    "zh": "安装时 Conclave 会关闭，装好后自动重新打开。所有 Agent 和终端都停下后才能安装。",
-    "en": "Conclave closes while it installs and reopens when done. It installs only once no agent or terminal is running."
-  },
-  "AppUpdate.errorBackendUnresponsive": {
-    "zh": "Conclave 后台没有按时退出，安装程序没有运行；稍后重试",
-    "en": "the Conclave backend did not stop in time, so the installer did not run; try again shortly"
-  },
-  "AppUpdate.blockerTerminal": {
-    "zh": "终端：{title}",
-    "en": "Terminal: {title}"
-  },
-  "AppUpdate.blockerConversation": {
-    "zh": "会话：{title}",
-    "en": "Conversation: {title}"
-  },
-  "AppUpdate.blockerAgent": {
-    "zh": "{agent} 的临时进程（登录、查询等），稍后重试",
-    "en": "A short-lived {agent} process (sign-in, a lookup); try again shortly"
-  },
-  "AppUpdate.blockerUnknown": {
-    "zh": "无法识别的进程",
-    "en": "An unrecognised process"
-  },
-  "AppUpdate.open": {
-    "zh": "打开",
-    "en": "Open"
-  },
-  "AppUpdate.closeTerminal": {
-    "zh": "关闭",
-    "en": "Close"
-  },
-  "AppUpdate.errorAgentsRunning": {
-    "zh": "还有 Agent 或终端在运行，等它们都停下后再重试",
-    "en": "agents or terminals are still running; retry once they have stopped"
   },
   "ModelProviderSettings.plan": { "zh": "套餐", "en": "Plan" },
   "ModelProviderSettings.custom": { "zh": "自定义", "en": "Custom" },

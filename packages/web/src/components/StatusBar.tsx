@@ -10,7 +10,6 @@ import { usePorts } from '../port-state'
 import { UsageBar } from './UsageBar'
 import { openRuns } from '../schedules'
 import { Popover } from './Popover'
-import { UpdateButton } from './UpdateNotice'
 import { openSetup } from '../setup-controller'
 import { ContextMenu, MenuItem, type MenuPoint } from './ContextMenu'
 
@@ -238,7 +237,6 @@ export function StatusBar() {
       <SettingsButton />
       <HelpButton />
       <ConnectionStatus />
-      <UpdateButton />
       <UsageBar />
       <ScheduleButton />
       <WorktreeButton />

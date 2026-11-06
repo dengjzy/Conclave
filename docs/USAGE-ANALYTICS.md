@@ -4,11 +4,11 @@
 
 ## 数据与进程边界
 
-core 的 `UsageAnalytics` 管理 SQLite 账本；desktop 通过 `usage.history`、`usage.scan`、`usage.forecasts` 读取，不访问本地凭据或 transcript。协议用 `usage-analytics` feature 控制入口，新增字段和方法不改变旧统计接口。账本只保存消耗、来源、模型、时间、目录和账号身份快照，不保存正文或访问令牌。
+core 的 `UsageAnalytics` 管理 SQLite 账本；Web 客户端通过 `usage.history`、`usage.scan`、`usage.forecasts` 读取，不访问本地凭据或 transcript。协议用 `usage-analytics` feature 控制入口，新增字段和方法不改变旧统计接口。账本只保存消耗、来源、模型、时间、目录和账号身份快照，不保存正文或访问令牌。
 
 首次启动回填现存历史，之后每分钟检查变动。Claude、Codex 的目录来自 adapter 的 `usageTranscripts` 和账号目录；默认目录解析与会话导入共用，按真实文件路径去重。用量不能使用 `SessionImports.list` 的结果：导入列表有意排除了 Conclave、自建子会话及临时目录，而这些都可能发生消耗。
 
-JSONL 和 OpenCode 的读取运行在 `usage-scan-worker` 中；源码启动用 tsx 加载，桌面打包提供独立的 worker bundle。JSONL 检查点保存文件身份、已解析字节数、头部和边界摘要、解析基线。只提交完整行；文件截断、替换或前缀变化时重建。单行上限 32 MiB，损坏行跳过。Codex 压缩历史整体解压重读，通过事件身份与未压缩副本去重。OpenCode 同时检查数据库及 WAL 的变动，以只读方式解析 v2／旧版消息；迁移后的同一会话、消息只计一次。
+JSONL 和 OpenCode 的读取运行在独立 worker 中。当前源码路径通过 `usage-scan-worker-dev.mjs` 使用 tsx 加载 `usage-scan-worker.ts`，不阻塞 core 主线程。JSONL 检查点保存文件身份、已解析字节数、头部和边界摘要、解析基线。只提交完整行；文件截断、替换或前缀变化时重建。单行上限 32 MiB，损坏行跳过。Codex 压缩历史整体解压重读，通过事件身份与未压缩副本去重。OpenCode 同时检查数据库及 WAL 的变动，以只读方式解析 v2／旧版消息；迁移后的同一会话、消息只计一次。
 
 Cursor 的本地聊天文件没有 token。core 使用 CLI 已有登录，只读请求其用量明细接口：最多 40 页、每页 300 条，成功结果缓存五分钟。认证、分页或网络失败保留旧记录，界面提示来源不可读。其历史覆盖服务方仍提供的最近 92 天，不代表能恢复服务方已清除的历史。
 
@@ -47,4 +47,4 @@ Codex 有两个独立用卡开关：
 
 ## 验证
 
-解析、worker、对账、账号归属、预测和自动化均使用隔离目录、模拟服务与可控时钟测试，不调用真实模型或消费真实重置卡。修改时运行 `pnpm typecheck && pnpm test`；界面修改另运行 `pnpm build`，打包 worker 通过 `pnpm --filter @conclave/desktop bundle:backend` 检查。
+解析、worker、对账、账号归属、预测和自动化均使用隔离目录、模拟服务与可控时钟测试，不调用真实模型或消费真实重置卡。修改时运行 `pnpm typecheck && pnpm test`；界面修改另运行 `pnpm build`。

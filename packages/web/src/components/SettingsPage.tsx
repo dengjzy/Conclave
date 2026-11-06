@@ -28,7 +28,7 @@ import {
   FolderIcon,
   GaugeIcon,
   GlobeIcon,
-  ArrowUpIcon,
+  InfoIcon,
   PlugIcon,
   CloudIcon,
   PersonIcon,
@@ -60,7 +60,6 @@ import { Segmented, SettingsGroup, SettingsRow, Stepper, Toggle } from './Settin
 import { SupportSettings } from './SupportSettings'
 import { ProjectConfigDialog, projectConfigSummary } from './ProjectConfigDialog'
 import { useOccludesBrowser } from '../browser-occlusion'
-import { UpdateSettings } from './UpdateNotice'
 import { AppearanceSettings } from './AppearanceSettings'
 import './settings-page.css'
 
@@ -483,7 +482,6 @@ function AboutSettings() {
   return (
     <>
       <SettingsRow label={t('SettingsPage.desktopVersion')} control={() => <span className="mono">{version}</span>} />
-      <UpdateSettings />
       <SettingsRow label={t('SettingsPage.protocolVersion')} control={() => <span className="mono">{PROTOCOL_VERSION}</span>} />
       <SettingsRow
         label="Conclave core"
@@ -573,10 +571,10 @@ const SECTIONS: readonly Section[] = localized(() => ([
   {
     id: 'about',
     group: t('ChatFontPicker.other'),
-    title: t('AppUpdate.updates'),
-    description: t('SettingsPage.versionsUpdatesConnectionAndGit'),
-    keywords: ['about', '关于', t('SettingsPage.version'), t('AppUpdate.checkNow'), t('AppUpdate.automatic'), t('AppUpdate.prerelease'), t('SettingsPage.protocol'), t('SettingsPage.connection'), 'core', 'git', t('SettingsPage.environment')],
-    Icon: ArrowUpIcon,
+    title: t('SettingsPage.about'),
+    description: t('SettingsPage.versionsConnectionAndGit'),
+    keywords: ['about', '关于', t('SettingsPage.version'), t('SettingsPage.protocol'), t('SettingsPage.connection'), 'core', 'git', t('SettingsPage.environment')],
+    Icon: InfoIcon,
     Body: AboutSettings
   }
 ]))

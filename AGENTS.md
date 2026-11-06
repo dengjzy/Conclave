@@ -36,15 +36,15 @@ Task-first multi-agent manager. See docs/ARCHITECTURE.md for the architecture di
 
 ## Verify
 
-`pnpm typecheck && pnpm test`, plus `pnpm build` for desktop changes.
+`pnpm typecheck && pnpm test`, plus `pnpm build` for Web or build pipeline changes.
 
 To try the app by hand, run it against the test home instead of the user's real data: `CONCLAVE_HOME=~/.conclave-demo pnpm dev` (see docs/ARCHITECTURE.md, 从源码运行).
 
 ## Release
 
-Bumping the version, packaging a dmg/exe and publishing follow [docs/RELEASING.md](docs/RELEASING.md) step by step. Packaging alone changes no file; pushing a release tag publishes on GitHub, so do it only when the user asks.
+Source builds and application versioning follow [docs/RELEASING.md](docs/RELEASING.md). There is no automated application release or separate changelog. Change versions or publish only when the user asks.
 
-GitHub generates release notes; no separate changelog is maintained. Determine breaking changes from the changes themselves and commit `BREAKING CHANGE` footers.
+Keep application, SDK/runtime and protocol versions distinct. Determine breaking changes from the changes themselves and commit `BREAKING CHANGE` footers.
 
 ## Commits
 
@@ -59,7 +59,7 @@ A trimmed version of Angular's [commit message format](https://github.com/angula
 ```
 
 - **type**: `feat` (new feature), `fix` (bug fix), `refactor` (neither), `perf`, `test`, `docs`, `build` (build, dependencies, scripts), or `chore` (repo housekeeping that fits nothing else, like `.gitignore`).
-- **scope**: the package: `protocol`, `core`, `daemon` or `desktop`. Leave it out when the change spans packages.
+- **scope**: the package: `protocol`, `core`, `daemon`, `web`, `dsh-runtime` or `plugin-sdk`. Leave it out when the change spans packages.
 - **summary**: imperative, present tense, lowercase first letter, no trailing period, under 72 characters.
 - **body**: why the change is needed, and how behavior differs from before. Required except for `docs` and `chore`.
 - **footer**: `BREAKING CHANGE: <summary>` plus migration steps for anything that bumps `PROTOCOL_VERSION` or `DAEMON_PROTOCOL_VERSION`. `Fixes #<issue>` when there is one.

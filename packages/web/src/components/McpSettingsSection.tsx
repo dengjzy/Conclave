@@ -309,7 +309,7 @@ function ImportPanel({ onDone }: { onDone: (imported: string[]) => void }) {
   return (
     <SettingsGroup title={t('McpSettingsSection.importFromClaudeCodexCursor')}>
     <div className="chat-command-form">
-      {failed ? <div className="settings-loading" role="status"><p>{t('McpSettingsSection.importFailed')}</p><button type="button" className="button" onClick={() => void load()}>{t('AppUpdate.retry')}</button></div> : candidates === null ? <p className="settings-empty" role="status">{t('McpSettingsSection.readingAgentConfigurations')}</p> : candidates.length === 0 ? <SettingsEmptyState icon={<PlugIcon />} title={t('McpSettingsSection.noImportTitle')} actions={<button type="button" className="button" onClick={() => void load()}>{t('AppUpdate.retry')}</button>}>{t('McpSettingsSection.noMcpServersInAnyAgentSUser')}</SettingsEmptyState> : (
+      {failed ? <div className="settings-loading" role="status"><p>{t('McpSettingsSection.importFailed')}</p><button type="button" className="button" onClick={() => void load()}>{t('common.retry')}</button></div> : candidates === null ? <p className="settings-empty" role="status">{t('McpSettingsSection.readingAgentConfigurations')}</p> : candidates.length === 0 ? <SettingsEmptyState icon={<PlugIcon />} title={t('McpSettingsSection.noImportTitle')} actions={<button type="button" className="button" onClick={() => void load()}>{t('common.retry')}</button>}>{t('McpSettingsSection.noMcpServersInAnyAgentSUser')}</SettingsEmptyState> : (
         <ul className="settings-project-list">
           {candidates.map((candidate) => {
             const key = keyOf(candidate)

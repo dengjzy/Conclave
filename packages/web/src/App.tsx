@@ -40,7 +40,6 @@ import { ErrorToast } from './components/ErrorToast'
 import { TaskLaunchDialog } from './components/TaskLaunchDialog'
 import { usePreferences } from './preferences'
 import { usePortPolling } from './port-state'
-import { useUpdateFeed } from './update-state'
 import type { UtilityPanelKind } from './utility-panel-order'
 
 // Esc goes from a task back to the board, unless it is meant for what has the focus:
@@ -60,7 +59,6 @@ function inTerminal(event: KeyboardEvent): boolean {
 export function App() {
   useLocale((state) => state.locale)
   usePortPolling()
-  useUpdateFeed()
   const selectedId = useCore((s) => s.selectedId)
   const section = useCore((s) => s.section)
   const selectedConversationId = useCore((s) => s.selectedConversationId)

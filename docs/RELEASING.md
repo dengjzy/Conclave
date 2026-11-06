@@ -1,75 +1,37 @@
-# 发版与打包
+# 源码构建与版本
 
-按顺序照做即可，不需要其他上下文。打包原理、签名和安装排错见 [ARCHITECTURE.md §8 打包与安装](ARCHITECTURE.md#8-打包与安装)。
+Conclave 当前从源码运行 Web 界面、core 和 daemon，没有自动应用发布工作流。推送 main 或创建 PR 会运行 [CI](../.github/workflows/ci.yml)，检查类型、测试、构建和插件 SDK；这些检查不发布应用。
 
-先分清用户要哪一种：
+## 构建与验证
 
-| 用户说的 | 做什么 | 改文件吗 | 对外可见吗 |
-| --- | --- | --- | --- |
-| 「打个包」「打个 dmg 试试」「打个 beta 包」 | [本地打包](#本地打包)，不升版本 | 不改 | 否 |
-| 「升级版本」「发版」「release」 | [正式发版](#正式发版)第 1–3 步：升版本号、校验、提交 | 改 | 否 |
-| 「推送」「发布到 GitHub」「打标签」 | [正式发版](#正式发版)第 4 步：推送提交和标签，触发自动发布 | 不改 | **是**，先跟用户确认 |
-
-## 版本号规则
-
-[语义化版本](https://semver.org/lang/zh-CN/)，1.0 之前：
-
-- 自上个版本以来有破坏性改动（核对实际变更和提交的 `BREAKING CHANGE` footer）→ 升第二位，第三位归零：`0.19.1` → `0.20.0`。
-- 其他情况（新功能、改进、修复）→ 升第三位：`0.19.1` → `0.19.2`。
-- 预发布在后面加后缀：`0.19.2-beta.1`、`0.19.2-beta.2`。带 `-` 的版本在 GitHub 上标为 Pre-release，不会成为 Latest。
-
-`PROTOCOL_VERSION`（`packages/protocol/src/rpc.ts`）和 `DAEMON_PROTOCOL_VERSION` 是通信协议的版本号，单独计数，**发版时不要动**。只有改了协议的那次提交才升它们。
-
-当前版本：
+在仓库根目录使用 Node 24（见 `.nvmrc`）和 pnpm 12：
 
 ```bash
-node -p 'require("./package.json").version'
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm test
+pnpm build
 ```
 
-## 本地打包
+`pnpm build` 先通过 `scripts/build-plugins.mjs` 构建 DSH 插件，生成 `packages/dsh-runtime/dist/runtime.tgz`，再用 Vite 生成 `packages/web/dist`。core 和 daemon 仍通过 Node 与 tsx 运行源码。
 
-只在本机生成安装包，不改任何文件。在仓库根目录执行：
+构建后可用独立数据目录试运行：
 
 ```bash
-pnpm install
-pnpm dist:mac    # → packages/desktop/dist/Conclave-<版本>-arm64.dmg（Apple 芯片）
-pnpm dist:win    # → packages/desktop/dist/Conclave-Setup-<版本>-x64.exe（macOS 上也能打）
+CONCLAVE_HOME=~/.conclave-demo pnpm start
 ```
 
-`<版本>` 取自 `packages/desktop/package.json`。耗时约 1–3 分钟。日志里出现 `skipped macOS application code signing … 0 valid identities found` 是正常的：没有 Apple 证书，App 走 ad-hoc 签名。
+`bin/conclave.mjs` 启动或复用 daemon，再启动 core；core 提供 Web 静态资源和 RPC。启动器会补建缺失的 Web 资源与 DSH 插件，但不会自动重建已经存在的产物，源码更新后应重新执行 `pnpm build`。开发时的热重载命令见 [从源码运行](ARCHITECTURE.md#7-从源码运行)。
 
-**打一个带 beta 版本号的包，但不改仓库**：把构建拆开，给 electron-builder 临时覆盖版本号（`<下一版>` 按上面的规则算）：
+## 应用版本
 
-```bash
-cd packages/desktop
-pnpm exec electron-vite build
-node scripts/bundle-backend.mjs --platform darwin
-pnpm exec electron-builder --mac --publish never -c.extraMetadata.version=<下一版>-beta.1
-# → packages/desktop/dist/Conclave-<下一版>-beta.1-arm64.dmg
-```
+只在明确需要调整应用版本时修改版本号。1.0 之前按以下规则判断：
 
-打完检查（mac）：
+- 有破坏性改动时升第二位、第三位归零，例如 `0.0.1` → `0.1.0`。核对实际行为与提交的 `BREAKING CHANGE` footer。
+- 其他新功能、改进或修复升第三位，例如 `0.0.1` → `0.0.2`。
+- 预发布可加 `-beta.1` 等后缀，例如 `0.0.2-beta.1`。
 
-```bash
-cd packages/desktop
-/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" dist/mac-arm64/Conclave.app/Contents/Info.plist   # 应为期望的版本号
-codesign --verify --deep --strict dist/mac-arm64/Conclave.app && echo 签名完好
-hdiutil verify dist/Conclave-<版本>-arm64.dmg                                                                # 末行应为 VALID
-```
-
-`packages/desktop/dist/` 不进 git，产物留在那里，把完整路径告诉用户即可。
-
-## 正式发版
-
-在 `main` 上做。当前不在 `main`（例如在 `dev`）时，先问用户在哪个分支发版，不要自己合并或切分支。开始前 `git status` 应当是干净的，有别人的未提交改动就停下来问。
-
-### 1. 定版本号
-
-按[版本号规则](#版本号规则)，检查上个发布标签以来的变更和提交说明，结合当前版本算出新版本，下文记为 `X.Y.Z`。没有新变更时不要重复发版。发布说明由 GitHub 自动生成，无需维护单独的更新日志文件。
-
-### 2. 改五个 `package.json` 的 `version`
-
-必须五个一致，Release 工作流会逐个校验：
+应用版本在以下五个文件中保持一致：
 
 - `package.json`
 - `packages/core/package.json`
@@ -77,45 +39,15 @@ hdiutil verify dist/Conclave-<版本>-arm64.dmg                                 
 - `packages/web/package.json`
 - `packages/protocol/package.json`
 
-`packages/plugin-sdk/package.json` 的 SDK 版本独立，**不要跟随应用版本修改**。四个推荐来源插件在独立的 `conclave-plugin-*` 仓库维护与发布，应用只维护 `packages/core/src/plugins-recommended.json` 中的推荐信息；不要将插件 ZIP 放入应用分发包。`pnpm-lock.yaml` 不记录上述五个应用包的版本号，不用改，也不用重新 `pnpm install`。
-
-一条命令改完（把 `X.Y.Z` 换成新版本），再核对：
+版本用于命令行状态、连接信息、界面显示和插件兼容性检查。修改后核对并运行上述验证：
 
 ```bash
-node -e 'const fs=require("fs");for(const d of [".","packages/core","packages/daemon","packages/web","packages/protocol"]){const f=d+"/package.json";fs.writeFileSync(f,fs.readFileSync(f,"utf8").replace(/"version": "[^"]+"/,`"version": "${process.argv[1]}"`))}' X.Y.Z
 node -e 'for (const d of [".","packages/core","packages/daemon","packages/web","packages/protocol"]) console.log(d, require("./"+d+"/package.json").version)'
 ```
 
-### 3. 校验并提交
+## 独立包与协议版本
 
-```bash
-pnpm typecheck && pnpm test && pnpm build
-git add package.json packages/core/package.json packages/daemon/package.json packages/web/package.json packages/protocol/package.json
-git commit -m "build: release X.Y.Z" -m "Align the application and workspace package versions at X.Y.Z for the release."
-```
-
-提交里只能有这五个文件。需要安装包时，再按[本地打包](#本地打包)执行 `pnpm dist:mac`，此时不需要 `extraMetadata`，产物名就是新版本。
-
-### 4. 推送并发布（对外，先确认）
-
-这一步会在 GitHub 上公开发布，发出去的 Release 不能覆盖。**用户明确说要推送或发布之后才做**：
-
-```bash
-git push origin main
-git tag vX.Y.Z
-git push origin vX.Y.Z
-```
-
-标签一推送，[Release 工作流](../.github/workflows/release.yml)自动运行：
-
-1. 校验标签格式，五个 `package.json` 的版本必须等于标签去掉 `v`；然后跑类型检查和测试。
-2. 分别在 macOS 和 Windows 上执行 `dist:mac` 和 `dist:win`。
-3. 创建 GitHub Release，标题 `Conclave vX.Y.Z`，说明由 GitHub 自动生成并附带安装说明，附上 DMG、EXE 和它们的 `SHA256SUMS`（App 在 GitHub 接口限流、改读发布订阅时，靠它校验安装包）。
-
-查看进度：`gh run list --workflow=Release --limit 3`，`gh run watch <id>`。
-
-## 出错时
-
-- **工作流报 `does not match`**：有 `package.json` 的版本和标签不一致。不要移动已推送的标签：补一个修正提交，打下一个版本号（或下一个 `-beta.N`）重新发。
-- **构建中途失败**：留下的草稿 Release 可以重跑：Actions → Release → Run workflow，分支选 `main`，填已推送的标签。已经发布的 Release 拒绝覆盖。
-- **本地 `dist:mac` 失败**：先单独跑 `pnpm build`，看是不是代码本身编译不过。
+- `packages/plugin-sdk` 的 SDK 版本独立，构建、打包和分发见 [SDK 说明](../packages/plugin-sdk/README.md)。
+- `packages/dsh-runtime` 的插件包版本独立，不随应用版本批量修改；它作为本地 tarball 供 DSH 加载，无需发布到 npm。实现与验证见 [DeepSeek Harness](DEEPSEEK.md)。
+- 来源插件在各自仓库维护版本和分发 ZIP；模板的 `package.json` 与 `manifest.json` 版本必须一致。详见 [插件开发指南](PLUGINS.md)。
+- `PROTOCOL_VERSION`、`DAEMON_PROTOCOL_VERSION` 和 `PLUGIN_PROTOCOL_VERSION` 分别表示客户端 RPC、daemon 通信和插件协议，不能随应用版本一起递增。兼容的可选字段不要求升协议版本；破坏兼容性的协议变更才单独处理版本和迁移。

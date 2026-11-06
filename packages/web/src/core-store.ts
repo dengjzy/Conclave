@@ -502,13 +502,6 @@ export async function installAgentCli(agent: AgentKind): Promise<Terminal | null
   return terminal
 }
 
-// Before an update on Windows, which needs every agent process gone: the idle ones go now, as they
-// would after their idle wait. A core without it leaves them, and the install names them.
-export async function releaseIdleChats(): Promise<void> {
-  if (!useCore.getState().rpc?.features.includes('release-idle-chats')) return
-  await perform((rpc) => rpc.call('conversations.releaseIdle', {}))
-}
-
 // The list updates when core says so, through terminals.changed.
 export function closeTerminal(id: string): void {
   void perform((rpc) => rpc.call('terminals.close', { id }))

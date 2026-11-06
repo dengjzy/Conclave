@@ -25,7 +25,7 @@ Conclave 通过官方 `gemini --acp` 接入 Gemini CLI。支持聊天、任务�
 
 同一进程内的连续回合复用 Gemini 会话；进程停止、退出后继续或分叉时，新建 Gemini 会话，并通过 Conclave 保存的历史移交上下文。首版不调用 `session/load`：上游 [#29707](https://github.com/google-gemini/gemini-cli/issues/29707) 会在响应后继续重放历史，无法可靠区分新旧消息。
 
-Conclave MCP 和用户选择的 MCP 随 `session/new` 传入，不修改 Gemini 配置。Gemini 会过滤 MCP 的 `ELECTRON_RUN_AS_NODE`，因此打包版使用 PATH 上的 Node 运行 Conclave MCP；工具列表加载失败会明确报错。设置 → MCP 可以导入 Gemini 的 `settings.json` 中的 `mcpServers`；SSE 配置暂不能导入。
+Conclave MCP 和用户选择的 MCP 随 `session/new` 传入，不修改 Gemini 配置。源码运行时，Conclave MCP 使用当前 Node 可执行文件，通过 tsx 加载 `mcp-main.ts`；core 等待工具列表加载完成后才允许首条消息，加载失败会明确报错。设置 → MCP 可以导入 Gemini 的 `settings.json` 中的 `mcpServers`；SSE 配置暂不能导入。
 
 ## 用量与额度
 

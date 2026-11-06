@@ -34,13 +34,6 @@ declare global {
       pickBookmarksFile?(): Promise<unknown>
       onBrowserFocused?(listener: (event: unknown) => void): () => void
       onBrowserShortcut?(listener: (event: unknown) => void): () => void
-      updateState?(): Promise<unknown>
-      checkForUpdate?(): Promise<unknown>
-      installUpdate?(): Promise<unknown>
-      skipUpdate?(version: string | null): Promise<unknown>
-      setUpdateAutomatic?(automatic: boolean): Promise<unknown>
-      setUpdatePrerelease?(prerelease: boolean): Promise<unknown>
-      onUpdate?(listener: (state: unknown) => void): () => void
     }
   }
 }

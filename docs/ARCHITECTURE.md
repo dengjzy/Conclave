@@ -9,7 +9,7 @@
 - [5. 内置浏览器](#5-内置浏览器)
 - [6. 终端与端口](#6-终端与端口)
 - [7. 从源码运行](#7-从源码运行)
-- [8. 打包与安装](#8-打包与安装)
+- [8. 源码构建](#8-源码构建)
 - [9. 开发与验证](#9-开发与验证)
 - [10. 已知限制与下一步](#10-已知限制与下一步)
 
@@ -60,6 +60,14 @@
 - core ↔ daemon：NDJSON over Unix socket（Windows 上是 named pipe）。只有连接被拒绝才说明 daemon 的 socket 已失效，超时或 EPERM 不能证明什么。
 - `packages/protocol` 是唯一的类型来源：RPC 方法和通知都先在这里定义 zod schema，再在 `core/src/rpc-handlers.ts` 实现。客户端和 core 可以是不同版本；增加可选字段是安全的，破坏性改动要提升 `PROTOCOL_VERSION`（daemon 线路是 `DAEMON_PROTOCOL_VERSION`）。当前 core RPC 协议版本为 14，daemon 协议版本为 3，浏览器宿主协议版本为 2。桌面端和 core 跨越 RPC 版本时应一起升级。
 - 启动 Agent 用 argv 数组，prompt 前加 `--`，从不经过 shell。
+
+### core 的网络请求
+
+core 启动时通过 `system-proxy.ts` 安装全局 undici dispatcher，让自身的网络请求读取代理配置：优先使用 `HTTPS_PROXY`／`HTTP_PROXY` 和 `NO_PROXY`；未设置时，Windows 读取注册表 Internet Settings 的 `ProxyEnable`、`ProxyServer` 和 `ProxyOverride`，macOS 读取 `scutil --proxy`。配置每 30 秒刷新，开关系统代理后无需重启 core。回环地址及配置中的例外直连；系统设置仅有 SOCKS 或 PAC 时不自动解析，按直连处理。
+
+这只影响 core 自己的请求，例如插件下载、服务商和 MCP over HTTP，不修改 Agent 子进程的环境。`network-failure.ts` 为失败请求补充地址、是否经代理及具体原因（超时、中断、证书校验失败等），便于排查浏览器可访问而 core 请求失败的情况。
+
+插件先解压到临时目录再改名到位。Windows 的杀毒软件可能暂时占用刚写入的文件，`patient-rename.ts` 对 EPERM、EACCES、EBUSY 最多重试 10 秒；其他平台直接报告失败。
 
 ## 2. 任务模型
 
@@ -210,7 +218,7 @@ Merge 前先提交或暂存改动。有冲突时，分支页列出文件，可�
 ### 环境检查
 
 
-core 启动后会在自己的 PATH 里找 `git`、`claude`、`codex` 和 Cursor CLI（`cursor-agent` 或确认属于 Cursor 的 `agent`），问一下版本，再检查登录状态。Claude Code 和 Codex 只读本机凭据；Cursor 使用 CLI 的 `about --format json`。找不到 Git、支持的 Agent 一个都没装或都没登录时，左侧列表上方会有一条红色提醒：Agent 的问题点开是 设置 → 外部智能体，Git 的问题点开是 设置 → 更新。「外部智能体」里所有 Agent 都在一处，分三组：「已安装」的每个显示版本、状态和启用开关：已登录的是「已就绪」，没登录的是「需登录」并给出登录命令，问不了版本的是「需检查」，登录状态不明的不显示状态；安装来源、路径和更新检查收在「详情」里；「可安装」是 Conclave 能运行但这台电脑没装的，已经装了某个 Agent 时默认折叠（一个都没装时展开，那正是要做的事），展开后变灰并给出安装命令，能一键「在终端安装」的把命令收进「详情」；Conclave 自己下载运行时的（Antigravity）按 descriptor 的 `environment.missing` 说明要下载什么，不说成装 CLI；「暂未支持」见下段。命令都可以直接复制，装好或登录后点「重新检测」。「更新」里的 Git 一行显示版本和路径，没装时给出安装命令。只装一个 Agent 不算问题：新建任务和新会话只列出装了的，默认选最近一次新建任务或会话时选的 Agent（小助手、任务聊天、群聊和团队成员、定时运行不算），它不在时只装一个就用那一个，否则留空；没装的不能移交过去；已有任务选的 Agent 不在时仍然显示，标为「未安装」。「外部智能体」底部可以展开 core 找命令用的目录：装在别处的，把它所在的目录加进登录 shell 的 PATH，再重启 Conclave（打包的 App 启动 core 时用的就是登录 shell 的 PATH）。Windows 上 npm、pnpm 装的 CLI 是 `.cmd` 垫片，core 读出它要运行的程序再问版本（见下文「Windows」）；认不出的垫片只能看到装没装。
+core 启动后会在自己的 PATH 里找 `git`、`claude`、`codex` 和 Cursor CLI（`cursor-agent` 或确认属于 Cursor 的 `agent`），问一下版本，再检查登录状态。Claude Code 和 Codex 只读本机凭据；Cursor 使用 CLI 的 `about --format json`。找不到 Git、支持的 Agent 一个都没装或都没登录时，左侧列表上方会有一条红色提醒：Agent 的问题点开是 设置 → 外部智能体，Git 的问题点开是 设置 → 关于。「外部智能体」里所有 Agent 都在一处，分三组：「已安装」的每个显示版本、状态和启用开关：已登录的是「已就绪」，没登录的是「需登录」并给出登录命令，问不了版本的是「需检查」，登录状态不明的不显示状态；安装来源、路径和更新检查收在「详情」里；「可安装」是 Conclave 能运行但这台电脑没装的，已经装了某个 Agent 时默认折叠（一个都没装时展开，那正是要做的事），展开后变灰并给出安装命令，能一键「在终端安装」的把命令收进「详情」；Conclave 自己下载运行时的（Antigravity）按 descriptor 的 `environment.missing` 说明要下载什么，不说成装 CLI；「暂未支持」见下段。命令都可以直接复制，装好或登录后点「重新检测」。「关于」里的 Git 一行显示版本和路径，没装时给出安装命令。只装一个 Agent 不算问题：新建任务和新会话只列出装了的，默认选最近一次新建任务或会话时选的 Agent（小助手、任务聊天、群聊和团队成员、定时运行不算），它不在时只装一个就用那一个，否则留空；没装的不能移交过去；已有任务选的 Agent 不在时仍然显示，标为「未安装」。「外部智能体」底部可以展开 core 找命令用的目录：装在别处的，把它所在的目录加进启动 Conclave 的终端环境的 PATH，再重启 core 和 daemon。Windows 上 npm、pnpm 装的 CLI 是 `.cmd` 垫片，core 读出它要运行的程序再问版本（见下文「Windows」）；认不出的垫片只能看到装没装。
 
 设置 → 外部智能体里的「暂未支持」显示 Conclave 认识、但尚未接入聊天的 Agent：从 core 当前的 PATH 查找已知 CLI，并在 macOS 的 `/Applications` 和 `~/Applications` 查找已知应用。Cursor 已支持聊天，应用和 CLI 会合并进「已安装」或「可安装」的一项；只安装编辑器仍需另外安装 CLI。找到 CLI 后会限时执行 `--version`，分别显示命令已响应、版本检测失败或 Windows 命令垫片认不出、无法直接验证；这不检查登录，也不代表 Conclave 已支持该 CLI 的聊天协议。每 5 分钟自动复查，也能手动「重新检测」；新增 PATH 目录仍需重启 Conclave，才能让 core 和 daemon 都用到它。未接入的 Agent 标为「暂未支持」，不能选来运行任务或会话。尚未接入的产品在 `packages/core/src/environment-check.ts` 的发现清单里登记可辨认的命令或应用名；已接入的 Agent 由它的 adapter 声明（见「新增 Agent」）。
 
@@ -218,7 +226,7 @@ core 启动后会在自己的 PATH 里找 `git`、`claude`、`codex` 和 Cursor 
 
 Agent 的命令从不经过 shell，Windows 上也一样，而 npm、pnpm 装的 `claude`、`codex`、`npx` 在 Windows 上是 `.cmd` 垫片，`child_process` 只能经 cmd.exe 运行它，cmd 又会把参数重新切一遍。所以 daemon 和 core 启动命令前都走 `protocol/node` 的 `planLaunch`：按 PATHEXT 找到文件（不先试无扩展名的那个，那是 npm 给 sh 写的脚本）；是认得的 npm / pnpm 垫片，就读出它要运行的东西，直接起 `node.exe <脚本>` 或它包着的 `.exe`，pnpm 加的 `NODE_PATH` 照样加上；旁边有同名 `.ps1` 的（Cursor 的安装方式）用 `powershell -File` 运行；都不是就报 `command-needs-shell`，不退回 cmd。识别规则参照 Orca 的同名实现，认不全就拒绝，宁可不启动也不运行错的程序。
 
-打包的 App 启动 Conclave 自己的 MCP 服务时，`ELECTRON_RUN_AS_NODE=1` 写在服务器配置的 env 里（Claude 的 `--mcp-config`、Codex 的 `mcp_servers.*.env`、ACP 的 `mcpServers[].env`），不再借 `/usr/bin/env`。Claude 的只读围栏和读取授权在 Windows 上按 Claude 的写法转换路径：`C:\Users\me` 写成 `//c/Users/me`。
+源码运行时，`mcp-command.ts` 使用当前 Node 可执行文件，通过 tsx 加载 `mcp-main.ts`；启动命令作为 argv 交给 Agent，不经过 shell。Claude 的只读围栏和读取授权在 Windows 上按 Claude 的写法转换路径：`C:\Users\me` 写成 `//c/Users/me`。
 
 ### Agent 并发
 
@@ -417,7 +425,7 @@ DeepSeek Harness 使用同一 ACP driver；`packages/dsh-runtime` 在官方导�
 
 Antigravity 也只是一份 dialect（`agents/antigravity/`）：`agy` 本身不说 ACP，跑的是 Google 发到 ACP registry 的 Antigravity ACP 服务。它没有安装器，Conclave 按版本钉住各平台压缩包的 SHA-256，用 adapter 的 `installation` 下载到 `~/.conclave/runtimes/antigravity-acp/<版本>/`；`installWithoutApplication` 让这条安装命令不必先检测到 Antigravity 应用。细节见 [Antigravity](ANTIGRAVITY.md)。ACP 恢复优先使用旧 Agent 已声明的 `loadSession`，仅声明 `resume` 时使用 `session/resume`。
 
-Gemini CLI 也复用通用 ACP driver（`agents/gemini/`）：文本模式通知、缺少 rawInput 的工具摘要、按文件路径审批的计划、缓存已包含在输入 token 的用量口径由 dialect 声明。计划正文从已完成工具 diff 保留的完整 newText 取，不读磁盘。adapter 的 `session.nativeResume: false` 让停止后继续和重启走历史移交，避免 CLI 的晚到历史重放混进新回合；其他 Agent 缺省沿用原生恢复。打包版 MCP 使用系统 Node，避开 Gemini 对 Electron 环境变量的过滤；每日额度按模型读取 Code Assist API，客户端声明支持 daily 后才接收。细节见 [Gemini CLI](GEMINI.md)。
+Gemini CLI 也复用通用 ACP driver（`agents/gemini/`）：文本模式通知、缺少 rawInput 的工具摘要、按文件路径审批的计划、缓存已包含在输入 token 的用量口径由 dialect 声明。计划正文从已完成工具 diff 保留的完整 newText 取，不读磁盘。adapter 的 `session.nativeResume: false` 让停止后继续和重启走历史移交，避免 CLI 的晚到历史重放混进新回合；其他 Agent 缺省沿用原生恢复。源码运行的 MCP 使用当前 Node 和 tsx；每日额度按模型读取 Code Assist API，客户端声明支持 daily 后才接收。细节见 [Gemini CLI](GEMINI.md)。
 
 ZCode 不说 ACP，有自己的 driver（`agents/zcode/zcode-app-server.ts`），讲它桌面端用的 ZCode Protocol：命令走 `v4/command`，会话内容是订阅来的快照加行增量，审批和提问是 ZCode 发来的请求。协议没有公开的 schema，`zcode-schema.ts` 只宽松地写用到的部分。细节见 [ZCode](ZCODE.md)。
 
@@ -425,7 +433,7 @@ Kimi Code 使用官方 `kimi acp` 和通用 ACP driver，dialect 负责四种原
 
 ### 项目 Star
 
-设置 → 支持与反馈集中提供项目地址、GitHub Star 和 GitHub Issues 反馈入口，交流尚未开放时显示文字占位；关于页保留版本、更新、连接状态、Git 与快捷键。支持页可查询并为 `dengjzy/Conclave` 点 Star。desktop 仅调用 `support.starStatus` / `support.star`，通过 `project-star` 能力判断 core 是否支持；旧 core 只提供 GitHub 网页入口。状态不写入本机偏好，进入支持页或返回窗口时自动检查，以 GitHub 的响应为准，不提供手动检测按钮。
+设置 → 支持与反馈集中提供项目地址、GitHub Star 和 GitHub Issues 反馈入口，交流尚未开放时显示文字占位；关于页显示 Web 端版本、协议版本、Conclave core 连接状态和 Git。支持页可查询并为 `dengjzy/Conclave` 点 Star。Web 客户端仅调用 `support.starStatus` / `support.star`，通过 `project-star` 能力判断 core 是否支持；旧 core 只提供 GitHub 网页入口。状态不写入本机偏好，进入支持页或返回窗口时自动检查，以 GitHub 的响应为准，不提供手动检测按钮。
 
 `ProjectStar` 优先通过无交互的 `gh auth token --hostname github.com` 取得本机 GitHub CLI 的凭据，不可用时复用已加载 GitHub 来源插件的 token 凭据（含默认实例的环境凭据），插件关闭或卸载后不使用遗留凭据。来源实例是否同步收件箱不影响用户主动 Star。`SourceService.credentialsFor` 是 core 内部接口，凭据不出 RPC；仅 GitHub 集成解释官方插件的 `{kind: 'token', payload: {token}}` 格式，不要求更新插件。
 
@@ -439,7 +447,7 @@ desktop 在首次连接且环境、供应商和任务来源数据到齐后启动
 
 Agent 可用之后、任务来源之前是「接着聊」一步：从零用一个新工具，不如在已有的工作上接着做。引导一开始就在后台调 `sessionImports.list`（`external-sessions.ts`，失败不报错，当作没有），到这一步时多半已有结果；还没回来时停在这一步显示「正在找」，不先跳到任务来源再跳回来。可接着聊的会话（`resumable-sessions.ts`）是未导入、目录还在、所属 Agent 已启用且没被确认未登录的；数量按全部算，列出最新的 3 个，每个目录只取一个。点「接着聊」导入这一个并打开它，「查看全部」去设置 → 导入会话，「从新会话开始」跳过；没有可接着聊的会话或 core 不支持导入时整步跳过。总览在还没有任何任务和会话时显示同样的「接着聊」卡片，引导这一步还没做完时不显示，免得重复；退出了引导，它还在。
 
-环境引导在工作区下方预留固定区域，进入设置仍可见，输入、弹层和终端保持原有交互。设置页导航读取 store 中的目标，支持引导在设置已打开时切换到正确章节。左下角齿轮旁的帮助菜单提供「使用指南」和「检查使用环境」；关于页只保留版本及产品信息。使用指南是静态配置与功能查阅，不读取完成状态、不创建会话。阅读时暂时隐藏环境引导并保留进度，离开文档后恢复；从帮助启动环境检查会关闭文档。技巧的场景提示独立于首次引导。
+环境引导在工作区下方预留固定区域，进入设置仍可见，输入、弹层和终端保持原有交互。设置页导航读取 store 中的目标，支持引导在设置已打开时切换到正确章节。左下角齿轮旁的帮助菜单提供「使用指南」和「检查使用环境」；关于页显示版本、连接状态与 Git。使用指南是静态配置与功能查阅，不读取完成状态、不创建会话。阅读时暂时隐藏环境引导并保留进度，离开文档后恢复；从帮助启动环境检查会关闭文档。技巧的场景提示独立于首次引导。
 
 ### Agent CLI 版本与升级
 
@@ -607,110 +615,55 @@ Claude Code 和 Codex 可以登录多个账号（描述符的 `capabilities.acco
 
 ## 7. 从源码运行
 
-需要 Node ≥ 22.13 和 pnpm 12（`npm i -g pnpm@12` 或 `brew install pnpm`）。
+使用 Node 24（见 `.nvmrc`）和 pnpm 12。在仓库根目录执行：
 
 ```bash
-pnpm install
-pnpm dev          # 同时启动 daemon、core 和桌面端
+pnpm install --frozen-lockfile
+pnpm dev          # 同时启动 daemon、core 和 Vite Web 开发服务
 ```
 
-也可以分开启动，方便单独看日志：
+Web 开发服务默认使用 5173 端口，连接 core 提供的 RPC。也可以分开启动，方便查看日志：
 
 ```bash
 pnpm dev:daemon
 pnpm dev:core
-pnpm dev:desktop
+pnpm dev:web
 ```
 
-测试或截图时不要碰 `~/.conclave` 里的真实数据：用 `CONCLAVE_HOME` 指到另一个目录，daemon、core 和桌面端就是一套独立的实例（各自的数据库、socket、worktree 和 core.json）。`~/.conclave-demo` 是这样一个现成的测试目录，里面有一个 `todo-web` 小项目可以拿来建任务：
+手动测试或截图时，用 `CONCLAVE_HOME` 指向独立数据目录，避免修改 `~/.conclave` 中的真实数据。daemon 和 core 使用该目录下的数据库、socket、worktree 和 core.json，Web 页面连接这套 core：
 
 ```bash
 CONCLAVE_HOME=~/.conclave-demo pnpm dev
-# 要用 CDP 驱动或截图时，给桌面端加调试端口：
-CONCLAVE_HOME=~/.conclave-demo pnpm --filter @conclave/desktop run dev --remoteDebuggingPort 9333
 ```
 
-Windows 的 PowerShell 里这样设：`$env:CONCLAVE_HOME = "$HOME\.conclave-demo"; pnpm dev`。
+Windows 的 PowerShell 使用 `$env:CONCLAVE_HOME = "$HOME\.conclave-demo"; pnpm dev`。分开启动时，给 daemon 和 core 设置相同的 `CONCLAVE_HOME`。
 
-## 8. 打包与安装
-
-
-macOS（Apple Silicon）可以打包成 dmg：
+## 8. 源码构建
 
 ```bash
-pnpm install
-pnpm dist:mac     # 产物在 packages/desktop/dist/Conclave-<版本>-arm64.dmg
+pnpm build
+CONCLAVE_HOME=~/.conclave-demo pnpm start
 ```
 
-`dist:mac` 依次执行 electron-vite 构建、`bundle-backend`（esbuild 把 core、daemon 和 MCP 服务各打成一个 JS，附上 node-pty 的 macOS 预编译）和 electron-builder。打包的 App 由 Electron 自带的 Node 运行这些文件（`ELECTRON_RUN_AS_NODE`），所以**装了 App 的机器不需要 Node 和 pnpm**，只需要 `claude` / `codex` CLI 本身。
+`pnpm build` 先运行 `scripts/build-plugins.mjs`，将 DSH runtime 构建为 `packages/dsh-runtime/dist/runtime.tgz`，再由 Vite 生成 `packages/web/dist`。core 的 HTTP 服务直接提供这个目录中的静态资源。
 
-安装：打开 dmg，把 Conclave 拖进「应用程序」。启动时 App 会检查 `~/.conclave/core.json`，没有在运行的 core 就自动拉起随附的 daemon 和 core（日志在 `~/.conclave/logs/`）；Agent 的查找用的是登录 shell 的 PATH，所以 CLI 装在 Homebrew 或 `~/.local/bin` 都能找到。和从源码运行时一样，关闭或退出 App 不会停掉 core、daemon 和正在跑的 Agent。
+`pnpm start` 通过 `bin/conclave.mjs` 启动或复用 daemon，再用 Node 和 tsx 运行 core。Web 资源或 DSH runtime 缺失时启动器会补建；产物已经存在时直接复用，源码更新后需重新构建。前端页面刷新不重启 daemon 持有的 Agent 进程。
 
-Windows（x64）打成 NSIS 安装包，在 macOS 上也能打（electron-builder 自带 NSIS 和 wine）：
-
-```bash
-pnpm dist:win     # 产物在 packages/desktop/dist/Conclave-Setup-<版本>-x64.exe
-```
-
-`bundle-backend` 按 `--platform` 只带目标平台的 node-pty 预编译，Windows 上是 win32-x64（含 ConPTY）。安装按用户进行，默认装到 `%LOCALAPPDATA%\Programs\Conclave`，不需要管理员权限；窗口用系统自己的边框，不显示 Electron 的默认菜单栏。打包的 App 在 Windows 上直接用资源管理器给它的 PATH，npm（`%APPDATA%\npm`）和 Claude Code 原生安装（`%USERPROFILE%\.local\bin`）的目录都在里面。
-
-几个注意点：
-
-- **macOS 签名**：没有 Apple 开发者证书，打包时由 afterPack 钩子 `packages/desktop/scripts/mac-adhoc-sign.mjs` 给 App 做 ad-hoc 签名：由内向外逐个签，`Resources/backend` 里 node-pty 的 `pty.node` 和 `spawn-helper` 也签上，最后用 `codesign --verify --deep --strict` 检查。找到证书时，electron-builder 会在这之后重签并覆盖。不能放在 afterSign：electron-builder 26.0 没签任何东西时会跳过那个钩子。这个签名不过 Gatekeeper，但少不了：签名坏掉的 App（Electron 原来的签名在打包改写 Info.plist 后就失效了），macOS 不让它发系统通知，请求在 App 里就报 `UNErrorDomain` 错误 1，根本到不了通知中心。
-- **在别的 Mac 上安装**：拖进「应用程序」，`xattr -dr com.apple.quarantine /Applications/Conclave.app`（或双击被拦后去「系统设置 → 隐私与安全性」点「仍要打开」），然后打开；第一次发通知时选「允许」。本机构建的不带隔离属性，直接打开即可。用下面的命令确认签名完好，应该看到 `valid on disk` 和 `Identifier=dev.conclave.desktop`：
-
-  ```bash
-  codesign --verify --deep --strict --verbose=1 /Applications/Conclave.app
-  codesign -dv /Applications/Conclave.app 2>&1 | grep Identifier
-  ```
-- **收不到 macOS 通知时**：
-  - 先用上面的命令确认签名。
-  - 确认是从「应用程序」打开的，不是在 dmg 或「下载」里直接运行的：从这些地方运行的 App 会被系统挪到临时路径去跑，通知照样发不出。
-  - 机器上只留一份 Conclave，同一个 bundle id 有多份时系统可能认到别的那份。`mdfind "kMDItemCFBundleIdentifier == 'dev.conclave.desktop'"` 能列出所有副本。
-  - 再看「系统设置 → 通知 → Conclave」：是否允许通知，提醒样式是不是「无」。macOS 只在第一次发通知时问一次是否允许，那个框错过或没点，之后就按「不弹出」处理，要到这里手动打开。`open "x-apple.systempreferences:com.apple.Notifications-Settings.extension"` 能直接打开这一页。
-  - 再看专注模式有没有开着。
-  - Conclave 只在窗口不在前台时发通知，窗口在前台时没有通知是正常的。
-  - 想看系统怎么判，用 `/usr/bin/log stream --predicate 'process == "usernoted" AND eventMessage BEGINSWITH "Presenting" AND eventMessage CONTAINS "dev.conclave.desktop"'`，再触发一条通知。行尾是 `as banner` 或 `as alert` 说明弹出来了；`as none` 说明通知已经进了通知中心，但授权或提醒样式没开，问题在上面那一条；一行都没有，说明请求根本没到系统，回去查签名。要写完整路径：zsh 里的 `log` 是 shell 内置命令。
-- **正式分发**要 Apple Developer ID 签名和公证，有了它用户才不必处理隔离属性。Windows 上 SmartScreen 会拦一次，点「更多信息 → 仍要运行」；正式分发需要代码签名证书。
-- **和源码版共用数据**：两者都用 `~/.conclave`（任务库、worktrees、会话记录）和同一个 daemon socket，可以混用；谁先启动，core 就是谁的。
-- **卸载**：删除 App 即可（Windows 在「设置 → 应用」里卸载）；`~/.conclave` 里是任务数据和 worktrees（可能有未合并的工作成果），确认不要了再删。
-
-### 应用更新
-
-core 是 Node 进程，Node 的 `fetch` 不读系统代理：VPN 以系统代理方式工作时，浏览器和 App 更新（Chromium 网络栈）能连上 GitHub，core 直连却超时。所以 core 启动时装一个全局 undici dispatcher（`system-proxy.ts`）：有 `HTTPS_PROXY`/`HTTP_PROXY`（含 `NO_PROXY`）就用它们，否则 Windows 读注册表里的 Internet Settings（`ProxyEnable`、`ProxyServer`、`ProxyOverride`），macOS 读 `scutil --proxy`；每 30 秒重读一次，开关 VPN 不用重启。回环地址和系统列出的例外直连，只有 SOCKS 或 PAC 脚本的设置不支持，按直连处理。这只影响 core 自己的请求（插件、宠物、版本查询、服务商、MCP over HTTP 等），不改 Agent 的环境变量。请求失败时（`network-failure.ts`）不再只报 Node 的「fetch failed」，而是说出地址、是否经代理、原因（超时、被中断、证书校验失败等）和可以试什么；宠物下载失败时设置页把这句原样显示出来。插件和宠物解压到临时目录后改名到位，Windows 上杀毒软件扫描刚写入的文件时会让改名短暂报 EPERM/EBUSY，所以那里最多重试 10 秒（`patient-rename.ts`），别的平台不重试。
-
-主进程的 `AppUpdater`（`desktop/src/main/app-update.ts`）在启动 10 秒后、之后每 6 小时，向 GitHub 的 Releases 接口要最近 20 个版本，挑出比当前高的最新正式版（用户在 设置 → 更新 打开「接收测试版」时也算预发布），把结果推给窗口：状态栏出现「新版本」，设置里显示状态、手动检查和跳过。跳过的版本和测试版开关存在 userData 的 `update.json`。只有打包的 App 会去查；`CONCLAVE_UPDATE_API` 可以把它指向一个模仿 GitHub 接口的本地服务，用来手动试一次更新。不登录的接口每个出口 IP 每小时只有 60 次，多人共用的 VPN 很快用完，返回 403 或 429；这时改读 `github.com/<仓库>/releases.atom`（不计入这个额度），按标签挑版本（带 `-` 的算预发布），再从该版本的 `SHA256SUMS` 得到安装包和摘要，照常校验。早于这个文件的版本，或拿不到它时，只给发布页，不运行没校验过的安装包。走订阅时没有更新说明。Chromium 的网络错误（`net::ERR_…`）在界面上统一说成连不上 GitHub。
-
-macOS 上没有 Developer ID，Squirrel 式的自动更新用不了（它要求新旧版本同一张证书），所以 App 自己换自己（`app-bundle-swap.ts`）：用 Chromium 的网络栈（走系统代理）下载 dmg，按 Release 资产的大小和 `sha256` digest 校验，挂载后确认 `CFBundleIdentifier` 和版本号对得上，`ditto` 到 App 旁边的 `.Conclave-update.app`，去掉隔离属性并 `codesign --verify`，再两次 `rename` 把旧版挪成 `.Conclave-previous-<时间>.app`、新版放到原位（第二步失败会把旧版挪回去），然后重启。新版本启动后把这些留下的副本移到废纸篓。下载由 App 自己写入，不带隔离属性，所以新版本和旧版本一样直接打开。daemon 和 core 不随 App 退出，正在跑的 Agent 不受影响，新版启动时按 `backend.ts` 的规则接管 core。旧 daemon 还从改了名、进了废纸篓的旧版里跑，macOS 会以「.Conclave-previous-…」的名义再要文件夹权限；它启动时若还有 Agent 或终端在跑，App 开着期间每 5 分钟再请它 `retire` 一次，等它什么都不跑时退出，由新版重新拉起，core 自己重连。从 dmg 里直接运行、被 Gatekeeper 搬到 AppTranslocation、或所在文件夹不可写时不能换，界面改为给出安装包下载链接和手动步骤。
-
-Windows 不让覆盖正在运行的 exe，而 daemon 和 core 就是安装目录里的 `Conclave.exe`（`ELECTRON_RUN_AS_NODE`），NSIS 安装程序还会 `taskkill` 掉当前用户所有的 `Conclave.exe`。所以安装前，界面先请 core 立刻收掉空闲待命的聊天 Agent（`conversations.releaseIdle`，和空闲 30 分钟后收掉一样，下一条消息在同一会话上接上；回合中、等用户回答、后台还有命令或子 Agent 的不算空闲），再请 daemon 退出（`retire`），然后让 core 退出（`stopBackendForInstall`）。daemon 只在没有活着的会话时同意，同意后立即拒绝新的启动（`daemon-retiring`），不会在回答和退出之间起新进程；不同意时返回仍活着的会话，界面按终端标签和会话列出来，可以打开，终端标签可以直接关掉，认不出的写成 Agent 的临时进程或无法识别的进程。开着的终端标签即使没在跑命令也算活着：shell 内部也能跑工作（如 PowerShell 的 cmdlet、线程任务），进程树证明不了它空闲，所以由用户关，不自动结束。有东西在跑就不装，下载好的安装包留着，重试不再下载。daemon 和 core 都要看到进程确实退出（daemon 的 pid 来自 `info`，用 `process.kill(pid, 0)` 得到 ESRCH 为准）才运行安装程序；连接超时之类说明不了什么，算作没停，报「后台没有按时退出」，并把已停掉的部分重新拉起。之后用 `/S --updated --force-run` 静默运行安装程序：装进注册表里记下的原安装位置，跳过向导，装完启动新版本。只有 NSIS 装的 App（旁边有 `Uninstall Conclave.exe`）才这样更新，别的情况给下载链接。
-
-「后台自动更新」默认开启，保留用户明确关闭的选择；开关和跳过、测试版设置一起原子写入 `update.json`。沿用启动 10 秒、每 6 小时的版本检查，只在后台下载和校验，不在用户使用期间主动重启。下载完左下角直接显示「安装并重启」，点击即安装，旁边的展开按钮查看详情、发布页或跳过该版本。不点击就等下次启动：完整且有 SHA-256 摘要的安装包存在 userData 的 `updates/`，校验完成才原子写入 `pending.json`。主进程在创建窗口、启动 backend 之前读这份记录，重新校验版本、架构、大小和摘要，再应用并重启进入新版；这个过程不依赖网络。关闭开关、跳过版本、关闭测试版选项都会阻止相应下载的自动安装，已完成的下载仍可手动安装。新版本运行后清除已应用的待安装记录，避免循环安装。损坏、缺失、未下载完的包不运行；后台下载失败间隔 10 分钟重试。Windows 继续通过 daemon 的原子 `retire` 保护后台 Agent 和终端，有进程运行或无法确认后台退出时保留安装包、进入原版本并显示原因，绝不强制停止工作。macOS 使用原有的 bundle 校验和交换流程，后台 Agent 与终端继续运行。
-
-
-### 自动发布
-
-发版要改的文件和逐步操作见 [RELEASING.md](RELEASING.md)。
-
-[Release 工作流](../.github/workflows/release.yml) 在推送 `v*` 标签时运行：校验五个应用包的版本号与标签一致、运行类型检查和测试，分别在 macOS 和 Windows 上打包，再创建 GitHub Release 并上传 DMG 和 EXE。发布说明取自 `CHANGELOG.md` 对应版本；带 `-alpha`、`-beta` 等后缀的版本标为预发布。
-
-发布前先更新并提交版本号和更新日志，再创建、推送标签，例如 `v0.19.2`。工作流使用内置 `GITHUB_TOKEN`，仅发布阶段有 `contents: write` 权限，无需额外配置个人令牌或签名证书。macOS 继续使用 ad-hoc 签名，Windows 安装包不签名。
-
-也可以在 Actions → Release → Run workflow 中选择 `main`，输入已推送的标签手动运行。两个平台都构建成功后才发布；中途失败留下的草稿可重跑，已发布的 Release 不会被覆盖。工作流须先提交、推送到默认分支，首次 GitHub 运行才能验证云端构建环境。
+当前仓库没有自动应用发布工作流。应用版本、SDK/runtime 独立版本及协议版本的维护规则见 [源码构建与版本](RELEASING.md)。
 
 ## 9. 开发与验证
 
-
 ```bash
-pnpm typecheck    # 各包 tsc
-pnpm test         # vitest
-pnpm build        # 构建桌面端
-pnpm dist:mac     # 打包 macOS 应用，见上面的「打包与安装」
-pnpm dist:win     # 打包 Windows 安装包
+pnpm typecheck          # 构建插件 SDK，再检查各包类型
+pnpm test               # 构建插件 SDK，再运行 Vitest
+pnpm build              # 构建 DSH runtime 和 Web 静态资源
+pnpm verify:plugin-sdk  # 独立消费者验证 SDK 打包、类型和插件协议
 ```
+
+[CI](../.github/workflows/ci.yml) 在 PR 和 main 推送时运行这些检查，不发布应用或安装包。SDK 与外部来源插件的打包验证仍是独立能力，见 [插件开发指南](PLUGINS.md)。
 
 ## 10. 已知限制与下一步
 
 - **验收**：按项目配置的测试命令在 worktree 里跑，结果放进检查器；合并分支
 - **SSH / WSL 执行宿主**：给 git、PTY 操作加上 `hostId`
-- **Windows**：代码按 Windows 写好了，也有单元测试，但还没在 Windows 实机上验证过，也没有 Windows CI 和代码签名，应用内更新也没在实机上试过；named pipe 没有设 ACL；「用…打开」的应用列表只有 macOS 有
+- **Windows**：有针对平台分支的单元测试，尚未做 Windows 实机验证，也没有 Windows CI；named pipe 没有设 ACL。
