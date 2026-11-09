@@ -8732,6 +8732,115 @@ summary.agent-group-head:focus-visible { outline: 2px solid var(--focus); outlin
   font-size: 11px;
   line-height: 16px;
 }
+.agent-upgrade-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  font-size: 11px;
+  line-height: 18px;
+  border-radius: var(--radius-xs);
+  background: var(--accent);
+  color: var(--accent-contrast, #fff);
+  border: none;
+  cursor: pointer;
+  font-weight: 500;
+  transition: opacity 0.15s ease;
+}
+.agent-upgrade-pill:hover:not(:disabled) {
+  opacity: 0.9;
+}
+.agent-upgrade-pill:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.agent-upgrade-pill svg {
+  width: 12px;
+  height: 12px;
+}
+.agent-upgrade-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  margin-top: 12px;
+  margin-bottom: 12px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
+}
+.agent-upgrade-banner-content {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+.agent-upgrade-banner-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--accent);
+}
+.agent-upgrade-banner-icon svg {
+  width: 16px;
+  height: 16px;
+}
+.agent-upgrade-banner-popover {
+  position: relative;
+  display: inline-flex;
+  cursor: default;
+}
+.agent-upgrade-banner-text {
+  font-weight: 500;
+  border-bottom: 1px dashed var(--border-2);
+}
+.agent-upgrade-banner-tooltip {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 6px;
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  z-index: 100;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.agent-upgrade-banner-popover:hover .agent-upgrade-banner-tooltip {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.agent-upgrade-tooltip-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.agent-upgrade-tooltip-name {
+  font-weight: 600;
+  color: var(--text);
+}
+.agent-upgrade-tooltip-target {
+  color: var(--accent);
+  font-weight: 600;
+}
+.agent-upgrade-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.agent-upgrade-all-button {
+  font-weight: 500;
+}
 .agent-row-where { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .switch:has(input:disabled) { cursor: not-allowed; opacity: 0.5; }
 .environment-fix { display: flex; align-items: center; gap: 6px; margin: 6px 0 0; font-size: 12px; color: var(--text-muted); }

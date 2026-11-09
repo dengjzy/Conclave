@@ -10,6 +10,7 @@ import { dshNativeSessions } from './dsh-native-sessions'
 
 export const dsh: AgentAdapter = {
   kind: 'dsh',
+  maintenance: { packageName: '@deepseek-ai/dsh' },
   createDriver: (stageId, options) => new AcpDriver(dshDialect, stageId, options),
   command: dshCommand,
   providerModels: dshProviderModels,

@@ -270,6 +270,7 @@ export const rpcMethods = {
   'agent.smokeTest': { params: z.object({ agent: AgentKind.optional() }), result: AgentSmokeTestResult },
   'system.agentCliStatus': { params: z.object({ agent: AgentKind.optional(), refresh: z.boolean().optional() }), result: z.array(AgentCliStatus) },
   'system.upgradeAgentCli': { params: z.object({ agent: AgentKind }), result: AgentCliUpgrade },
+  'system.upgradeAllAgentClis': { params: z.object({ agents: z.array(AgentKind).optional() }), result: z.object({ queued: z.array(AgentKind) }) },
   'system.cancelAgentCliUpgrade': { params: z.object({ agent: AgentKind }), result: AgentCliStatus },
   'system.installAgentCli': { params: z.object({ agent: AgentKind }), result: Terminal },
   'system.pickFolder': {

@@ -16,7 +16,7 @@ const MCP_WAIT_MS = 20_000
 
 export const pi: AgentAdapter = {
   kind: 'pi',
-  maintenance: { packageName: '@earendil-works/pi-coding-agent', packageArgs: ['--ignore-scripts'], native: { roots: { darwin: ['.local/share/pi'], linux: ['.local/share/pi'], win32: ['AppData/Local/pi'] }, args: ['update', '--self'], latestUrl: 'https://registry.npmjs.org/@earendil-works/pi-coding-agent/latest' } },
+  maintenance: { packageName: '@earendil-works/pi-coding-agent', packageArgs: ['--ignore-scripts'], native: { roots: { darwin: ['.local/share/pi', '.local/lib/node_modules/@earendil-works/pi-coding-agent'], linux: ['.local/share/pi', '.local/lib/node_modules/@earendil-works/pi-coding-agent'], win32: ['AppData/Local/pi'] }, args: ['update', '--self'], latestUrl: 'https://registry.npmjs.org/@earendil-works/pi-coding-agent/latest' } },
   createDriver: (stageId, options) => new PiRpc(stageId, options),
   command: piCommand,
   providerModels: piProviderModels,

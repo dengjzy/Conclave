@@ -31,6 +31,16 @@ async function antigravityCatalog(cwd: string, executor?: NativeSessionExecutor,
 
 export const antigravity: AgentAdapter = {
   kind: 'antigravity',
+  maintenance: {
+    native: {
+      roots: {
+        darwin: ['.gemini/antigravity', '.conclave/runtimes/antigravity-acp'],
+        linux: ['.gemini/antigravity', '.conclave/runtimes/antigravity-acp'],
+        win32: ['AppData/Local/Google/Antigravity']
+      },
+      args: []
+    }
+  },
   createDriver: (stageId, options) => new AcpDriver(antigravityDialect, stageId, options),
   // Conclave's MCP servers and the user's go in session/new; extra projects ride in the first
   // prompt's note, as its session takes no additional directories.

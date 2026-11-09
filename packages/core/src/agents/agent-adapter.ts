@@ -90,6 +90,7 @@ export interface AgentAdapter {
     packageArgs?: readonly string[]
     brew?: { name: string; cask: boolean }
     native?: { roots: Partial<Record<NodeJS.Platform, readonly string[]>>; args: readonly string[]; latestUrl?: string; tagPrefix?: string }
+    scripts?: boolean
   }
   readonly kind: AgentKind
   createDriver(stageId: string, options: ChatStageOptions): ChatDriver

@@ -185,4 +185,11 @@ describe('CLI maintenance lifecycle', () => {
     finish(); await call
     expect(deps.terminals.upgradeCli).not.toHaveBeenCalled()
   })
+
+  it('queues multiple agents when upgradeAll is invoked', async () => {
+    const { service } = setup()
+    await service.list('codex', true)
+    const result = await service.upgradeAll(['codex'])
+    expect(result.queued).toEqual(['codex'])
+  })
 })

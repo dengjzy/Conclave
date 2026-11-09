@@ -1,13 +1,13 @@
 import { getLocale, t, tr } from '../i18n'
 import { useEffect, useId, useState, type ReactNode } from 'react'
 import { AGENT_KINDS, agentDescriptor, agentReadiness, type AgentCliInstallation, type AgentKind, type DetectedAgent, type EnvironmentCheck, type AgentSmokeTestReport } from '@conclave/protocol'
-import { refreshAgentCli, upgradeAgentCli, cancelAgentCliUpgrade, selectConversation, installAgentCli, refreshEnvironment, runSmokeTest, showTerminal, useCore } from '../core-store'
+import { refreshAgentCli, upgradeAgentCli, upgradeAllAgentClis, cancelAgentCliUpgrade, selectConversation, installAgentCli, refreshEnvironment, runSmokeTest, showTerminal, useCore } from '../core-store'
 import { cliStatusText, cliErrorText, cliBackendOutdated, cliChannelText } from '../agent-cli-text'
 import { checkStatusText } from '../environment-text'
 import { agentLabel } from '../labels'
 import { setPreference, usePreferences } from '../preferences'
 import { CopyButton } from './CopyButton'
-import { AgentIcon, RefreshIcon } from './icons'
+import { AgentIcon, DownloadIcon, RefreshIcon } from './icons'
 import { Toggle } from './SettingsControls'
 import { agentReadinessText } from '../agent-readiness-text'
 import { useProviderProbes } from '../provider-probes'
@@ -110,6 +110,7 @@ function CliMaintenance({ kind, check }: { kind: AgentKind; check: EnvironmentCh
               )}
             </div>
             {upgradeCommand && <Fix label={t('agentCli.orRunInTerminal')} command={upgradeCommand} />}
+            {status.mendCommand && <Fix label={t('agentCli.repairCommand')} command={status.mendCommand} />}
           </>
         ) : (
           <>
@@ -142,8 +143,25 @@ function AgentRow({ kind, check, enabled, last, smokeReport }: { kind: AgentKind
   const disabled = usePreferences((s) => s.disabledAgents)
   const probes = useProviderProbes((s) => s.probes)
   const readiness = agentReadiness(kind, environment, disabled, providers, probes)
-  const currentVersion = useCore((s) => s.agentCli[kind]?.currentVersion)
+  const cliStatus = useCore((s) => s.agentCli[kind])
+  const currentVersion = cliStatus?.currentVersion
   const version = currentVersion ?? check.version ?? (check.status === 'unknown' ? t('InstalledAgentsSettings.versionUnknown') : null)
+  const appVersion = cliStatus?.appVersion
+  const [opening, setOpening] = useState(false)
+  const running = opening || cliStatus?.phase === 'starting' || cliStatus?.phase === 'running'
+  const canUpgrade = Boolean(cliStatus?.canUpgrade && cliStatus?.availability === 'available' && cliStatus?.latestVersion)
+
+  const onQuickUpgrade = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (opening || running) return
+    setOpening(true)
+    try {
+      await upgradeAgentCli(kind)
+    } finally {
+      setOpening(false)
+    }
+  }
+
   return (
     <div className="settings-row agent-row" data-off={!enabled || undefined}>
       <span className="agent-row-icon" aria-hidden="true"><AgentIcon agent={kind} /></span>
@@ -151,6 +169,19 @@ function AgentRow({ kind, check, enabled, last, smokeReport }: { kind: AgentKind
         <div className="agent-row-head">
           <span id={labelId} className="settings-row-label">{agentLabel(kind)}</span>
           {version && <span className="agent-row-version mono" title={check.path ?? undefined}>{version}</span>}
+          {appVersion && <span className="agent-row-version mono" title="App Version">App {appVersion}</span>}
+          {canUpgrade && (
+            <button
+              type="button"
+              className="agent-upgrade-pill"
+              disabled={running}
+              onClick={onQuickUpgrade}
+              title={t('agentCli.updateToTarget', { version: cliStatus?.latestVersion ?? '' })}
+            >
+              <DownloadIcon />
+              <span>{running ? t('agentCli.running') : t('agentCli.updateToTarget', { version: cliStatus?.latestVersion ?? '' })}</span>
+            </button>
+          )}
           {!enabled && <span className="agent-row-pill">{t('InstalledAgentsSettings.disabled')}</span>}
           {enabled && (
             <span className="environment-pill" data-level={readiness.state === 'ready' ? 'ok' : 'warning'}>
@@ -257,6 +288,78 @@ function DetectedAgentRow({ agent }: { agent: DetectedAgent }) {
 }
 
 // folded: closed until clicked, for a group that is there to browse rather than to act on.
+function AgentUpgradeBanner({ found }: { found: { kind: AgentKind; check: EnvironmentCheck }[] }) {
+  const cliStatuses = useCore((s) => s.agentCli)
+  const maintenanceSupported = useCore((s) => s.rpc?.features.includes('agent-cli-maintenance') ?? false)
+  const [upgrading, setUpgrading] = useState(false)
+
+  if (!maintenanceSupported) return null
+
+  const upgradable = found.flatMap(({ kind }) => {
+    const status = cliStatuses[kind]
+    if (status && status.availability === 'available' && status.canUpgrade && status.latestVersion) {
+      return [{
+        kind,
+        label: agentLabel(kind),
+        current: status.currentVersion ?? '?',
+        latest: status.latestVersion
+      }]
+    }
+    return []
+  })
+
+  if (upgradable.length === 0) return null
+
+  const runningCount = found.filter(({ kind }) => {
+    const status = cliStatuses[kind]
+    return status?.phase === 'starting' || status?.phase === 'running'
+  }).length
+
+  const onUpgradeAll = async () => {
+    if (upgrading || runningCount > 0) return
+    setUpgrading(true)
+    try {
+      await upgradeAllAgentClis(upgradable.map((u) => u.kind))
+    } finally {
+      setUpgrading(false)
+    }
+  }
+
+  return (
+    <div className="agent-upgrade-banner" role="status">
+      <div className="agent-upgrade-banner-content">
+        <span className="agent-upgrade-banner-icon" aria-hidden="true"><DownloadIcon /></span>
+        <div className="agent-upgrade-banner-popover">
+          <span className="agent-upgrade-banner-text">
+            {t('agentCli.updatesAvailableCount', {
+              count: upgradable.length,
+              agents: upgradable.map((u) => u.label).join(', ')
+            })}
+          </span>
+          <div className="agent-upgrade-banner-tooltip">
+            {upgradable.map((u) => (
+              <div key={u.kind} className="agent-upgrade-tooltip-item">
+                <span className="agent-upgrade-tooltip-name">{u.label}:</span>{' '}
+                <span className="mono">{u.current}</span> → <span className="mono agent-upgrade-tooltip-target">{u.latest}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="agent-upgrade-banner-actions">
+        <button
+          type="button"
+          className="button primary small agent-upgrade-all-button"
+          disabled={upgrading || runningCount > 0}
+          onClick={() => void onUpgradeAll()}
+        >
+          {runningCount > 0 ? t('agentCli.upgradingAll') : t('agentCli.upgradeAll')}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function Group({ title, count, folded = false, children }: { title: string; count: number; folded?: boolean; children: ReactNode }) {
   if (count === 0) return null
   if (folded) return (
@@ -354,6 +457,7 @@ export function InstalledAgentsSettings() {
           </details>
         </div>
       )}
+      <AgentUpgradeBanner found={found} />
       <Group title={t('InstalledAgentsSettings.installed')} count={found.length}>
         {found.map(({ kind, check }) => (
           <AgentRow key={kind} kind={kind} check={check} enabled={!disabled.includes(kind)} last={enabledCount <= 1} smokeReport={smokeReports[kind]} />

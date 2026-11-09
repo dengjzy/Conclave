@@ -19,6 +19,7 @@ export type CliTarget = {
   command: CliCommand | null
   latestUrl: string | null
   tagPrefix?: string
+  mendCommand?: string | null
 }
 export type CliTargetHost = {
   platform: NodeJS.Platform
@@ -106,7 +107,17 @@ export async function resolveCliTarget(agent: AgentKind, environment: Environmen
         if (!owned) continue
         const args = manager === 'pnpm' ? ['add', '-g'] : ['install', '-g']
         if (manager === 'bun') args.splice(0, args.length, 'add', '-g')
-        proofs.push(target(manager, { command: manager, args: [...args, `${packageName}@latest`, ...(maintenance?.packageArgs ?? [])] }, `https://registry.npmjs.org/${packageName}/latest`))
+        if (maintenance?.scripts) {
+          if (manager === 'npm') args.push(`--allow-scripts=${packageName}`)
+          else if (manager === 'bun') args.push('--trust')
+          else if (manager === 'pnpm') args.push(`--allow-build=${packageName}`)
+        }
+        const mend = manager === 'npm'
+          ? `npm install -g ${packageName}@latest --include=optional`
+          : manager === 'bun'
+          ? `bun add -g ${packageName}@latest`
+          : `pnpm add -g ${packageName}@latest`
+        proofs.push({ ...target(manager, { command: manager, args: [...args, `${packageName}@latest`, ...(maintenance?.packageArgs ?? [])] }, `https://registry.npmjs.org/${packageName}/latest`), mendCommand: mend })
       } catch { /* Another manager may own this executable. */ }
     }
     if (proofs.length === 1) return proofs[0] ?? null
@@ -120,7 +131,8 @@ export async function resolveCliTarget(agent: AgentKind, environment: Environmen
       if (inside(canonical, root, host.platform)) {
         const json = BrewInfo.parse(JSON.parse(await host.run({ command: 'brew', args: ['info', '--json=v2', ...(brew.cask ? ['--cask'] : ['--formula']), brew.name] })))
         if (brew.cask ? Boolean(json.casks?.[0]?.installed) : Boolean(json.formulae?.[0]?.installed.length)) {
-          return target('homebrew', { command: 'brew', args: ['upgrade', brew.cask ? '--cask' : '--formula', brew.name] }, `https://formulae.brew.sh/api/${brew.cask ? 'cask' : 'formula'}/${brew.name}.json`)
+          const mend = `brew reinstall ${brew.cask ? '--cask ' : ''}${brew.name}`
+          return { ...target('homebrew', { command: 'brew', args: ['upgrade', brew.cask ? '--cask' : '--formula', brew.name] }, `https://formulae.brew.sh/api/${brew.cask ? 'cask' : 'formula'}/${brew.name}.json`), mendCommand: mend }
         }
       }
     } catch { /* No proven Homebrew installation. */ }
@@ -130,8 +142,9 @@ export async function resolveCliTarget(agent: AgentKind, environment: Environmen
     // Old CLIs may interpret unknown commands as prompts. Help is the read-only capability probe.
     const help = await host.run({ command: selected, args: ['--help'] }).catch(() => '')
     const subcommand = native.args[0]
-    if (subcommand && new RegExp(`^\\s*${subcommand}(?:[\\s|,]|$)`, 'm').test(help)) {
-      return target('native', { command: selected, args: [...native.args] }, native.latestUrl ?? null, native.tagPrefix)
+    if (subcommand && new RegExp(`(?:^|\\b)${subcommand}\\b`, 'm').test(help)) {
+      const mend = `${selected} ${native.args.join(' ')}`
+      return { ...target('native', { command: selected, args: [...native.args] }, native.latestUrl ?? null, native.tagPrefix), mendCommand: mend }
     }
   }
   return target('unknown', null, null)

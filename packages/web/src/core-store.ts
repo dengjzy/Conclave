@@ -485,6 +485,10 @@ export async function upgradeAgentCli(agent: AgentKind): Promise<void> {
   }
 }
 
+export async function upgradeAllAgentClis(agents?: AgentKind[]): Promise<void> {
+  await perform((rpc) => rpc.call('system.upgradeAllAgentClis', { agents }))
+}
+
 export async function cancelAgentCliUpgrade(agent: AgentKind): Promise<void> {
   const status = await perform((rpc) => rpc.call('system.cancelAgentCliUpgrade', { agent }))
   if (status) useCore.setState((s) => ({ agentCli: mergeCliStatuses(s.agentCli, [status]) }))

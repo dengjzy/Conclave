@@ -15,7 +15,7 @@ const MCP_SETTLE_MS = 1500
 export const opencode: AgentAdapter = {
   kind: 'opencode',
   nativeSessions: opencodeSessions(),
-  maintenance: { packageName: '@opencode/cli', brew: { name: 'opencode', cask: false }, native: { roots: { darwin: ['.opencode/bin'], linux: ['.opencode/bin'] }, args: ['upgrade'], latestUrl: 'https://registry.npmjs.org/@opencode/cli/latest' } },
+  maintenance: { packageName: '@opencode/cli', scripts: true, brew: { name: 'opencode', cask: false }, native: { roots: { darwin: ['.opencode/bin'], linux: ['.opencode/bin'] }, args: ['upgrade'], latestUrl: 'https://registry.npmjs.org/@opencode/cli/latest' } },
   createDriver: (stageId, options) => new OpenCodeAcp(stageId, options),
   // Extra projects and a vault it may write go in the ACP session's additionalDirectories, and
   // Conclave's MCP servers in its mcpServers (AcpDriver); the rest rides in its config.

@@ -320,6 +320,7 @@ export function createRpcHandlers(
     'debug.clearWire': () => wire.clear(),
     'system.agentCliStatus': ({ agent, refresh }) => maintenance().list(agent, refresh),
     'system.upgradeAgentCli': ({ agent }) => maintenance().upgrade(agent),
+    'system.upgradeAllAgentClis': ({ agents }) => maintenance().upgradeAll(agents),
     'system.cancelAgentCliUpgrade': ({ agent }) => maintenance().cancel(agent),
     'system.environment': ({ refresh }) => environment.check(refresh ?? false),
     'agent.smokeTest': ({ agent }) => runAgentSmokeTest(agent, environment),

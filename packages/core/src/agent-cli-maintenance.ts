@@ -42,6 +42,9 @@ export class AgentCliMaintenance {
   private pendingAgent: AgentKind | null = null
   private readonly cancelled = new Set<AgentKind>()
   private pending: Promise<AgentCliUpgrade> | null = null
+  private readonly queue: AgentKind[] = []
+  private queueRunning = false
+  private readonly operationWaiters = new Map<AgentKind, Array<() => void>>()
   private readonly timer: ReturnType<typeof setInterval>
   private readonly now: () => number
 
@@ -114,7 +117,8 @@ export class AgentCliMaintenance {
           currentVersion: target.version, latestVersion: latest, path: target.path, channel: target.channel,
           canUpgrade: supported && target.command !== null && target.version !== null,
           availability: comparison !== null ? comparison < 0 ? 'available' : 'current' : target.channel === 'native' || target.channel === 'desktop' ? 'managed' : 'unknown',
-          phase: 'idle', error, checkedAt: this.now(), upgradeCommand: target.command && cliCommandText(target.command)
+          phase: 'idle', error, checkedAt: this.now(), upgradeCommand: target.command && cliCommandText(target.command),
+          mendCommand: target.mendCommand ?? null
         })
       } catch (error) {
         return this.update(agent, { phase: 'error', error: reason(error), checkedAt: this.now() })
@@ -132,6 +136,44 @@ export class AgentCliMaintenance {
     this.cancelled.delete(agent)
     this.pending = this.start(agent).finally(() => { this.pending = null; this.pendingAgent = null })
     return this.pending
+  }
+
+  async upgradeAll(agents?: AgentKind[]): Promise<{ queued: AgentKind[] }> {
+    await this.reconcile()
+    const kinds = agents ?? AGENT_KINDS
+    const queued: AgentKind[] = []
+    for (const kind of kinds) {
+      const status = this.status(kind)
+      if (status.canUpgrade && status.availability === 'available' && !this.queue.includes(kind) && this.pendingAgent !== kind && !this.operations.has(kind)) {
+        this.queue.push(kind)
+        queued.push(kind)
+      }
+    }
+    void this.drainQueue()
+    return { queued }
+  }
+
+  private async drainQueue(): Promise<void> {
+    if (this.queueRunning) return
+    this.queueRunning = true
+    try {
+      while (this.queue.length > 0) {
+        const next = this.queue.shift()
+        if (!next) break
+        try {
+          const res = await this.upgrade(next)
+          if (res.terminal && this.operations.has(next)) {
+            await new Promise<void>((resolve) => {
+              const waiters = this.operationWaiters.get(next) ?? []
+              waiters.push(resolve)
+              this.operationWaiters.set(next, waiters)
+            })
+          }
+        } catch { /* proceed with next in queue */ }
+      }
+    } finally {
+      this.queueRunning = false
+    }
   }
 
   private async start(agent: AgentKind): Promise<AgentCliUpgrade> {
@@ -242,6 +284,11 @@ export class AgentCliMaintenance {
     this.operations.delete(agent)
     this.releases.get(agent)?.()
     this.releases.delete(agent)
+    const waiters = this.operationWaiters.get(agent)
+    if (waiters) {
+      this.operationWaiters.delete(agent)
+      for (const resolve of waiters) resolve()
+    }
   }
 }
 function reason(error: unknown): string {

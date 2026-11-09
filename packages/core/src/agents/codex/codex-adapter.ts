@@ -13,7 +13,7 @@ export const codex: AgentAdapter = {
   warmup: { probe: { command: 'codex', args: ['mcp', 'list', '--json'], stdin: null, output: 'stdout' }, args: codexWarmupArgs },
   usageTranscripts: { format: 'codex', home: (home) => home ?? codexDefaultHome() },
   kind: 'codex',
-  maintenance: { packageName: '@openai/codex', brew: { name: 'codex', cask: true }, native: { roots: { darwin: ['.local/share/codex'], linux: ['.local/share/codex'], win32: ['AppData/Local/OpenAI/Codex'] }, args: ['update'], latestUrl: 'https://api.github.com/repos/openai/codex/releases/latest', tagPrefix: 'rust-v' } },
+  maintenance: { packageName: '@openai/codex', brew: { name: 'codex', cask: true }, native: { roots: { darwin: ['.local/share/codex', '.codex'], linux: ['.local/share/codex', '.codex'], win32: ['AppData/Local/OpenAI/Codex', '.codex'] }, args: ['update'], latestUrl: 'https://registry.npmjs.org/@openai/codex/latest' } },
   createDriver: (stageId, options) => new CodexAppServer(stageId, options),
   command: codexCommand,
   providerModels: codexProviderModels,
