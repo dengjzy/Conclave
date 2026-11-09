@@ -25,7 +25,7 @@ export const gemini: AgentDescriptor = {
     bypass: { label: 'YOLO', description: '所有工具直接运行，不再询问' }
   },
   startModes: ['ask', 'acceptEdits', 'plan'], defaultStartMode: 'ask', discussionMode: 'plan', readOnlyMode: 'plan',
-  capabilities: { readOnly: false, unattended: true, bypass: true, autoMode: false, pathMentions: true, optionsWhileBusy: false, skills: false, userMcp: true, modelProviders: [], accounts: false },
+  capabilities: { readOnly: false, unattended: true, bypass: true, autoMode: false, pathMentions: true, optionsWhileBusy: false, skills: false, userMcp: true, modelProviders: [], accounts: true },
   environment: {
     role: '聊天界面以 `gemini --acp` 运行它，需要 Node.js 20 以上版本。',
     install: 'npm install -g @google/gemini-cli@latest',

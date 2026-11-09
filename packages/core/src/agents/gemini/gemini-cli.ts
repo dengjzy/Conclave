@@ -26,9 +26,10 @@ export async function geminiAuthType(env = process.env, home = os.homedir()): Pr
   return settings?.security?.auth?.selectedType ?? null
 }
 
-export async function geminiSignedIn(): Promise<boolean> {
-  const auth = await geminiAuthType()
-  if (auth === 'oauth-personal') return access(path.join(geminiHome(), 'oauth_creds.json')).then(() => true, () => false)
+export async function geminiSignedIn(home?: string): Promise<boolean> {
+  const env = home ? { ...process.env, GEMINI_CLI_HOME: home } : process.env
+  const auth = await geminiAuthType(env)
+  if (auth === 'oauth-personal') return access(path.join(geminiHome(env), 'oauth_creds.json')).then(() => true, () => false)
   // Vertex can use ADC outside the CLI folder; only the SDK can validate those credentials.
   if (auth === 'vertex-ai') return true
   return Boolean(process.env.GEMINI_API_KEY?.trim() || process.env.GOOGLE_API_KEY?.trim())
@@ -59,12 +60,12 @@ export async function requireGemini(): Promise<string> {
   return command
 }
 
-export async function geminiCatalog(cwd: string, executor?: NativeSessionExecutor): Promise<ChatCatalog | null> {
-  if (!executor?.catalog || !executor.cleanup || !executor.register || !await geminiSignedIn()) return null
+export async function geminiCatalog(cwd: string, executor?: NativeSessionExecutor, env?: Record<string, string>): Promise<ChatCatalog | null> {
+  if (!executor?.catalog || !executor.cleanup || !executor.register || !await geminiSignedIn(env?.GEMINI_CLI_HOME)) return null
   const command = await requireGemini()
   const driver = new AcpDriver(geminiDialect, 'catalog', { cwd, extraDirs: [], resume: null })
   try {
-    return await executor.catalog(driver, { command, args: ['--acp', '--skip-trust'] }, cwd, async (id, daemonSessionId) => {
+    return await executor.catalog(driver, { command, args: ['--acp', '--skip-trust'], ...(env ? { env } : {}) }, cwd, async (id, daemonSessionId) => {
       const session = await geminiSessions().resolve({ providerSessionId: id, cwd })
       if (session) await executor.register?.('gemini', session, daemonSessionId)
     })

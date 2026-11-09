@@ -6,6 +6,7 @@ import { Rejection } from '../../rejection'
 import { geminiDialect } from './gemini-dialect'
 import { detectGemini, geminiCatalog, geminiInstallation, geminiSignedIn, requireGemini } from './gemini-cli'
 import { readGeminiUsage } from './gemini-usage'
+import { geminiAccounts } from './gemini-account'
 
 const readyFile = (stage: Parameters<typeof mcpReadyFile>[0]) => mcpReadyFile(stage, 'gemini')
 
@@ -13,7 +14,8 @@ export const gemini: AgentAdapter = {
   kind: 'gemini',
   nativeSessions: geminiSessions(), maintenance: { packageName: '@google/gemini-cli' },
   createDriver: (stageId, options) => new AcpDriver(geminiDialect, stageId, options),
-  command: (launch) => ({ command: 'gemini', args: ['--acp', '--skip-trust', ...[...new Set([...launch.extraProjects, ...(launch.references ?? []), ...(launch.knowledgeBase ? [launch.knowledgeBase.path] : [])])].flatMap((dir) => ['--include-directories', dir])] }),
+  command: (launch) => ({ command: 'gemini', args: ['--acp', '--skip-trust', ...[...new Set([...launch.extraProjects, ...(launch.references ?? []), ...(launch.knowledgeBase ? [launch.knowledgeBase.path] : [])])].flatMap((dir) => ['--include-directories', dir])], ...(launch.account ? { env: launch.account.env } : {}) }),
+  accounts: geminiAccounts,
   permissionModes: Object.keys(geminiDialect.modes), fallbackMode: 'ask',
   // Gemini 0.66.0 streams history after acknowledging load, with no end marker (#29707).
   session: { preassignedId: false, folderBound: true, nativeFork: 'none', nativeResume: false },
@@ -27,9 +29,9 @@ export const gemini: AgentAdapter = {
       const { ELECTRON_RUN_AS_NODE, ...env } = server.env ?? {}
       return mcpServerReporting({ ...server, ...(ELECTRON_RUN_AS_NODE ? { command: 'node', env } : {}) }, readyFile(stage), stage.planOnly, true)
     },
-    prepare: async (stage) => {
+    prepare: async (stage, _mcp, launch) => {
       const command = await requireGemini()
-      if (!await geminiSignedIn()) throw new Rejection('gemini-sign-in-required', '请先在终端运行 gemini 登录 Google 账号，或设置 GEMINI_API_KEY')
+      if (!await geminiSignedIn(launch?.account?.env?.GEMINI_CLI_HOME)) throw new Rejection('gemini-sign-in-required', '请先在终端运行 gemini 登录 Google 账号，或设置 GEMINI_API_KEY')
       await clearMcpReadyFile(readyFile(stage))
       return { command }
     },
