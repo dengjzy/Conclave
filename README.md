@@ -4,13 +4,13 @@
 
 **轻量纯 Web 架构的多 Agent 本机协同工作台**
 
-Claude Code · Codex · Antigravity · Pi · OpenCode · Cursor · DeepSeek Harness · ZCode · Kimi · Gemini
+Claude Code · Codex · Antigravity · Pi · OpenCode · Cursor · DeepSeek Harness · ZCode · Kimi · Gemini · Grok
 
 额度监控 · 并发提问对比 · 多轮讨论 · 研发小队 · 自动化与定时调度 · 独立 Worktree 隔离
 
 ![Version](https://img.shields.io/badge/version-0.0.1--web-blue)
 ![Platform](https://img.shields.io/badge/platform-Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-green)
-![Agents](https://img.shields.io/badge/agents-10%20supported-8A2BE2)
+![Agents](https://img.shields.io/badge/agents-11%20supported-8A2BE2)
 ![Architecture](https://img.shields.io/badge/architecture-Node%20Daemon%20%2B%20Core%20%2B%20Web-orange)
 
 [快速开始](#快速开始) · [核心能力](#核心能力) · [架构设计](#架构设计) · [支持的-agent](#支持的-agent) · [快捷键](#快捷键)
@@ -79,7 +79,7 @@ Conclave 采用现代前后端解耦与多进程隔离架构：
 └───────────────────────────┬────────────────────────────┘
                             │ CLI / ACP / stdio
                             ▼
-  [Claude Code] [Codex] [Antigravity] [Pi] [OpenCode] [Cursor] ...
+  [Claude Code] [Codex] [Antigravity] [Pi] [OpenCode] [Cursor] [Grok] ...
 ```
 
 * **`packages/protocol`**：统一协议规范与 TypeScript / Zod 类型定义（Task, Conversation, RPC, Quota 算法等）。
@@ -105,6 +105,7 @@ Conclave 深度适配主流的本机编程 Agent CLI：
 | **ZCode** | `zcode app-server` | 修改前询问 · 自由编辑 · 规划 · 只读 | ✓ | ✓ |
 | **Kimi Code** | `kimi acp` | Default · Plan · Auto | ✓ | ✓ |
 | **Gemini CLI** | `gemini --acp` | Default · Auto Edit · Plan | ✓ | ✓ |
+| **Grok** | `grok agent stdio` | Default · Plan · Auto · YOLO (Bypass) | ✓ | ✓ |
 
 ---
 

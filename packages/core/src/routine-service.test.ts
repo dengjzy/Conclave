@@ -305,12 +305,12 @@ describe('RoutineService', () => {
     expect(routines.pickAgent(auto)).toBe('claude')
     usage = [roomy('claude', 90), roomy('codex', 50)]
     expect(routines.pickAgent(auto)).toBe('codex')
-    usage = [exhausted('claude', clock + 2 * HOUR), exhausted('codex', clock + HOUR), signedOut('zcode'), signedOut('gemini')]
+    usage = [exhausted('claude', clock + 2 * HOUR), exhausted('codex', clock + HOUR), signedOut('zcode'), signedOut('gemini'), signedOut('grok')]
     expect(routines.pickAgent(auto)).toBe('codex')
-    usage = [exhausted('claude', clock + HOUR), signedOut('zcode'), signedOut('gemini')]
+    usage = [exhausted('claude', clock + HOUR), signedOut('zcode'), signedOut('gemini'), signedOut('grok')]
     expect(routines.pickAgent(auto)).toBe('codex')
     // One signed out cannot run it, ahead of one used up or not.
-    usage = [signedOut('claude'), exhausted('codex', clock + HOUR), signedOut('zcode'), signedOut('gemini')]
+    usage = [signedOut('claude'), exhausted('codex', clock + HOUR), signedOut('zcode'), signedOut('gemini'), signedOut('grok')]
     expect(routines.pickAgent(auto)).toBe('codex')
     // A provider's prepaid money says nothing about the agent's subscription windows.
     usage.push({ agent: 'dsh', status: 'ok', plan: null, error: null, updatedAt: clock, resetCredits: null, windows: [], balances: [
