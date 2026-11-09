@@ -15,6 +15,8 @@ import { CloseIcon, MaximizeIcon, MoreIcon, RestoreIcon } from './icons'
 import { Popover } from './Popover'
 import { ChatPicker } from './ChatPicker'
 import { executorOptions } from './TaskExecutorPicker'
+import { createDefaultSquad } from '../squads'
+import { SquadIcon, AgentIcon } from './icons'
 import { MarkdownEditor } from './MarkdownEditor'
 
 function PaperclipIcon() {
@@ -41,9 +43,10 @@ export function NewTaskDialog() {
   const installed = useInstalledAgents()
   const recommended = useRecommendation(installed)?.agent ?? null
   const squads = useCore((state) => state.squads)
-  const [squadId, setSquadId] = useState<string | null>(null)
+  const [mode, setMode] = useState<'manual' | 'squad'>(() => draft?.mode ?? (draft?.squadId ? 'squad' : (Object.keys(useCore.getState().squads).length > 0 ? 'squad' : 'manual')))
+  const [squadId, setSquadId] = useState<string | null>(() => draft?.squadId ?? (draft?.mode === 'manual' ? null : Object.values(useCore.getState().squads).find((s) => s.archivedAt === null)?.id ?? null))
   const [dependsOn, setDependsOn] = useState<string[]>([])
-  const [details, setDetails] = useState('')
+  const [details, setDetails] = useState(draft?.details ?? '')
   // The details editor holds its own text; a new key starts it empty for the next task.
   const [detailsKey, setDetailsKey] = useState(0)
   const [images, setImages] = useState<TaskImage[]>([])
@@ -197,7 +200,7 @@ export function NewTaskDialog() {
           <MarkdownEditor
             key={detailsKey}
             className="new-task-details"
-            value=""
+            value={details}
             onChange={setDetails}
             onSubmit={() => void submit()}
             label={t('NewTaskDialog.taskDetails')}
@@ -215,6 +218,67 @@ export function NewTaskDialog() {
             />
           </div>
         )}
+
+        
+        <div className="new-task-mode-selector" style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '12px 16px', background: 'var(--color-bg-secondary, rgba(255,255,255,0.03))', borderRadius: '8px', border: '1px solid var(--color-border-subtle, rgba(255,255,255,0.08))', margin: '0 0 12px 0' }}>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text-secondary, #888)' }}>{t('NewTaskDialog.executionMode')}:</span>
+            <button
+              type="button"
+              className={`button ${mode === 'squad' ? 'primary' : 'ghost'}`}
+              style={{ padding: '4px 10px', fontSize: '12px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+              onClick={() => {
+                setMode('squad')
+                if (!squadId) {
+                  const firstSquad = Object.values(squads).find((s) => s.archivedAt === null)
+                  if (firstSquad) setSquadId(firstSquad.id)
+                }
+              }}
+            >
+              <SquadIcon />
+              {t('NewTaskDialog.modeSquad')}
+            </button>
+            <button
+              type="button"
+              className={`button ${mode === 'manual' ? 'primary' : 'ghost'}`}
+              style={{ padding: '4px 10px', fontSize: '12px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+              onClick={() => {
+                setMode('manual')
+                setSquadId(null)
+              }}
+            >
+              <AgentIcon agent={agent ?? 'claude'} />
+              {t('NewTaskDialog.modeManual')}
+            </button>
+          </div>
+          {mode === 'squad' ? (
+            <div style={{ fontSize: '12px', color: 'var(--color-text-muted, #999)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <div>{t('NewTaskDialog.squadAutoHint')}</div>
+              <div style={{ padding: '6px 8px', background: 'var(--color-bg-tertiary, rgba(255,255,255,0.02))', borderRadius: '4px', borderLeft: '3px solid var(--color-accent, #3b82f6)' }}>
+                {t('NewTaskDialog.pipelineRoles')}
+              </div>
+              {Object.keys(squads).filter((id) => squads[id]?.archivedAt === null).length === 0 && (
+                <div style={{ marginTop: '4px' }}>
+                  <button
+                    type="button"
+                    className="button secondary"
+                    style={{ fontSize: '11px', padding: '3px 8px' }}
+                    onClick={async () => {
+                      const created = await createDefaultSquad(installed)
+                      if (created) setSquadId(created.id)
+                    }}
+                  >
+                    + {t('NewTaskDialog.createDefaultSquad')}
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ fontSize: '12px', color: 'var(--color-text-muted, #999)' }}>
+              {t('NewTaskDialog.manualSingleHint')}
+            </div>
+          )}
+        </div>
 
         <div className="new-task-properties">
           <ProjectPicker

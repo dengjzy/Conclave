@@ -1,5 +1,42 @@
 // Application-owned text. Values and external content are passed separately.
 export const MESSAGES = {
+  "NewTaskDialog.executionMode": {
+      "zh": "推进模式",
+      "en": "Execution Mode"
+  },
+  "NewTaskDialog.modeSquad": {
+      "zh": "多 Agent 自驱协同（推进完整项目）",
+      "en": "Multi-Agent Squad (Autonomous Pipeline)"
+  },
+  "NewTaskDialog.modeManual": {
+      "zh": "单 Agent 手动模式（单点任务）",
+      "en": "Single Agent (Manual)"
+  },
+  "NewTaskDialog.squadAutoHint": {
+      "zh": "工程闭环自动流转：谁主导评估、谁执行开发、谁自动化测试、谁质量核验自动推进，您只需最终验收成果。",
+      "en": "Autonomous engineering loop: Lead, developer, tester, and reviewer advance automatically; you only accept the final result."
+  },
+  "NewTaskDialog.pipelineRoles": {
+      "zh": "四角色流水线：👑 架构主导拆解 → 💻 编码实现 → 🧪 自动化测试（失败自愈回打） → 🛡️ 交叉代码核验 → 🎯 提交用户验收",
+      "en": "4-Stage Pipeline: 👑 Architect Assessment → 💻 Developer Code → 🧪 Auto Test (Self-Healing Loop) → 🛡️ Cross-Review → 🎯 Final Acceptance"
+  },
+  "NewTaskDialog.createDefaultSquad": {
+      "zh": "一键生成标准工程小队（主导·执行·测试·验证）",
+      "en": "Create Standard Engineering Squad (Lead, Dev, Test, Review)"
+  },
+  "NewTaskDialog.manualSingleHint": {
+      "zh": "手动点选单个外部 Agent 独立执行此任务，适用于单点改动或快速脚本。",
+      "en": "Manually pick a single agent to handle this task independently."
+  },
+  "SquadLaunchDialog.bypassHint": {
+      "zh": "自驱团队推荐：所有工具与命令直接执行，流水线自主推进无需人工逐项确认",
+      "en": "Recommended for automated teams: runs all tools and commands directly without manual approval"
+  },
+  "SquadLaunchDialog.askWarning": {
+      "zh": "注意：每次修改文件或运行命令都将暂停等待你确认，可能阻碍自驱协同推进",
+      "en": "Notice: pauses for your approval before every edit or command, which may block automated pipelines"
+  },
+
   "ConversationModes.single": {"zh": "单聊", "en": "Single chat"},
   "ConversationModes.fanout": {"zh": "并发提问", "en": "Parallel question"},
   "ConversationModes.debate": {"zh": "多轮讨论", "en": "Discussion"},
