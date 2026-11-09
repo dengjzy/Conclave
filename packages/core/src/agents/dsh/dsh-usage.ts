@@ -93,6 +93,17 @@ export async function readDshUsage(home?: string, providers: readonly ResolvedMo
   // The same key can be configured in both Conclave and DSH.
   const unique = sources.filter((source, index) => sources.findIndex((other) => other.key === source.key) === index)
   if (!unique.length) return { signedIn: false }
-  const balances = (await Promise.all(unique.map(readBalance))).flat()
+  const fetched = await Promise.all(unique.map(async (source) => ({ source, balances: await readBalance(source) })))
+  // Two different keys of one DeepSeek account report the same balance. The key saved in DSH
+  // would otherwise repeat a provider row under the same name.
+  const balances = fetched.filter((item) => item.source.id !== 'dsh:deepseek' || !fetched.some((other) => other.source.id !== 'dsh:deepseek' && sameBalance(other.balances, item.balances))).flatMap((item) => item.balances)
   return { signedIn: true, windows: [], plan: null, balances }
+}
+
+function sameBalance(left: readonly UsageBalance[], right: readonly UsageBalance[]): boolean {
+  const signature = (list: readonly UsageBalance[]) => [...list]
+    .sort((a, b) => a.currency.localeCompare(b.currency))
+    .map((item) => `${item.currency}:${item.total}:${item.granted}:${item.toppedUp}:${item.available}`)
+    .join('|')
+  return signature(left) === signature(right)
 }

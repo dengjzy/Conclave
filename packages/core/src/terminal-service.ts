@@ -190,7 +190,18 @@ export class TerminalService {
   private async runFinite(argv: { command: string; args: string[] }, title: string, command: string, env: Record<string, string> = {}, agent?: AgentKind): Promise<Terminal> {
     const cwd = os.homedir()
     const id = randomUUID()
-    const { sessionId } = await this.daemon.request('spawn', { ...argv, agent, cwd, env: { ...terminalEnv(), ...env, ...ownedBy({ kind: 'terminal', id }) }, cols: 120, rows: 32 })
+    let spawnResult: { sessionId: string }
+    try {
+      spawnResult = await this.daemon.request('spawn', { ...argv, agent, cwd, env: { ...terminalEnv(), ...env, ...ownedBy({ kind: 'terminal', id }) }, cols: 120, rows: 32 })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (message.includes('invalid_value') && message.includes('agent')) {
+        spawnResult = await this.daemon.request('spawn', { ...argv, cwd, env: { ...terminalEnv(), ...env, ...ownedBy({ kind: 'terminal', id }) }, cols: 120, rows: 32 })
+      } else {
+        throw error
+      }
+    }
+    const { sessionId } = spawnResult
     const terminal = { id, sessionId, cwd, title, createdAt: this.now(), command }
     this.db.prepare('INSERT INTO terminals (id, session_id, cwd, title, created_at, command) VALUES (?, ?, ?, ?, ?, ?)')
       .run(terminal.id, sessionId, cwd, terminal.title, terminal.createdAt, terminal.command)
