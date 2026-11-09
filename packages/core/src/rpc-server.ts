@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto'
 import os from 'node:os'
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import http, { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -141,6 +141,43 @@ export function startRpcServer(options: {
     }
   }
 
+function proxyToVite(req: IncomingMessage, res: ServerResponse, targetPath: string, vitePort = 5173): Promise<boolean> {
+  return new Promise((resolve) => {
+    const proxyReq = http.request(
+      {
+        host: '127.0.0.1',
+        port: vitePort,
+        path: targetPath,
+        method: req.method,
+        headers: {
+          ...req.headers,
+          host: `127.0.0.1:${vitePort}`
+        },
+        timeout: 1000
+      },
+      (proxyRes) => {
+        const headers = { ...proxyRes.headers }
+        if (headers['content-type']?.includes('text/html')) {
+          headers['cache-control'] = 'no-cache, no-store, must-revalidate'
+          headers['pragma'] = 'no-cache'
+          headers['expires'] = '0'
+        }
+        res.writeHead(proxyRes.statusCode ?? 200, headers)
+        proxyRes.pipe(res)
+        resolve(true)
+      }
+    )
+    proxyReq.on('timeout', () => {
+      proxyReq.destroy()
+      resolve(false)
+    })
+    proxyReq.on('error', () => {
+      resolve(false)
+    })
+    req.pipe(proxyReq)
+  })
+}
+
   async function handleHttpRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const parsedUrl = new URL(req.url ?? '/', 'http://127.0.0.1')
     const pathname = parsedUrl.pathname
@@ -182,6 +219,13 @@ export function startRpcServer(options: {
       }
     }
 
+    if (!pathname.startsWith('/api/')) {
+      const isConclaveRoot = pathname === '/' || pathname === '/conclave' || pathname === '/conclave/'
+      const vitePath = isConclaveRoot ? `/index.html${parsedUrl.search}` : (req.url ?? pathname)
+      const proxied = await proxyToVite(req, res, vitePath, 5173)
+      if (proxied) return
+    }
+
     let filePath = path.join(webDistDir, (pathname === '/' || pathname === '/conclave' || pathname === '/conclave/') ? 'index.html' : pathname.replace(/^\/+/, ''))
     if (!filePath.startsWith(webDistDir)) {
       res.writeHead(403).end('Forbidden')
@@ -197,13 +241,24 @@ export function startRpcServer(options: {
       const ext = path.extname(filePath)
       const contentType = MIME_TYPES[ext] ?? 'application/octet-stream'
       const content = await readFile(filePath)
-      res.writeHead(200, { 'Content-Type': contentType })
+      const headers: Record<string, string> = { 'Content-Type': contentType }
+      if (ext === '.html' || filePath.endsWith('index.html')) {
+        headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        headers['Pragma'] = 'no-cache'
+        headers['Expires'] = '0'
+      }
+      res.writeHead(200, headers)
       res.end(content)
     } catch {
       try {
         const indexPath = path.join(webDistDir, 'index.html')
         const content = await readFile(indexPath)
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0'
+        })
         res.end(content)
       } catch {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })

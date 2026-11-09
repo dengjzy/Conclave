@@ -44,9 +44,11 @@ async function removeCoreEndpoint(pid, home = conclaveHome()) {
   } catch {}
 }
 
-function probeSocket(socketPath) {
+function probeSocket(target) {
   return new Promise((resolve) => {
-    const socket = net.connect(socketPath)
+    const socket = typeof target === 'number'
+      ? net.connect({ port: target, host: '127.0.0.1' })
+      : net.connect(target)
     socket.setTimeout(1000, () => {
       socket.destroy()
       resolve(false)
@@ -113,11 +115,26 @@ async function startServer(args) {
     execFileSync(process.execPath, [path.join(ROOT, 'scripts/build-plugins.mjs')], { cwd: ROOT, stdio: 'inherit' })
   }
 
-  // 1. Ensure Web assets are built
-  const webDist = path.join(ROOT, 'packages/web/dist/index.html')
-  if (!existsSync(webDist)) {
-    console.log('[conclave] 未检测到 Web 编译资源，正在执行首次生产构建...')
-    execSync('pnpm --filter @conclave/web run build', { cwd: ROOT, stdio: 'inherit' })
+  // 1. Ensure Web hot reload dev server is running
+  let viteProc = null
+  const webDir = path.join(ROOT, 'packages/web')
+  const viteBin = path.join(webDir, 'node_modules/vite/bin/vite.js')
+  const viteLive = await probeSocket(5173)
+
+  if (!viteLive && existsSync(viteBin)) {
+    console.log('[conclave] 正在拉起 Web 热重载开发服务 (Vite, 端口: 5173)...')
+    viteProc = spawn(process.execPath, [viteBin, '--port', '5173', '--host', '127.0.0.1'], {
+      cwd: webDir,
+      stdio: 'ignore'
+    })
+  } else if (viteLive) {
+    console.log('[conclave] Web 热重载开发服务已就绪 (端口: 5173)')
+  } else {
+    const webDist = path.join(ROOT, 'packages/web/dist/index.html')
+    if (!existsSync(webDist)) {
+      console.log('[conclave] 未检测到 Web 编译资源，正在执行首次生产构建...')
+      execSync('pnpm --filter @conclave/web run build', { cwd: ROOT, stdio: 'inherit' })
+    }
   }
 
   // 2. Ensure Daemon is alive
@@ -177,6 +194,11 @@ async function startServer(args) {
   }
 
   const handleExit = (signal) => {
+    if (viteProc?.pid) {
+      try {
+        process.kill(viteProc.pid, signal)
+      } catch {}
+    }
     if (coreProc.pid) {
       try {
         process.kill(coreProc.pid, signal)
@@ -208,9 +230,34 @@ async function stopServer() {
     await removeCoreEndpoint(endpoint.pid)
   }
 
+  const viteLive = await probeSocket(5173)
+  if (viteLive) {
+    console.log('[conclave] 正在停止 Web 热重载开发服务 (端口: 5173)...')
+    try {
+      execSync('fuser -k 5173/tcp', { stdio: 'ignore' })
+    } catch {}
+  }
+
   const daemonLive = await probeSocket(paths.daemonSocket)
   if (daemonLive) {
-    console.log(`[conclave] Daemon 守护进程仍在监听 (${paths.daemonSocket})`)
+    console.log(`[conclave] 正在停止 Daemon 守护进程 (${paths.daemonSocket})...`)
+    try {
+      await new Promise((resolve) => {
+        const client = net.connect(paths.daemonSocket)
+        client.setTimeout(1000, () => {
+          client.destroy()
+          resolve()
+        })
+        client.on('connect', () => {
+          client.write(JSON.stringify({ id: 999, method: 'retire', params: {} }) + '\n')
+          setTimeout(() => {
+            client.destroy()
+            resolve()
+          }, 300)
+        })
+        client.on('error', () => resolve())
+      })
+    } catch {}
   }
 
   if (stoppedCore) {
@@ -250,8 +297,12 @@ async function checkStatus() {
     console.log(`  状态: ⚪ 未运行`)
   }
 
+  const viteLive = await probeSocket(5173)
+  console.log('\n[Web 热重载开发服务]')
+  console.log(`  状态: ${viteLive ? '🟢 运行中 (端口: 5173, 热重载生效中)' : '⚪ 未运行'}`)
+
   const webDist = path.join(ROOT, 'packages/web/dist/index.html')
-  console.log('\n[Web 静态包]')
+  console.log('\n[Web 生产静态包]')
   console.log(`  状态: ${existsSync(webDist) ? '🟢 已编译' : '🟡 未编译 (首次 start 会自动构建)'}`)
   console.log()
 }
