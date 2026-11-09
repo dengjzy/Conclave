@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { ChatItem, handoffMessage, type ConversationStage } from '@conclave/protocol'
+import { ChatItem, forkMessage, handoffMessage, type ConversationStage } from '@conclave/protocol'
 import {
   appendText,
   chatBlocks,
@@ -95,6 +95,10 @@ describe('saidText', () => {
     expect(saidText(handoffMessage('/k/sessions/c/handoffs/h.md', '先跑测试'))).toBe('先跑测试')
     expect(saidText(handoffMessage('/k/sessions/c/handoffs/h.md'))).toBe('')
     expect(saidText('请先阅读 README')).toBe('请先阅读 README')
+  })
+
+  it('shows nothing said for a fork record, which no one wrote', () => {
+    expect(saidText(forkMessage('/k/sessions/c/handoffs/f.md'))).toBe('')
   })
 })
 

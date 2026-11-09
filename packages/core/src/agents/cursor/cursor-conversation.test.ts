@@ -247,9 +247,9 @@ it('uses conversation-bound MCP on new and load, preserves native resume and for
   expect(frames.some((frame) => JSON.stringify(frame).includes('session/load'))).toBe(false)
   const prompt = frames.map((frame) => Frame.parse(frame)).find((frame) => frame.method === 'session/prompt')
   const text = z.object({ prompt: z.array(z.object({ text: z.string() })) }).parse(prompt?.params).prompt[0]?.text ?? ''
-  const handoff = /移交文件 (.+?)，/.exec(text)?.[1]
-  expect(handoff).toBeTruthy()
-  expect(readFileSync(handoff!, 'utf8')).toContain('remember this visible message')
+  const record = /分叉记录 (.+?)，/.exec(text)?.[1]
+  expect(record).toBeTruthy()
+  expect(readFileSync(record!, 'utf8')).toContain('remember this visible message')
   expect(JSON.stringify(frames)).toContain(forked.id)
 })
 

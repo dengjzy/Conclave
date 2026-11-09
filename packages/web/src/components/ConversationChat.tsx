@@ -3,7 +3,7 @@ import { HelperTurnCost } from './HelperTurnCost'
 import { addQuote } from '../chat-quotes'
 import { focusChatInput } from '../helper-conversations'
 import { Fragment, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { CODEX_IMAGE_GENERATION, cursorProviderError, isBrowserTool, isPlanApproval, isPreviewTool, chatReferencesIn, parseHandoffMessage, toolImagePath, type AgentKind, type ChatItem, type Conversation, type ConversationStage } from '@conclave/protocol'
+import { CODEX_IMAGE_GENERATION, cursorProviderError, isBrowserTool, isPlanApproval, isPreviewTool, chatReferencesIn, parseForkMessage, parseHandoffMessage, toolImagePath, type AgentKind, type ChatItem, type Conversation, type ConversationStage } from '@conclave/protocol'
 import { ChatBrowserTabs, firstBrowserCall, shouldOpenBrowser, useWatchBrowserTabs } from '../browser-state'
 import { ChatBrowserCard, ChatBrowserRun, ChatShotCard } from './ChatBrowserCard'
 import { chatBlocks, dropChat, finalReplies, foldsOfTools, itemKey, pathShortener, prependChatPage, previousTodos, saidText, setChatPage, stageAgents, thoughtDurations, timeline, useChat, type ChatBlock, type TimelineEntry, type TurnAgent, type TurnFile } from '../chat-state'
@@ -224,6 +224,15 @@ function UserMessage({ item, pending = false }: { item: UserItem; pending?: bool
     return (
       <>
         <div className="chat-user-handoff">{tr('ConversationChat.handedOffToWithNoAdditionalInstructions', { value1: agentLabel((byStage.get(item.stageId) ?? current).agent) })}</div>
+        {!pending && <UserMessageFooter item={item} />}
+      </>
+    )
+  }
+  // A fork of an agent that cannot take its own session over: the same agent reads its own record.
+  if (parseForkMessage(item.text) && !body && quotes.length === 0 && item.images.length === 0) {
+    return (
+      <>
+        <div className="chat-user-handoff">{tr('ConversationChat.continuedFromTheChatItForked')}</div>
         {!pending && <UserMessageFooter item={item} />}
       </>
     )

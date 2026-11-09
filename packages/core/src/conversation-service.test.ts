@@ -1459,6 +1459,28 @@ describe('ConversationService', () => {
       expect(lastSpawn().env).toMatchObject({ ANTHROPIC_AUTH_TOKEN: KEY })
       expect(service.stages(fork.id).every((each) => each.route?.providerId === providerId)).toBe(true)
     })
+
+    it("forks by a record of its own work when the session cannot be taken over", async () => {
+      const { id: providerId } = await providers.save(gateway())
+      const source = await service.create('claude', [], undefined, { modelProvider: providerId })
+      await service.send(source.id, 'first')
+      await settle()
+      const stage = service.stages(source.id).at(-1)!
+      const reply = service.chatPage(source.id).items.find((item) => item.kind === 'assistant')!
+      // The gateway moved: the session was opened on another address, so it cannot be taken over.
+      await providers.save(gateway({ id: providerId, apiKey: null, anthropic: { baseUrl: 'http://127.0.0.1:4001', auth: 'auth_token', env: {} } }))
+      const fork = await service.fork(source.id, stage.id, reply.id)
+      expect(lastSpawn().args).not.toContain('--resume')
+      const written = JSON.stringify(daemon.written(service.get(fork.id).sessionId ?? ''))
+      expect(written).toContain('请先阅读 Conclave 分叉记录')
+      expect(written).not.toContain('移交')
+      const directory = path.join(root, 'sessions', fork.id, 'handoffs')
+      const record = readdirSync(directory).map((name) => readFileSync(path.join(directory, name), 'utf8')).at(-1) ?? ''
+      expect(record).toContain('# Conclave 会话分叉')
+      expect(record).not.toContain('移交：')
+      // The record was written by Conclave, not said: only the copied chat is the fork's own.
+      expect(service.messages(fork.id).filter((message) => message.role === 'user').map((message) => message.text)).toEqual(['first'])
+    })
   })
 
   describe('forking at a message', () => {
@@ -1507,6 +1529,35 @@ describe('ConversationService', () => {
       expect(service.chatPage(fork.id).items.filter((item) => item.kind === 'assistant').map((item) => item.text)).toEqual(['echo: first'])
       expect(store.messages(fork.id).map((message) => message.text)).toEqual(['first', 'echo: first'])
       expect(service.get(fork.id).chat?.turn).toBe('idle')
+    })
+
+    it('branches from the visible chat instead of the session when a record is asked for', async () => {
+      const source = await twoTurns()
+      const stage = stageOf(source.id)
+      const reply = service.chatPage(source.id).items.find((item) => item.kind === 'assistant' && item.text === 'echo: first')!
+      const fork = await service.fork(source.id, stage.id, reply.id, { context: 'record' })
+      const args = daemon.spawns.at(-1)!.args
+      expect(args).toContain('--session-id')
+      expect(args).not.toContain('--resume')
+      expect(JSON.stringify(daemon.written(service.get(fork.id).sessionId ?? ''))).toContain('请先阅读 Conclave 分叉记录')
+      // The record is Conclave's, so it is shown as a line but never kept as something said.
+      expect(store.messages(fork.id).filter((message) => message.role === 'user').map((message) => message.text)).toEqual(['first'])
+    })
+
+    it('forks onto another agent, which starts from the record and never the session', async () => {
+      const source = await twoTurns()
+      const stage = stageOf(source.id)
+      const reply = service.chatPage(source.id).items.find((item) => item.kind === 'assistant' && item.text === 'echo: first')!
+      const fork = await codexOpens(service.fork(source.id, stage.id, reply.id, { agent: 'codex' }))
+      expect(fork).toMatchObject({ agent: 'codex', forkedFromId: source.id })
+      const frames = daemon.written(fork.sessionId ?? '')
+      expect(frames).toEqual(expect.arrayContaining([expect.objectContaining({ method: 'thread/start' })]))
+      expect(frames.some((frame) => JSON.stringify(frame).includes('thread/fork'))).toBe(false)
+      const written = JSON.stringify(frames)
+      expect(written).toContain('请先阅读 Conclave 分叉记录')
+      expect(written).not.toContain('移交')
+      // The copied chat is still the branch's own history.
+      expect(store.messages(fork.id).filter((message) => message.role === 'user').map((message) => message.text)).toEqual(['first'])
     })
 
     it('forks before the first message afresh, with nothing to resume', async () => {

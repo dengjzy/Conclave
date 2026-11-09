@@ -22,7 +22,7 @@ Conclave 通过官方 `kimi acp` 接入 Kimi Code CLI，复用通用 ACP driver�
 
 Kimi 没有独立的只读工作模式或 Conclave 的「自由编辑」模式，不把 Plan 当作只读团队成员运行；只读团队阶段会拒绝启动。群聊讨论使用 Plan。参考项目的明确文件修改请求由 Conclave 拒绝，命令的副作用仍由 Kimi 自己的权限规则控制；这些模式不是操作系统沙箱。
 
-会话绑定原工作目录；恢复使用 CLI 声明的 `session/load` 或 `session/resume`，历史重放不会重复进入聊天。工作目录变化或分叉通过交接创建新会话：Kimi 原生 fork 保留来源会话的 MCP 配置，会把旧 Conclave 会话权限带过去，因此不使用原生 fork。
+会话绑定原工作目录；恢复使用 CLI 声明的 `session/load` 或 `session/resume`，历史重放不会重复进入聊天。工作目录变化通过移交创建新会话，分叉则用同一 Agent 的分叉记录：Kimi 原生 fork 保留来源会话的 MCP 配置，会把旧 Conclave 会话权限带过去，因此不使用原生 fork。
 
 Conclave 的 MCP 和用户选择的 MCP 随会话传入，不改写 Kimi 配置；设置 → MCP 也可导入 `~/.kimi-code/mcp.json`。额外项目通过 ACP additionalDirectories 传入，新建会话生效；恢复时 Kimi 忽略该字段，Conclave 仍在首条消息中告知额外项目路径。知识库规则沿用 ACP 公共启动说明。
 

@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import { appendFile, mkdir, realpath, rm, rmdir, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { chatReferencesFor, canHaveHelper, helperAllowsMode, isHelper, agentDescriptor, modelPrice, providerEndpoint, type CostBaseline, checkEditAdditionalProjects, checkSwitchBranch, handoffMessage, isPlanApproval, parseHandoffMessage, MAX_TASK_REPOS, type AgentKind, type ChatCatalog, type ChatImage, type ChatItem, type ChatModel, type ChatOption, type ChatSettings, type CommitPushResult, type CommitResult, type PushResult, type Conversation, type ConversationMessage, type ConversationSearchHit, type ConversationStage, type FileDiff, type FolderChanges, type ProjectBranches, type ProjectHead, type ChatDecision, type KnowledgeBase, type TaskSource, type UnattendedMode, isConclaveRequest , PROCESS_OWNER_ENV, processOwner, parseProcessOwner } from '@conclave/protocol'
+import { chatReferencesFor, canHaveHelper, helperAllowsMode, isHelper, agentDescriptor, modelPrice, providerEndpoint, type CostBaseline, checkEditAdditionalProjects, checkSwitchBranch, forkMessage, handoffMessage, isPlanApproval, parseForkMessage, parseHandoffMessage, MAX_TASK_REPOS, type AgentKind, type ChatCatalog, type ChatImage, type ChatItem, type ChatModel, type ChatOption, type ChatSettings, type CommitPushResult, type CommitResult, type PushResult, type Conversation, type ConversationMessage, type ConversationSearchHit, type ConversationStage, type FileDiff, type FolderChanges, type ProjectBranches, type ProjectHead, type ChatDecision, type KnowledgeBase, type TaskSource, type UnattendedMode, isConclaveRequest , PROCESS_OWNER_ENV, processOwner, parseProcessOwner } from '@conclave/protocol'
 import type { DaemonEvent, SessionInfo } from '@conclave/protocol/node'
 import { canReuseConversation, DEFAULT_ACCOUNT, type ConversationConfiguration, type TaskLaunchOptions } from '@conclave/protocol'
 import type { RunMeasure } from './agent-run-store'
@@ -26,7 +26,7 @@ import type { AgentMcpServer, McpServer } from './agent-command'
 import { chatCommand } from './conversation-command'
 import { foldersInUse, launchDir, launchLeftovers, launchRoot, removeLaunch, type StageRef } from './stage-launch'
 import { searchSnippet } from './conversation-search'
-import { buildHandoff } from './conversation-handoff'
+import { buildForkRecord, buildHandoff } from './conversation-handoff'
 import { SCHEDULED_GO_TEXT, UNATTENDED_NOTE } from './agent-prompt'
 import { unattendedAnswer } from './unattended-answer'
 import { branchHolders, createProjectBranch, projectBranches, switchProjectBranch } from './project-branches'
@@ -95,7 +95,9 @@ type StageLaunch = { fresh?: boolean; moved?: boolean; planOnly?: boolean; reada
 // neither null means a session the agent can fork, else the fork starts afresh.
 // latest: the point is the last the agent's session holds, so the session forked whole is the same.
 // routeKey: the route that session was opened on (ProviderRoute.key), null on the agent's own account.
-type ForkPoint = { providerSessionId: string | null; at: string | null; latest: boolean; routeKey: string | null }
+// allowNative: whether the agent going on may take the session at the point over; false when another
+// agent was asked for, or the caller wants the visible chat as the branch's context.
+type ForkPoint = { providerSessionId: string | null; at: string | null; latest: boolean; routeKey: string | null; allowNative: boolean }
 
 // A chat page stops adding older stages once it holds this many items.
 const CHAT_PAGE_ITEMS = 1000
@@ -1000,7 +1002,7 @@ export class ConversationService {
     return new Map([...latest].map(([key, conversation]) => [key, conversation.id]))
   }
 
-  async fork(sourceId: string, stageId: string, itemId: string): Promise<Conversation> {
+  async fork(sourceId: string, stageId: string, itemId: string, options: { agent?: AgentKind; context?: 'session' | 'record' } = {}): Promise<Conversation> {
     this.deletion.requireWritable(sourceId)
     const source = this.free(sourceId)
     if (isHelper(source)) throw new Rejection('invalid-params', '小助手不能 fork')
@@ -1032,14 +1034,19 @@ export class ConversationService {
     const earlier = turn ?? stages.slice(0, index).reverse().map((stage) => this.chats.items(this.chatStage(source, stage)).reverse().find((item) => item.kind === 'turn')).find(Boolean)
     const sessionStage = turn ? cutStage : stages.slice(0, index).reverse().find((stage) => this.chats.items(this.chatStage(source, stage)).some((item) => item.kind === 'turn'))
     // The agent whose session is forked goes on; one that has never spoken here is the source's.
-    const agent = sessionStage?.agent ?? source.agent
+    // Another agent may be asked for, which starts from the copied chat instead of a session.
+    const atPoint = sessionStage?.agent ?? source.agent
+    const agent = options.agent ?? atPoint
     if (!this.capacityAvailable(agent)) throw new Rejection('agent-capacity')
     const providerSessionId = sessionStage?.providerSessionId ?? null
     // Nothing the user said after the point, here or in a later stage of the same session.
     const said = (each: readonly ChatItem[]) => each.some((item) => item.kind === 'user')
     const latest = !before && turn !== undefined && providerSessionId !== null && !said(items.slice(kept.length)) &&
       stages.slice(index + 1).every((stage) => stage.providerSessionId !== providerSessionId || !said(this.chats.items(this.chatStage(source, stage))))
-    const fork: ForkPoint = { providerSessionId, at: earlier?.kind === 'turn' ? earlier.providerRef ?? null : null, latest, routeKey: sessionStage?.route?.key ?? null }
+    const fork: ForkPoint = {
+      providerSessionId, at: earlier?.kind === 'turn' ? earlier.providerRef ?? null : null, latest,
+      routeKey: sessionStage?.route?.key ?? null, allowNative: agent === atPoint && options.context !== 'record'
+    }
     // A fork of a Claude session must run in the folder the session ran in: the same projects, or
     // the source's own managed workspace, shared from now on (remove() leaves a workspace in place).
     const id = randomUUID()
@@ -1172,29 +1179,31 @@ export class ConversationService {
 
   // The first stage of a fork: the source's session taken over through the fork point, where the
   // agent can (Claude's session from the same folder, Codex's thread), or whole where the point is
-  // its latest turn and it forks only whole (OpenCode); else a fresh start. The chat it continues
-  // is already copied, so no handoff file is written.
+  // its latest turn and it forks only whole (OpenCode); else a fresh session that reads a record of
+  // its own earlier work. The chat it continues is already copied.
   private async startFork(current: Conversation, agent: AgentKind, fork: ForkPoint): Promise<Conversation> {
     const { session } = adapterOf(agent)
     const decision = this.routeFor(current, agent)
     if (decision.kind === 'unavailable') throw new Rejection('model-provider-unavailable', decision.message)
     const route = decision.kind === 'provider' ? decision.route : null
     const whole = session.nativeFork === 'latest' && fork.latest
-    const native = fork.providerSessionId !== null && (whole || (session.nativeFork === 'any' && fork.at !== null)) && fork.routeKey === (route?.key ?? null)
+    const native = fork.allowNative && fork.providerSessionId !== null && (whole || (session.nativeFork === 'any' && fork.at !== null)) && fork.routeKey === (route?.key ?? null)
     const providerSessionId = native ? fork.providerSessionId : session.preassignedId ? randomUUID() : null
-    // Without a session to fork, the copied chat reaches the agent the way a handoff does.
-    let handoffPath: string | null = null
+    // Without a session to fork, the copied chat reaches the agent as its own record, not a handoff:
+    // it may be the agent at the point going on, or another one asked for; either way the visible
+    // chat is what the branch knows, and nobody handed anything to it.
+    let recordPath: string | null = null
     const messages = native ? [] : this.store.messages(current.id)
     if (messages.length > 0) {
       const directory = path.join(this.sessionsRoot, current.id, 'handoffs')
       await mkdir(directory, { recursive: true, mode: 0o700 })
-      handoffPath = path.join(directory, `${randomUUID()}.md`)
-      await writeFile(handoffPath, buildHandoff(current, messages, '', agent, agent), { mode: 0o600 })
+      recordPath = path.join(directory, `${randomUUID()}.md`)
+      await writeFile(recordPath, buildForkRecord(current, messages, agent), { mode: 0o600 })
     }
     const account = route ? null : await this.accounts?.launch(agent) ?? null
     const stage = this.store.startStage(current.id, agent, providerSessionId, this.store.maxSequence(current.id), randomUUID(), false, route, account?.id ?? null)
     const provider = decision.kind === 'provider' ? providerLaunch(decision.route, decision.apiKey) : undefined
-    return this.startChat(current, stage, native, handoffPath === null ? null : { path: handoffPath, note: '' }, [], whole ? WHOLE_SESSION_FORK : native ? fork.at : null, provider, account)
+    return this.startChat(current, stage, native, recordPath === null ? null : { path: recordPath, note: '', fork: true }, [], whole ? WHOLE_SESSION_FORK : native ? fork.at : null, provider, account)
   }
 
   // Runs the stage's agent over stdio, driven by the chat host, and waits until it can take a message.
@@ -1202,8 +1211,9 @@ export class ConversationService {
     current: Conversation,
     stage: ConversationStage,
     resume: boolean,
-    // The file a new agent reads first, and what the user added for it.
-    handoff: { path: string; note: string; references?: ChatReference[] } | null,
+    // The file a new agent reads first, and what the user added for it; a fork's record is the
+    // agent's own earlier work, not another agent's handoff.
+    handoff: { path: string; note: string; references?: ChatReference[]; fork?: boolean } | null,
     readable: readonly string[],
     forkAt: string | null = null,
     // The model provider the stage runs on, with its key; the stage's route says which.
@@ -1301,7 +1311,7 @@ export class ConversationService {
       await launch?.ready(agentStage)
       this.readySessions.add(sessionId)
       if (handoff) {
-        const message = handoffMessage(handoff.path, handoff.note)
+        const message = handoff.fork ? forkMessage(handoff.path) : handoffMessage(handoff.path, handoff.note)
         await this.chats.send(id, message, [], false, false, undefined, chatReferencesFor(handoff.note, message, handoff.references))
       }
     } catch (error) {
@@ -2338,10 +2348,14 @@ export class ConversationService {
   }
 
   // What the user said in a message: of a handoff's, only their note, as Conclave's instruction to read
-  // the file is not theirs and stays out of the title, search and later handoffs.
+  // the file is not theirs and stays out of the title, search and later handoffs. A fork's record
+  // was written by Conclave too, so it says nothing at all.
   private userPart(id: string, text: string): string {
+    const directory = path.join(this.sessionsRoot, id, 'handoffs')
     const handoff = parseHandoffMessage(text)
-    return handoff && path.dirname(handoff.path) === path.join(this.sessionsRoot, id, 'handoffs') ? handoff.note : text
+    if (handoff) return path.dirname(handoff.path) === directory ? handoff.note : text
+    const fork = parseForkMessage(text)
+    return fork && path.dirname(fork.path) === directory ? '' : text
   }
 
   private withChat(conversation: Conversation): Conversation {

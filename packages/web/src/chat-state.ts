@@ -5,7 +5,7 @@ import { isCompaction } from './chat-notices'
 import { diffCounts, isSubagent } from './chat-tools'
 import { isBackgroundCommand, keepsInView } from './background-work'
 import { browserOperation } from './browser-activity'
-import { parseHandoffMessage, type AgentCall, type AgentKind, type ChatDiff, type ChatItem, type ChatQuestion, type ChatTodo, type ConversationStage, browserToolKind, isPlanApproval, isPreviewTool, toolImagePath, CODEX_IMAGE_GENERATION, terminalToolKind, todoToolKind } from '@conclave/protocol'
+import { parseForkMessage, parseHandoffMessage, type AgentCall, type AgentKind, type ChatDiff, type ChatItem, type ChatQuestion, type ChatTodo, type ConversationStage, browserToolKind, isPlanApproval, isPreviewTool, toolImagePath, CODEX_IMAGE_GENERATION, terminalToolKind, todoToolKind } from '@conclave/protocol'
 
 // A conversation's chat items as this window holds them, in the order core first saw them;
 // `before` pages further back, null when nothing older is left.
@@ -147,9 +147,11 @@ export function dropChat(conversationId: string): void {
 }
 
 // What the user said in a message: of the one that starts a handoff, only their note, as Conclave's
-// instruction to read the handoff file is its own.
+// instruction to read the handoff file is its own; a fork's record was never said by anyone.
 export function saidText(text: string): string {
-  return parseHandoffMessage(text)?.note ?? text
+  const handoff = parseHandoffMessage(text)
+  if (handoff) return handoff.note
+  return parseForkMessage(text) ? '' : text
 }
 
 // Who answers in a turn: the agent, and the model (by its label where the agent gives one) and

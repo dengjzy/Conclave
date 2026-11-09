@@ -56,7 +56,7 @@ ZCode 运行 MCP 工具前都会问，Conclave 自己那些只读的工具（预
 
 ## 限制
 
-- 分叉对话用移交，不用 ZCode 的 `forkAssistant`：它以行号分叉，Conclave 没有对应的名字。
+- 分叉对话用同一 Agent 的分叉记录开新会话，不用 ZCode 的 `forkAssistant`：它以行号分叉，Conclave 没有对应的名字。
 - 技能库不交给 ZCode：它只从自己的设置文件加载技能。
 - 模型列表是 ZCode 报告的可用模型。用模拟服务商测试时它只报当前模型，真实账号下的列表还没有验证。
 

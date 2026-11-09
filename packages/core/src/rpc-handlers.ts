@@ -462,7 +462,7 @@ export function createRpcHandlers(
     'conversations.setArchived': ({ id, archived }) => conversations.setArchived(id, archived),
     'conversations.continue': ({ id, allowBypass }) => userActed(id, () => { profiles?.guardUser(id, true); squads?.guardUser(id, true); return conversations.continue(id, allowBypass) }),
     'conversations.handoff': ({ id, agent, note, stopRunning, allowBypass, permissionMode, model, effort, references }) => conversations.handoff(id, agent, note, stopRunning, allowBypass, { permissionMode, model, effort, references }),
-    'conversations.fork': ({ id, stageId, itemId }) => conversations.fork(id, stageId, itemId),
+    'conversations.fork': ({ id, stageId, itemId, agent, context }) => conversations.fork(id, stageId, itemId, { agent, context }),
     'conversations.setOption': async ({ id, option, value }) => { profiles?.guardUser(id, true); squads?.guardUser(id, true); await conversations.setOption(id, option, value); return OK },
     'conversations.send': ({ id, text, images, queue, steer, ref, references }) => userActed(id, async () => { profiles?.guardUser(id, true); squads?.guardUser(id, true); await conversations.send(id, text, images, queue, steer, ref, references); return OK }),
     'conversations.submit': ({ id, ...message }) => userActed(id, () => { profiles?.guardUser(id, true); squads?.guardUser(id, true); return conversations.submit(id, message) }),

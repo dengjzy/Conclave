@@ -3109,6 +3109,10 @@ export const MESSAGES = {
     "zh": "移交给 {value1}，没有补充说明",
     "en": "Handed off to {value1} with no additional instructions"
   },
+  "ConversationChat.continuedFromTheChatItForked": {
+    "zh": "从上一段继续",
+    "en": "Continued from the earlier conversation"
+  },
   "ConversationChat.additionalInstructions": {
     "zh": "追加指令",
     "en": "Additional instructions"

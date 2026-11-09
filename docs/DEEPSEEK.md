@@ -53,7 +53,7 @@ core 为每个阶段在自己的会话目录写入启动覆盖层，注入技能
 
 插件通过官方 ACP 的 stream 扩展提供 `_conclave/models`、`_conclave/question`、`_conclave/plan` 和权限配置项；初始化返回桥接协议版本，不兼容时在打开会话前失败。会话、模型选择、MCP 连接、图片处理、取消和持久化继续由官方 ACP 实现。
 
-core 使用通用 ACP driver，按握手能力调用 `session/resume`。计划映射到共享计划卡；批准时先确认权限切换，再回复批准。取消后仍不退出的进程由 daemon 按宽限期终止。会话绑定目录，没有原生 fork 的场景沿用 Conclave 的移交。
+core 使用通用 ACP driver，按握手能力调用 `session/resume`。计划映射到共享计划卡；批准时先确认权限切换，再回复批准。取消后仍不退出的进程由 daemon 按宽限期终止。会话绑定目录；没有原生 fork，分叉时用同一 Agent 的分叉记录开新会话，不按移交处理。
 
 删除 Conclave 会话时，会清理其 DSH 原生会话、确认为子 Agent 的后代以及对应投影缓存。专用 profile 的 runtime 将创建的会话写入继承的归属日志，所以工具进程直接启动 `dsh --profile conclave` 产生的空白诊断会话也能随所属会话清理。独立分叉不按 `parentSession` 单独判定为子 Agent；普通 DSH profile 和未登记的旧记录不按标题猜测删除。
 

@@ -72,6 +72,11 @@ function handoff(sessionId: string) {
   const text = JSON.stringify(prompts(sessionId))
   return readFileSync(/移交文件 (\S+?)，/.exec(text)?.[1] ?? '', 'utf8')
 }
+// A fork's record: the same history, framed as the agent's own earlier work rather than a handoff.
+function forkRecord(sessionId: string) {
+  const text = JSON.stringify(prompts(sessionId))
+  return readFileSync(/分叉记录 (\S+?)，/.exec(text)?.[1] ?? '', 'utf8')
+}
 
 it('keeps the live Gemini session for consecutive turns, and hands history to a new native session after stop', async () => {
   const created = await service.create('gemini', [root])
@@ -103,8 +108,9 @@ it('forks from a turn through a fresh session and carries only history up to the
   await service.send(created.id, 'Later question'); await settle()
   await service.fork(created.id, first.stageId, first.id); await settle()
   expect(opening('pipe-2').map((frame) => frame.method)).toEqual(['session/new'])
-  expect(handoff('pipe-2')).toContain('Keep first')
-  expect(handoff('pipe-2')).not.toContain('Later question')
+  expect(forkRecord('pipe-2')).toContain('# Conclave 会话分叉')
+  expect(forkRecord('pipe-2')).toContain('Keep first')
+  expect(forkRecord('pipe-2')).not.toContain('Later question')
 })
 
 it('keeps a failed turn visible and sends a manually retried prompt once after restarting', async () => {

@@ -428,11 +428,21 @@ export const rpcMethods = {
     params: ConversationRef.extend({ agent: AgentKind, note: z.string().max(10000), stopRunning: z.boolean(), allowBypass: AllowBypass }).extend(HandoffOptions.shape),
     result: Conversation
   },
-  // A new conversation with the same agent and projects, holding the chat up to a message: through
-  // the turn an agent's message belongs to, or up to (not including) a user message, which the
-  // client then offers in the new chat's input. The agent's own session is forked where it can
-  // be, so the new agent remembers what the chat shows, and no more.
-  'conversations.fork': { params: ConversationRef.extend({ stageId: z.string().uuid(), itemId: z.string().min(1) }), result: Conversation },
+  // A new conversation holding the chat up to a message: through the turn an agent's message
+  // belongs to, or up to (not including) a user message, which the client then offers in the new
+  // chat's input. The agent at the point goes on, taking its own session over where it can, so the
+  // new agent remembers what the chat shows and no more. `agent` picks another agent to go on
+  // instead, which starts from a record of the copied chat; `context: 'record'` asks for that
+  // record even when the agent could take its own session over.
+  'conversations.fork': {
+    params: ConversationRef.extend({
+      stageId: z.string().uuid(),
+      itemId: z.string().min(1),
+      agent: AgentKind.optional(),
+      context: z.enum(['session', 'record']).optional()
+    }),
+    result: Conversation
+  },
   // A message for the agent, text and/or images already uploaded (attachments.commit),
   // in the order they show. With queue, one sent while a turn runs waits its turn behind any
   // already waiting; with steer, it goes into the running turn (state.steerable says whether the
