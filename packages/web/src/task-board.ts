@@ -1,3 +1,4 @@
+import { create } from 'zustand'
 import { getLocale } from './i18n'
 import { shortTaskId, type AgentKind, type Task, type TaskStatus } from '@conclave/protocol'
 import type { Preferences } from './preferences'
@@ -8,6 +9,27 @@ export type TaskSort = Preferences['taskSort']
 export type BoardFilter = { query: string; project: string | null; agent: AgentKind | null }
 
 export type BoardColumn = { status: TaskStatus; tasks: Task[]; total: number }
+
+export type BoardMode = 'status' | 'workflow'
+
+export type BoardFilterState = BoardFilter & {
+  allDone: boolean
+  mode: BoardMode
+  focusedTaskId: string | null
+}
+
+export const useBoardFilter = create<BoardFilterState>(() => ({
+  query: '',
+  project: null,
+  agent: null,
+  allDone: false,
+  mode: 'status',
+  focusedTaskId: null
+}))
+
+export function focusWorkflowTask(taskId: string): void {
+  useBoardFilter.setState({ mode: 'workflow', focusedTaskId: taskId })
+}
 
 // Cancelled tasks stay out of the way unless asked for.
 const COLUMNS: readonly TaskStatus[] = ['pending', 'running', 'review', 'done']
@@ -24,7 +46,7 @@ const COMPARE: Record<TaskSort, (a: Task, b: Task) => number> = {
 // By title, issue key or the start of the task id, ignoring case.
 export function matchesQuery(task: Task, query: string): boolean {
   const needle = query.trim().toLowerCase()
-  return !needle || [task.title, task.source?.key ?? '', shortTaskId(task.id)].some((text) => text.toLowerCase().includes(needle))
+  return !needle || [task.title, task.source?.key ?? '', shortTaskId(task.id), task.workflow?.title ?? '', task.workflow?.lane ?? ''].some((text) => text.toLowerCase().includes(needle))
 }
 
 export function matchesFilter(task: Task, filter: BoardFilter): boolean {

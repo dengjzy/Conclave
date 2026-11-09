@@ -1,3 +1,5 @@
+import { retainChat } from '../chat-watch'
+import { ChatStageJump } from './ChatStageJump'
 import { getLocale, t, tr } from '../i18n'
 import { HelperTurnCost } from './HelperTurnCost'
 import { addQuote } from '../chat-quotes'
@@ -6,7 +8,7 @@ import { Fragment, createContext, useCallback, useContext, useEffect, useLayoutE
 import { CODEX_IMAGE_GENERATION, cursorProviderError, isBrowserTool, isPlanApproval, isPreviewTool, chatReferencesIn, parseHandoffMessage, toolImagePath, type AgentKind, type ChatItem, type Conversation, type ConversationStage } from '@conclave/protocol'
 import { ChatBrowserTabs, firstBrowserCall, shouldOpenBrowser, useWatchBrowserTabs } from '../browser-state'
 import { ChatBrowserCard, ChatBrowserRun, ChatShotCard } from './ChatBrowserCard'
-import { chatBlocks, dropChat, finalReplies, foldsOfTools, itemKey, pathShortener, prependChatPage, previousTodos, saidText, setChatPage, stageAgents, thoughtDurations, timeline, useChat, type ChatBlock, type TimelineEntry, type TurnAgent, type TurnFile } from '../chat-state'
+import { chatBlocks, finalReplies, foldsOfTools, itemKey, pathShortener, prependChatPage, previousTodos, saidText, stageAgents, thoughtDurations, timeline, useChat, type ChatBlock, type TimelineEntry, type TurnAgent, type TurnFile } from '../chat-state'
 import { ChatDisclosureScope, ChatFindExpansion, setOpened, useDisclosure } from '../chat-disclosure'
 import { isCompaction, noticeSummary, readableNotice } from '../chat-notices'
 import { parseQuotes, withoutQuoteMarkers } from '../chat-quotes'
@@ -600,7 +602,7 @@ function Block({ conversationId, block, task, replies, fresh, dispatched, return
   if (entry.kind === 'item' && entry.item.kind === 'turn' && merged.has(block.key)) return null
   return (
     <ChatCopyRegion text={entry.kind === 'item' ? copyTextForItem(entry.item) : ''}>
-    <div className="chat-entry" data-user={isUserEntry(entry) || undefined} data-entry-key={block.key} data-fresh={entering}>
+    <div className="chat-entry" data-user={isUserEntry(entry) || undefined} data-entry-key={block.key} data-stage-id={entry.kind === 'stage' ? entry.stage.id : entry.item.stageId} data-fresh={entering}>
       {entry.kind === 'stage' ? <StageDivider conversationId={conversationId} stage={entry.stage} task={task} />
         : <Item conversationId={conversationId} item={entry.item} completedAt={replies.get(block.key)} blockKey={block.key} />}
     </div>
@@ -641,20 +643,7 @@ export function ConversationChat({ conversation, surface, onHandoff, variant = '
     entered.current = new Set()
   }, [id])
 
-  // Watching makes core send this conversation's item changes to this window until it lets go.
-  useEffect(() => {
-    if (!rpc) return
-    let current = true
-    rpc.call('conversations.watchChat', { id }).then(
-      (result) => current && setChatPage(id, result),
-      () => {}
-    )
-    return () => {
-      current = false
-      dropChat(id)
-      void rpc.call('conversations.unwatchChat', { id }).catch(() => {})
-    }
-  }, [rpc, id])
+  useEffect(() => rpc ? retainChat(rpc, id) : undefined, [rpc, id])
 
   // A new stage starts with a new session; earlier stages do not change.
   useEffect(() => {
@@ -956,6 +945,7 @@ export function ConversationChat({ conversation, surface, onHandoff, variant = '
     <JumpToEntry.Provider value={jumpTo}>
     <ChatMessageRelay.Provider value={beginRelay}>
     <div className="chat-view" data-variant={variant} data-conversation-id={id} ref={view} data-searching={find.searching || undefined} data-width={width} {...typeface}>
+      {variant !== 'compact' && <ChatStageJump conversationId={id} ready={Boolean(page)} container={list} loadOlder={loadOlder} onStart={findOpened} />}
       {variant !== 'compact' && <ChatFind key={id} state={find} scope={view} container={list} onOpen={findOpened} hasOlder={Boolean(page?.before)} loadOlder={loadOlder} />}
       <div
         className="chat-list"

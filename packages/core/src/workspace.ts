@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { isFinished, shortTaskId, type RepoStartOptions, type Task, type TaskRepo, type TaskStart } from '@conclave/protocol'
 import { Rejection } from './rejection'
-import { repoStartOptions, resolveStart } from './task-start'
+import { repoStartOptions, resolveStart, type ResolvedStart } from './task-start'
 import { execFileAsync } from './hidden-exec'
 
 
@@ -173,8 +173,15 @@ async function addWorktree(topLevel: string, worktreePath: string, args: readonl
 // it can only be a task's sole repo.
 const isReference = (repo: TaskRepo, index: number) => index > 0 && Boolean(repo.reference)
 
+async function laneStart(task: Pick<Task, 'workflow'>, repo: TaskRepo, dir: string, stacked: string | null, at: number): Promise<ResolvedStart> {
+  if (!task.workflow) return resolveStart(dir, repo.startRef, stacked, at)
+  const base = task.workflow.bases.find((base) => base.path === repo.path)
+  if (!base) throw new Rejection('invalid-params', '车道项目与泳道起点不匹配')
+  return { commit: base.commit, start: { ref: 'HEAD', commit: base.commit, note: null, at: task.workflow.createdAt }, head: false }
+}
+
 export async function prepareWorkspace(
-  task: Pick<Task, 'id' | 'title' | 'repos' | 'source'> & Partial<Pick<Task, 'slug'>>,
+  task: Pick<Task, 'id' | 'title' | 'repos' | 'source'> & Partial<Pick<Task, 'slug' | 'workflow'>>,
   dependencies: readonly Pick<Task, 'repos'>[],
   worktreesRoot: string,
   at = Date.now()
@@ -193,6 +200,7 @@ export async function prepareWorkspace(
       throw new Rejection('repo-not-found', `repo path does not exist: ${repo.path}`)
     }
     const topLevel = await gitTopLevel(repo.path)
+    if (task.workflow && !topLevel) throw new Rejection('worktree-not-git', '车道项目不再是 Git 仓库，不能改为原地执行')
     let reference = isReference(repo, index)
     if (multi && !topLevel && !reference) {
       // In Conclave, non-git folders are automatically treated as in-place reference directories
@@ -232,7 +240,7 @@ export async function prepareWorkspace(
         if (await branchExists(topLevel, repoBranch)) {
           await addWorktree(topLevel, worktreePath, [worktreePath, repoBranch])
         } else {
-          const resolved = await resolveStart(topLevel, startRef, base, at)
+          const resolved = await laneStart(task, repo, topLevel, base, at)
           // --no-track: the branch is the task's own, not a copy of the one it started from.
           await addWorktree(topLevel, worktreePath, ['--no-track', '-b', repoBranch, worktreePath, resolved.commit])
           start = resolved.start
@@ -355,7 +363,7 @@ async function gitConfig(dir: string, key: string): Promise<string | null> {
 // one the user removed is laid out again at the next start. Returns the repos as they now stand
 // and the branches the attempt's work was kept on.
 export async function restartBranches(
-  task: Pick<Task, 'repos'>,
+  task: Pick<Task, 'repos' | 'workflow'>,
   dependencies: readonly Pick<Task, 'repos'>[],
   attempt: number,
   at = Date.now()
@@ -377,7 +385,7 @@ export async function restartBranches(
       continue
     }
     const base = repo.startRef === null ? onlyBranch(stackable, topLevel) : null
-    const resolved = await resolveStart(topLevel, repo.startRef, base, at)
+    const resolved = await laneStart(task, repo, topLevel, base, at)
     await worktreeGit(dir, ['checkout', '-q', '--no-track', '-B', repo.branch, resolved.commit])
     repos.push({ ...repo, start: resolved.start })
   }
@@ -430,7 +438,7 @@ async function isAncestor(dir: string, branch: string): Promise<boolean> {
 // when that start is what the project has checked out. `refresh` moves an existing checkout to
 // the start as it is now; a planning conversation picked up again keeps reading what it read.
 export async function prepareRefineWorkspace(
-  task: Pick<Task, 'id' | 'repos'>,
+  task: Pick<Task, 'id' | 'repos' | 'workflow'>,
   dependencies: readonly Pick<Task, 'status' | 'repos'>[],
   worktreesRoot: string,
   { refresh = true, at = Date.now() }: { refresh?: boolean; at?: number } = {}
@@ -452,6 +460,7 @@ export async function prepareRefineWorkspace(
     }
     const topLevel = await gitTopLevel(repo.path)
     if (!topLevel) {
+      if (task.workflow) throw new Rejection('worktree-not-git', '车道项目不再是 Git 仓库，不能改为原地执行')
       dirs.push(repo.path)
       continue
     }
@@ -461,7 +470,7 @@ export async function prepareRefineWorkspace(
       dirs.push(checkout)
       continue
     }
-    const resolved = await resolveStart(topLevel, repo.startRef, repo.startRef === null ? onlyBranch(stackable, topLevel) : null, at)
+    const resolved = await laneStart(task, repo, topLevel, repo.startRef === null ? onlyBranch(stackable, topLevel) : null, at)
     if (resolved.head) {
       dirs.push(repo.path)
       continue

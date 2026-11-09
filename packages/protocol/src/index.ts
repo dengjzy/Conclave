@@ -1,4 +1,5 @@
 export * from './task'
+export * from './workflow'
 export * from './handoff'
 export * from './worktree'
 export * from './changes'

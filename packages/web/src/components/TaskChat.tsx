@@ -19,6 +19,8 @@ import { StatusIcon } from './StatusIcon'
 import { useSquadRuns } from '../squads'
 import { TaskInspector } from './TaskInspector'
 import { TaskAlerts } from './TaskAlerts'
+import { WorkflowContext } from './WorkflowBoard'
+import { WorkflowProcess } from './WorkflowProcess'
 import { TaskToolbar } from './TaskActions'
 import { Spinner } from './Spinner'
 import { BoardCrumb } from './TaskBoard'
@@ -109,6 +111,7 @@ export function TaskChat({ taskId }: { taskId: string }) {
   const inspectorOpen = useCore((s) => s.inspectorOpen)
   const starting = useCore((s) => s.startingTasks.includes(taskId))
   const bypassable = useChatOptionsSupported()
+  const [workflowTree, setWorkflowTree] = useState(true)
   const [sidePanelRatio, setSidePanelRatio] = useState(DEFAULT_SIDE_PANEL_RATIO)
   const plans = usePlans(conversationId ?? '')
   const wire = useWireLogShown() && conversationId !== null
@@ -142,6 +145,7 @@ export function TaskChat({ taskId }: { taskId: string }) {
   }
   const worktree = task.repos.some((repo) => repo.worktreePath !== null)
   const showInspector = inspectorOpen && (conversationId !== null || delegationSupported || helperSupported || worktree || runs.length > 0 || plans.length > 0 || wire || todosShown)
+  const lanes = task.workflow ? Object.values(tasks).filter((other) => other.workflow?.id === task.workflow?.id).sort((a, b) => (a.workflow?.position ?? 0) - (b.workflow?.position ?? 0)) : [task]
 
   return (
     <section className="detail terminal-view" aria-label={t('TaskChat.chat', { value1: task.title })}>
@@ -172,8 +176,10 @@ export function TaskChat({ taskId }: { taskId: string }) {
             <WorkingSummary activity={activity} detail={false} />
           </button>
         )}
+        <button type="button" className="button ghost" aria-pressed={workflowTree && !showInspector} onClick={() => { setWorkflowTree(showInspector || !workflowTree); if (showInspector) useCore.setState({ inspectorOpen: false }) }}>{t('WorkflowStudio.tree')}</button>
         <TaskToolbar task={task} view="chat" />
       </header>
+      <WorkflowContext task={task} showProcess={false} />
       {memberChatId && <div className="squad-member-nav"><button type="button" className="button ghost" onClick={() => setMemberChatId(null)}>{t('TaskChat.backToLeader')}</button><span>{memberConversation?.title ?? t('TaskChat.loadingMemberConversation')}</span></div>}
       <div className="terminal-body">
         {memberChatId ? (
@@ -189,6 +195,7 @@ export function TaskChat({ taskId }: { taskId: string }) {
         ) : (
           <p className="terminal-view-empty muted">{t('TaskChat.loadingChatHistory')}</p>
         )}
+        {workflowTree && !showInspector && <WorkflowProcess compact tasks={lanes} autoFocusTaskId={task.id} />}
         {showInspector && (
           <TaskInspector
             task={task}

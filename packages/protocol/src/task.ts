@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { TaskWorkflow } from './workflow'
 import { AgentKind } from './agent'
 import { TaskImage } from './attachments'
 import { TaskLaunchOptions, type ChatTurnActivity } from './chat'
@@ -96,6 +97,7 @@ export type RepoStartOptions = z.infer<typeof RepoStartOptions>
 
 export const Task = z.object({
   id: z.string(),
+  workflow: TaskWorkflow.nullable().optional(),
   title: z.string(),
   // English words for a branch name, for a title git cannot name one after; null until the agent's
   // small model gives them, or when the title serves. Older cores leave it out.
@@ -134,10 +136,11 @@ export const Task = z.object({
 })
 export type Task = z.infer<typeof Task>
 
-export type ProjectEditBlocker = 'task-running' | 'task-abandoned' | 'run-in-progress'
+export type ProjectEditBlocker = 'task-running' | 'task-abandoned' | 'run-in-progress' | 'workflow-projects-fixed'
 
-export function checkEditProjects(task: Pick<Task, 'status'>, launching = false): ProjectEditBlocker | null {
+export function checkEditProjects(task: Pick<Task, 'status' | 'workflow'>, launching = false): ProjectEditBlocker | null {
   if (launching) return 'run-in-progress'
+  if (task.workflow) return 'workflow-projects-fixed'
   if (task.status === 'running') return 'task-running'
   return task.status === 'abandoned' ? 'task-abandoned' : null
 }
@@ -146,7 +149,7 @@ export type StartEditBlocker = ProjectEditBlocker | 'branch-exists'
 
 // A start only matters until the branch exists: a worktree laid out again keeps its branch.
 export function checkEditStart(
-  task: Pick<Task, 'status'>,
+  task: Pick<Task, 'status' | 'workflow'>,
   repo: Pick<TaskRepo, 'branch'>,
   launching = false
 ): StartEditBlocker | null {
@@ -158,7 +161,7 @@ export type ReferenceEditBlocker = ProjectEditBlocker | 'primary-reference' | 'w
 // Whether an additional project is only read. A project the agent has a worktree in stays one it
 // edits, so that worktree's work is not left behind; a reference may become one to edit any time.
 export function checkEditReference(
-  task: Pick<Task, 'status' | 'repos'>,
+  task: Pick<Task, 'status' | 'repos' | 'workflow'>,
   repo: Pick<TaskRepo, 'path' | 'branch' | 'worktreePath' | 'reference'>,
   launching = false
 ): ReferenceEditBlocker | null {

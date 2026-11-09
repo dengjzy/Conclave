@@ -9,6 +9,8 @@ import { SourceLink } from './SourceLink'
 import { SourceSnapshotCard } from './SourceSnapshotCard'
 import { BoardCrumb } from './TaskBoard'
 import { TaskAlerts } from './TaskAlerts'
+import { WorkflowContext } from './WorkflowBoard'
+import { TaskWorktreeCard } from './TaskWorktreeCard'
 import { TaskPlanCard } from './TaskPlanCard'
 import { TaskImages, useImageAdder } from './TaskImages'
 import { reopenTask, TaskStatusMenu, TaskSteps, TaskToolbar } from './TaskActions'
@@ -104,6 +106,7 @@ function TaskDetailBody({ task }: { task: Task }) {
         <SaveIndicator taskId={task.id} />
         <TaskToolbar task={task} view="detail" />
       </header>
+      <WorkflowContext task={task} showProcess={true} />
 
       <div className="task-detail-layout">
         <div className="task-detail-heading">
@@ -155,6 +158,7 @@ function TaskDetailBody({ task }: { task: Task }) {
         </aside>
 
         <div className="task-detail-main">
+          <TaskWorktreeCard task={task} />
           <SourceSnapshotCard task={task} />
           <TaskPlanCard task={task} />
 
