@@ -1,4 +1,3 @@
-import { AgentsView } from './components/AgentProfiles'
 import { t, useLocale } from './i18n'
 import { useEffect, useState } from 'react'
 import { closeMobileDetail, conversationDraftVisible, focusSplitPane, selectTask, setFileQuickOpen, setNewTaskOpen, setSettingsOpen, toggleBrowserPanel, toggleFilesPanel, toggleSplit, toggleTerminalPanel, useCore, useSplitPanes } from './core-store'
@@ -12,7 +11,6 @@ import { ProjectTrustDialog } from './components/ProjectTrustDialog'
 import { ConfirmDialog } from './components/ConfirmDialog'
 import { TaskDetail } from './components/TaskDetail'
 import { TaskBoard } from './components/TaskBoard'
-import { SquadsEntry } from './components/Squads'
 import { SidebarTasks } from './components/SidebarTasks'
 import { TaskChat } from './components/TaskChat'
 import { ConversationList } from './components/ConversationList'
@@ -284,7 +282,6 @@ export function App() {
               <OverviewEntry />
               <InboxEntry />
               <RoutinesEntry />
-              <SquadsEntry />
               <EnvironmentNotice />
               <SidebarTasks />
               <ConversationList />
@@ -297,8 +294,6 @@ export function App() {
               <WorktreeManager />
             ) : routinesOpen ? (
               <RoutinesView />
-            ) : section === 'squads' ? (
-              <AgentsView />
             ) : showingDraft ? (
               <ConversationDrafts />
             ) : section === 'discussions' ? (

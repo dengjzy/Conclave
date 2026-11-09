@@ -1,8 +1,4 @@
 export const MANAGEMENT_TOOLS = {
-  profileList: 'conclave_agent_profile_list',
-  profileCreate: 'conclave_agent_profile_create',
-  squadList: 'conclave_squad_list',
-  squadCreate: 'conclave_squad_create',
   scheduleList: 'conclave_schedule_list',
   scheduleCreate: 'conclave_schedule_create',
   routineList: 'conclave_routine_list',
@@ -16,7 +12,6 @@ export const MANAGEMENT_TOOLS = {
 } as const
 
 export const MANAGEMENT_READ_TOOLS: readonly string[] = [
-  MANAGEMENT_TOOLS.profileList, MANAGEMENT_TOOLS.squadList,
   MANAGEMENT_TOOLS.scheduleList, MANAGEMENT_TOOLS.routineList,
   MANAGEMENT_TOOLS.skillList, MANAGEMENT_TOOLS.skillSearch, MANAGEMENT_TOOLS.commandList
 ]

@@ -1,5 +1,3 @@
-import { AgentProfileStore } from './agent-profile-store'
-import { AgentProfileService } from './agent-profile-service'
 import { AgentCliMaintenance } from './agent-cli-maintenance'
 import { randomBytes } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
@@ -23,8 +21,6 @@ import { PluginService } from './plugin-service'
 import { ProjectStar } from './project-star'
 import { createRpcHandlers } from './rpc-handlers'
 import { SessionImports } from './session-imports'
-import { SquadService } from './squad-service'
-import { SquadStore } from './squad-store'
 import { TodoStore } from './todo-store'
 import { DiscussionService } from './discussion-service'
 import { startRpcServer, type RpcServer } from './rpc-server'
@@ -124,8 +120,6 @@ const conversations = new ConversationService(
       schedules.conversationChanged(event.conversation)
       routines.conversationChanged(event.conversation)
       discussions.conversationChanged(event.conversation)
-      squads.conversationChanged(event.conversation)
-      profiles.tick()
       refreshAwake()
     } else if (event.type === 'deleted') {
       server?.broadcast('conversations.deleted', { id: event.id })
@@ -153,8 +147,6 @@ const conversations = new ConversationService(
       }
       routines.observe(event.conversationId, event.items)
       discussions.observe(event.conversationId, event.items)
-      squads.observe(event.conversationId, event.items)
-      if (event.items.some((item) => item.kind === 'turn')) profiles.tick()
       notifyChatItems(event.conversationId, limits.decorate(smallModels.decorate(event.items)))
     } else if (event.type === 'planApproved') {
       service.recordPlan(event.taskId, event.plan)
@@ -339,24 +331,7 @@ const discussions = new DiscussionService(paths.database, {
   }
 })
 
-const squads = new SquadService(new SquadStore(paths.database), service, conversations, {
-  squad: (squad) => server?.broadcast('squads.changed', { squad }),
-  run: (run) => server?.broadcast('squads.runChanged', { run })
-}, (id) => terminals.stopForConversation(id))
-const profiles = new AgentProfileService(new AgentProfileStore(paths.database), conversations, {
-  profile: (profile) => server?.broadcast('agentProfiles.changed', { profile }),
-  call: (call) => {
-    server?.broadcast('agentCalls.changed', { call })
-    conversations.refreshDelegation(call.parentId)
-  }
-}, (id) => terminals.stopForConversation(id), (conversation) => !conversation.taskId || !service.get(conversation.taskId).squadId)
-service.setSquads(squads)
-conversations.setSquadGuard((conversation) => { squads.guardMember(conversation); profiles.guard(conversation) })
-squads.setProfiles((id) => profiles.get(id))
-conversations.setCallCleanup((id) => profiles.cancelForParent(id))
-service.setDelegationBusy((id) => profiles.busy(id))
-conversations.setDelegationStatus((id) => profiles.summary(id))
-conversations.setDelegationAvailable((id) => profiles.available(id).length > 0)
+
 
 const terminals = new TerminalService(paths.database, daemon, (list) => server?.broadcast('terminals.changed', { terminals: list }), Date.now, new ShellPrompt(path.join(paths.home, 'shell')))
 conversations.setNativeDeletion({
@@ -411,7 +386,7 @@ const chatSettings = new ChatSettingsStore(paths.chatSettings, (settings) => {
   conversations.setUserBrowser(settings.userBrowser ?? true)
   conversations.setUserTodos(settings.userTodos ?? true)
   conversations.setKnowledgeBase(settings.knowledgeBase ?? null)
-  conversations.setCapacity(settings, () => { void schedules.tick(); squads.tick(); profiles.tick() })
+  conversations.setCapacity(settings, () => { void schedules.tick() })
   wire.setEnabled(settings.wireLog ?? false)
   void autoArchive.sweep()
   announcements.settingsChanged()
@@ -456,7 +431,7 @@ conversations.setTitleNaming(initialChatSettings.titleNaming)
 conversations.setUserBrowser(initialChatSettings.userBrowser)
 conversations.setUserTodos(initialChatSettings.userTodos)
 conversations.setKnowledgeBase(initialChatSettings.knowledgeBase)
-conversations.setCapacity(initialChatSettings, () => { void schedules.tick(); squads.tick(); profiles.tick() })
+conversations.setCapacity(initialChatSettings, () => { void schedules.tick() })
 wire.setEnabled(initialChatSettings.wireLog)
 
 daemon.onEvent((event) => {
@@ -492,8 +467,6 @@ daemon.onConnect(() => {
       await smallModels.recoverHelpers({ stages: () => conversations.chatStageRefs(), items: (id, stageId) => conversations.stageChatItems(id, stageId) })
       terminals.reconcile(sessions)
       await discussions.reconcile()
-      await squads.reconcile()
-      await profiles.reconcile()
       void environment.check(true).catch((error: unknown) => console.error('[conclave-core] agent discovery failed', error))
       // What came due while core or the daemon was away goes now, not at the next tick.
       await schedules.tick()
@@ -545,7 +518,7 @@ server = await startRpcServer({
   handlers: createRpcHandlers(service, conversations, projects, gitFavorites, daemon, usage, sources, {
     store: attachments,
     uploads: new AttachmentUploads(attachments)
-  }, terminals, worktrees, browser, awake, terminalCommands, limits, runs, turns, chatSettings, environment, schedules, chatCommands, routines, discussions, wire, () => server?.broadcast('git.changed', {}), squads, todos, plugins, skills, mcpServers, smallModels, projectConfigs, modelProviders, sessionImports, accounts, cliMaintenance, analytics, automation, new ProjectStar(sources), profiles, bookmarks)
+  }, terminals, worktrees, browser, awake, terminalCommands, limits, runs, turns, chatSettings, environment, schedules, chatCommands, routines, discussions, wire, () => server?.broadcast('git.changed', {}), undefined, todos, plugins, skills, mcpServers, smallModels, projectConfigs, modelProviders, sessionImports, accounts, cliMaintenance, analytics, automation, new ProjectStar(sources), undefined, bookmarks)
 })
 await writeCoreEndpoint({ port: server.port, token, pid: process.pid, protocolVersion: PROTOCOL_VERSION, version: packageJson.version })
 daemon.start()
@@ -592,8 +565,6 @@ async function shutdown(): Promise<void> {
   await analytics.close()
   routines.stop()
   autoArchive.stop()
-  await profiles.close()
-  await squads.close()
   discussions.close()
   sources.stop()
   await plugins.close()

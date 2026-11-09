@@ -151,20 +151,12 @@ describe('Conclave management MCP', () => {
       expect(entry.spec.annotations.readOnlyHint).toBe(readOnly)
       expect(entry.spec.annotations.idempotentHint).toBe(readOnly || entry.spec.name === MANAGEMENT_TOOLS.skillSetActivation)
     }
-    const called = await handler(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: MANAGEMENT_TOOLS.profileCreate, arguments: { name: 'Reviewer', agent: 'claude' } } }))
+    const called = await handler(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: MANAGEMENT_TOOLS.commandCreate, arguments: command } }))
     expect(called?.result).toMatchObject({ isError: false })
-    expect(profiles.list()).toMatchObject([{ name: 'Reviewer', capability: 'readOnly', model: null }])
+    expect(commands.list()).toMatchObject([command])
   })
 
-  it('creates and lists profiles, teams and commands without allowing overwrite', async () => {
-    expect((await use(MANAGEMENT_TOOLS.profileCreate, { name: 'Reviewer', agent: 'claude' })).isError).toBe(false)
-    const profile = profiles.list()[0]!
-    expect((await use(MANAGEMENT_TOOLS.profileCreate, { name: 'Changed', agent: 'claude', id: profile.id })).isError).toBe(true)
-    expect(output(await use(MANAGEMENT_TOOLS.profileCreate, { name: 'reviewer', agent: 'codex' }))).toContain('已有同名智能体')
-    expect(profiles.list()).toHaveLength(1)
-    expect(output(await use(MANAGEMENT_TOOLS.profileList))).toContain(profile.id)
-    expect((await use(MANAGEMENT_TOOLS.squadCreate, team)).isError).toBe(false)
-    expect(output(await use(MANAGEMENT_TOOLS.squadList))).toContain(squads.list()[0]!.id)
+  it('creates and lists commands without allowing overwrite', async () => {
     expect((await use(MANAGEMENT_TOOLS.commandCreate, command)).isError).toBe(false)
     const saved = commands.list()[0]!
     expect(output(await use(MANAGEMENT_TOOLS.commandList))).toContain(saved.id)
@@ -225,9 +217,6 @@ describe('Conclave management MCP', () => {
   })
 
   it.each([
-    [MANAGEMENT_TOOLS.profileCreate, { name: '', agent: 'claude' }],
-    [MANAGEMENT_TOOLS.squadCreate, { ...team, leaderId: id(2) }],
-    [MANAGEMENT_TOOLS.squadCreate, { ...team, members: [team.members[0], team.members[0]] }],
     [MANAGEMENT_TOOLS.scheduleCreate, { target: { kind: 'resume', conversationId: id(3) }, notBefore: null }],
     [MANAGEMENT_TOOLS.routineCreate, { ...routine, schedule: { kind: 'daily', time: '25:00' } }],
     [MANAGEMENT_TOOLS.skillSearch, { query: ' ' }],
@@ -249,19 +238,19 @@ describe('Conclave management MCP', () => {
     patch = restriction
     const readOnly = await managementToolsOverCore(withCore, conversationId)
     expect(readOnly.map((entry) => entry.spec.name)).toEqual(MANAGEMENT_READ_TOOLS)
-    expect((await use(MANAGEMENT_TOOLS.profileCreate, { name: 'Forbidden', agent: 'claude' })).isError).toBe(true)
-    expect(profiles.list()).toEqual([])
-    expect((await use(MANAGEMENT_TOOLS.profileList)).isError).toBe(false)
-    expect(calls.some((call) => call.method === 'agentProfiles.save')).toBe(false)
+    expect((await use(MANAGEMENT_TOOLS.commandCreate, command)).isError).toBe(true)
+    expect(commands.list()).toEqual([])
+    expect((await use(MANAGEMENT_TOOLS.commandList)).isError).toBe(false)
+    expect(calls.some((call) => call.method === 'chatCommands.save')).toBe(false)
   })
 
   it('keeps a planning launch query-only and rejects guessed write calls at the MCP boundary', async () => {
     const planning = await managementToolsOverCore(withCore, conversationId, true)
     expect(planning.map((entry) => entry.spec.name)).toEqual(MANAGEMENT_READ_TOOLS)
     const handler = createMcpHandler({ preview: async () => {}, management: tools, planOnly: true })
-    const result = await handler(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: MANAGEMENT_TOOLS.profileCreate, arguments: { name: 'Forbidden', agent: 'claude' } } }))
+    const result = await handler(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: MANAGEMENT_TOOLS.commandCreate, arguments: command } }))
     expect(result?.error?.code).toBe(-32602)
-    expect(profiles.list()).toEqual([])
+    expect(commands.list()).toEqual([])
   })
 
   it.each<Partial<Conversation>>([
@@ -270,21 +259,9 @@ describe('Conclave management MCP', () => {
   ])('excludes managed or archived conversations %j at startup and at call time', async (restriction) => {
     patch = restriction
     expect(await managementToolsOverCore(withCore, conversationId)).toEqual([])
-    expect((await use(MANAGEMENT_TOOLS.profileList)).isError).toBe(true)
+    expect((await use(MANAGEMENT_TOOLS.commandList)).isError).toBe(true)
     expect((await use(MANAGEMENT_TOOLS.commandCreate, command)).isError).toBe(true)
     expect(commands.list()).toEqual([])
-  })
-
-  it('excludes task leaders both during team planning and after a team run exists', async () => {
-    patch = { taskId: task.id, planOnly: true }
-    task = { ...task, squadId: id(7) }
-    expect(await managementToolsOverCore(withCore, conversationId)).toEqual([])
-    expect((await use(MANAGEMENT_TOOLS.profileList)).isError).toBe(true)
-    task = { ...task, squadId: null }
-    squadRun = SquadRun.parse({ id: id(5), taskId: task.id, leaderConversationId: conversationId, state: 'running', permissionMode: 'ask', allowBypass: false, summary: null, works: [], createdAt: 0, updatedAt: 0,
-      squad: { ...team, id: id(7), archivedAt: null, createdAt: 0, updatedAt: 0 } })
-    expect(await managementToolsOverCore(withCore, conversationId)).toEqual([])
-    expect((await use(MANAGEMENT_TOOLS.profileList)).isError).toBe(true)
   })
 
   it('omits unsupported features and refuses old tools after reconnecting to an older core', async () => {
@@ -293,8 +270,8 @@ describe('Conclave management MCP', () => {
     expect(supported.map((entry) => entry.spec.name)).toEqual([
       MANAGEMENT_TOOLS.skillList, MANAGEMENT_TOOLS.skillInstall, MANAGEMENT_TOOLS.commandList, MANAGEMENT_TOOLS.commandCreate
     ])
-    expect((await use(MANAGEMENT_TOOLS.profileCreate, { name: 'Forbidden', agent: 'claude' })).isError).toBe(true)
-    expect(calls.some((call) => call.method === 'agentProfiles.save')).toBe(false)
+    expect((await use(MANAGEMENT_TOOLS.scheduleCreate, { target: { kind: 'conversation', conversationId, text: 'Hi' }, notBefore: null })).isError).toBe(true)
+    expect(calls.some((call) => call.method === 'schedules.create')).toBe(false)
     rpc = { ...rpc, features: [] }
     expect(await managementToolsOverCore(withCore, conversationId)).toEqual([])
   })

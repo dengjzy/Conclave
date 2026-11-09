@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import {
-  AgentProfileFields, ChatCommandFields, MANAGEMENT_READ_TOOLS, MANAGEMENT_TOOLS, rpcMethods,
+  ChatCommandFields, MANAGEMENT_READ_TOOLS, MANAGEMENT_TOOLS, rpcMethods,
   type Conversation, type RpcConnection, type RpcMethod, type RpcParams
 } from '@conclave/protocol'
 
@@ -44,18 +44,6 @@ function tool<M extends RpcMethod>(name: string, feature: string, description: s
 }
 
 const tools = [
-  tool(MANAGEMENT_TOOLS.profileList, 'agent-profiles',
-    '列出全部已保存的智能体配置，包含 ID、归档状态、角色指令、外部智能体、模型、技能和 MCP 选择。创建团队或检查重名时用；可委派的智能体仍用 conclave_agent_list 查询。只读。',
-    'agentProfiles.list', rpcMethods['agentProfiles.list'].params),
-  tool(MANAGEMENT_TOOLS.profileCreate, 'agent-profiles',
-    '创建「我的智能体」配置，不会启动会话或修改已有配置。name 和 agent 必填，其余沿用现有默认值；capability 默认只读，开发角色需显式设为 develop。创建前先查已有配置；成功返回配置和 ID。',
-    'agentProfiles.save', AgentProfileFields.strict()),
-  tool(MANAGEMENT_TOOLS.squadList, 'squads',
-    '列出已保存的团队配置，包含 ID、归档状态、队长、成员和职责；不包含团队运行记录。只读。',
-    'squads.list', rpcMethods['squads.list'].params),
-  tool(MANAGEMENT_TOOLS.squadCreate, 'squads',
-    '创建团队配置，不会启动任务。提供 2–5 名成员，成员 id 为各自唯一 UUID，leaderId 指向其中一名只读队长，至少一名成员 capability 为 develop。可用 profileId 引用已保存的智能体；先查询配置获取 ID。成功返回团队和 ID。',
-    'squads.create', rpcMethods['squads.create'].params.strict()),
   tool(MANAGEMENT_TOOLS.scheduleList, 'schedules',
     '列出一次性预约及近期执行记录，包含 ID、目标、状态、计划时间和错误。只读。',
     'schedules.list', rpcMethods['schedules.list'].params),

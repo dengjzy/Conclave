@@ -10,7 +10,6 @@ import { toolLabel } from '../chat-tools'
 import { useChatSurface } from './chat-surface'
 import { ArchivedBar } from './ArchivedBar'
 import { ChatComposer } from './ChatComposer'
-import { AgentDelegation } from './AgentDelegation'
 import { archiveConversation, retryConversationDeletion } from './ConversationActions'
 import { ChatMessageList, type SentMessage } from './ChatMessageList'
 import { ChatPlanCard } from './ChatPlan'
@@ -169,7 +168,6 @@ export function ChatDock({ conversation, state, pending, tools, finishedCalls, o
         {running && state && <ChatTodosChip todos={state.todos} />}
         {inspectable && <ChangesChip conversation={conversation} finishedCalls={finishedCalls} />}
           <span className="chat-dock-spacer" />
-          <AgentDelegation key={conversation.id} conversation={conversation} />
         <ChatMessageList messages={sent} onJump={onJump} />
         <button type="button" className="tool-button" aria-label={t('ChatDock.previousMessage')} data-tooltip={t('ChatDock.previousMessage')} onClick={onPrevious}>
           <ArrowUpIcon />
