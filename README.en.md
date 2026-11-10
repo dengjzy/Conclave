@@ -4,13 +4,13 @@
 
 **Lightweight, Pure-Web Multi-Agent Collaborative Workbench**
 
-Claude Code · Codex · Antigravity · Pi · OpenCode · Cursor · DeepSeek Harness · ZCode · Kimi · Gemini
+Claude Code · Codex · Antigravity · Pi · OpenCode · Cursor · DeepSeek Harness · ZCode · Kimi · Gemini · Grok
 
 Quota Telemetry · Concurrent Fan-out · Multi-turn Debates · Agent Squads · Automations & Scheduled Runs · Isolated Worktrees
 
 ![Version](https://img.shields.io/badge/version-0.0.1--web-blue)
 ![Platform](https://img.shields.io/badge/platform-Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-green)
-![Agents](https://img.shields.io/badge/agents-10%20supported-8A2BE2)
+![Agents](https://img.shields.io/badge/agents-11%20supported-8A2BE2)
 ![Architecture](https://img.shields.io/badge/architecture-Node%20Daemon%20%2B%20Core%20%2B%20Web-orange)
 
 [Quick Start](#quick-start) · [Core Capabilities](#core-capabilities) · [Architecture](#architecture) · [Supported Agents](#supported-agents) · [Shortcuts](#shortcuts)
@@ -79,7 +79,7 @@ Conclave adopts a modern decoupled multi-process architecture:
 └───────────────────────────┬────────────────────────────┘
                             │ CLI / ACP / stdio
                             ▼
-  [Claude Code] [Codex] [Antigravity] [Pi] [OpenCode] [Cursor] ...
+  [Claude Code] [Codex] [Antigravity] [Pi] [OpenCode] [Cursor] [Grok] ...
 ```
 
 * **`packages/protocol`**: Shared protocol definitions, Zod schemas, and TypeScript interfaces (Tasks, Conversations, JSON-RPC, Quota pacing).
@@ -105,6 +105,7 @@ Conclave deeply adapts to popular local coding agent CLIs:
 | **ZCode** | `zcode app-server` | Ask Before Edit · Autonomous · Plan | ✓ | ✓ |
 | **Kimi Code** | `kimi acp` | Default · Plan · Auto | ✓ | ✓ |
 | **Gemini CLI** | `gemini --acp` | Default · Auto Edit · Plan | ✓ | ✓ |
+| **Grok** | `grok agent stdio` | Default · Plan · Auto · YOLO (Bypass) | ✓ | ✓ |
 
 ---
 
