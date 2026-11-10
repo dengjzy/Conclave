@@ -117,6 +117,12 @@ export function createSessionHost(emit: (event: DaemonEvent) => void, awake: Awa
           if (session.timer) clearTimeout(session.timer)
           session.exitCode = exitCode
           emit({ event: 'exit', sessionId, exitCode })
+          const retentionTimer = setTimeout(() => {
+            if (sessions.get(sessionId)?.exitCode !== null) {
+              sessions.delete(sessionId)
+            }
+          }, 5 * 60_000)
+          retentionTimer.unref()
         }
       })
     } catch (error) {
