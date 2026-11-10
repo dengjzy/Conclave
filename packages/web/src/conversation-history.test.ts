@@ -13,9 +13,11 @@ describe('combined conversation history', () => {
     const member = { ...single(2), discussionId: id(3) }
     const task = { ...single(4), taskId: id(8) }
     const child = { ...single(6), parentConversationId: normal.id }
+    const deleting = { ...single(7), deletion: { state: 'running' as const } }
+    const failedDeletion = { ...single(8), deletion: { state: 'failed' as const, error: 'err' } }
     const discussion = group(3)
-    const entries = conversationHistory(Object.fromEntries([normal, recent, member, task, child].map((value) => [value.id, value])), { [discussion.id]: discussion })
-    expect(sortHistory(entries, 'recent').map(historyKey)).toEqual([`single:${recent.id}`, `group:${discussion.id}`, `single:${normal.id}`])
+    const entries = conversationHistory(Object.fromEntries([normal, recent, member, task, child, deleting, failedDeletion].map((value) => [value.id, value])), { [discussion.id]: discussion })
+    expect(sortHistory(entries, 'recent').map(historyKey)).toEqual([`single:${failedDeletion.id}`, `single:${recent.id}`, `group:${discussion.id}`, `single:${normal.id}`])
     expect(conversationHistory({ [normal.id]: normal }, { [discussion.id]: discussion }, 'single').map(historyKey)).toEqual([`single:${normal.id}`])
     expect(conversationHistory({ [normal.id]: normal }, { [discussion.id]: discussion }, 'group').map(historyKey)).toEqual([`group:${discussion.id}`])
   })

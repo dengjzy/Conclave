@@ -17,7 +17,7 @@ export const historyKey = (entry: ConversationHistoryEntry): string => `${entry.
 // A group's member conversations remain inside its history entry, not duplicated in the list.
 export function conversationHistory(conversations: Record<string, Conversation>, discussions: Record<string, Discussion>, filter: ConversationHistoryFilter = 'all'): ConversationHistoryEntry[] {
   const singles: ConversationHistoryEntry[] = filter === 'group' ? [] : Object.values(conversations)
-    .filter((conversation) => !isHelper(conversation) && !conversation.taskId && !conversation.routineId && !conversation.discussionId && !conversation.squadRunId && !conversation.parentConversationId)
+    .filter((conversation) => !isHelper(conversation) && !conversation.taskId && !conversation.routineId && !conversation.discussionId && !conversation.squadRunId && !conversation.parentConversationId && conversation.deletion?.state !== 'running')
     .map((value) => ({ kind: 'single', value }))
   return filter === 'single' ? singles : [...singles, ...Object.values(discussions).map((value): ConversationHistoryEntry => ({ kind: 'group', value }))]
 }

@@ -1417,10 +1417,17 @@ export function startCoreConnection(): void {
         })
         rpc.on('conversations.changed', ({ conversation }) => {
           if (!initialized) conversationChanges.set(conversation.id, conversation)
-          useCore.setState((s) => ({
-            conversations: { ...s.conversations, [conversation.id]: conversation },
-            ...(finishedUnseen(s, s.conversations[conversation.id], conversation) ? { unseen: { ...s.unseen, [conversation.id]: true } } : {})
-          }))
+          useCore.setState((s) => {
+            const isDeleting = conversation.deletion?.state === 'running'
+            const panes = savedPanes()
+            const other = panes?.includes(conversation.id) ? closePane(panes, conversation.id) : null
+            if (isDeleting && panes?.includes(conversation.id)) usePreferences.setState({ splitPanes: [], splitLast: [] })
+            return {
+              conversations: { ...s.conversations, [conversation.id]: conversation },
+              selectedConversationId: isDeleting && s.selectedConversationId === conversation.id ? other : s.selectedConversationId,
+              ...(finishedUnseen(s, s.conversations[conversation.id], conversation) ? { unseen: { ...s.unseen, [conversation.id]: true } } : {})
+            }
+          })
         })
         rpc.on('conversations.deleted', ({ id }) => {
           forgetFileTabs(fileScopeKey({ conversationId: id, roots: [] }))

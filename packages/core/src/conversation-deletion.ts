@@ -142,16 +142,17 @@ export class ConversationDeletion {
       throw new Rejection('conversation-cleanup-failed', `会话清理未完成：${job.error}`)
     }
   }
-  private async targets(ids: readonly string[]): Promise<Array<NativeSessionTarget & { agent: z.infer<typeof AgentKind>; account: string | null }>> {
+  private async targets(ids: readonly string[], filterAgents?: ReadonlySet<z.infer<typeof AgentKind>>): Promise<Array<NativeSessionTarget & { agent: z.infer<typeof AgentKind>; account: string | null }>> {
     const owned = await Promise.all(ids.map((id) => readOwnedNativeSessions(this.sessionsRoot, id)))
     const children = ids.flatMap((id) => {
       const conversation = this.store.get(id)
       if (!conversation) return []
-      return this.store.stages(id).filter((stage) => stage.sessionId !== null).flatMap((stage) => readStageOwnedSessions(this.sessionsRoot, id, stage.id, stage.agent,
+      return this.store.stages(id).filter((stage) => stage.sessionId !== null && (!filterAgents || filterAgents.has(stage.agent))).flatMap((stage) => readStageOwnedSessions(this.sessionsRoot, id, stage.id, stage.agent,
         conversation.workspacePath, this.native?.home(stage.agent, stage.account ?? null)))
     })
-    return [...this.store.nativeTargets(ids), ...owned.flat().map((session) => ({ ...session, account: null })),
-      ...children.map((session) => ({ ...session, account: null }))]
+    const nativeTargets = this.store.nativeTargets(ids).filter((target) => !filterAgents || filterAgents.has(target.agent))
+    const ownedTargets = owned.flat().filter((session) => !filterAgents || filterAgents.has(session.agent)).map((session) => ({ ...session, account: null }))
+    return [...nativeTargets, ...ownedTargets, ...children.map((session) => ({ ...session, account: null }))]
   }
   private async collect(job: ConversationDeletionJob): Promise<void> {
     const native = this.native
@@ -185,6 +186,8 @@ export class ConversationDeletion {
   private async removeNative(job: ConversationDeletionJob): Promise<void> {
     const native = this.native
     if (!native) return
+    const relevantAgents = new Set(job.entries.map((entry) => entry.agent))
+    if (!relevantAgents.size) return
     const protectedKeys = new Set<string>()
     const visitProtected = async (agent: z.infer<typeof AgentKind>, session: NativeSession): Promise<void> => {
       const key = nativeSessionKey(agent, session)
@@ -196,8 +199,8 @@ export class ConversationDeletion {
     }
     const deleting = new Set(job.conversationIds)
     const retained = this.store.list().filter((conversation) => !deleting.has(conversation.id)).map((conversation) => conversation.id)
-    for (const entry of this.store.nativeSessions(retained)) await visitProtected(entry.agent, entry.session)
-    for (const target of await this.targets(retained)) {
+    for (const entry of this.store.nativeSessions(retained).filter((entry) => relevantAgents.has(entry.agent))) await visitProtected(entry.agent, entry.session)
+    for (const target of await this.targets(retained, relevantAgents)) {
       const adapter = native.adapter(target.agent)
       if (!adapter) continue
       const session = await adapter.resolve({ ...target, home: target.home ?? native.home(target.agent, target.account) })
