@@ -26,7 +26,11 @@
     "typecheck": "pnpm --filter @conclave/plugin-sdk build && pnpm -r run typecheck",
     "test": "pnpm --filter @conclave/plugin-sdk build && vitest run",
     "verify:plugin-sdk": "node scripts/verify-plugin-sdk.mjs",
-    "test:dsh-runtime": "node --import tsx scripts/smoke-dsh-runtime.mjs"
+    "test:dsh-runtime": "node --import tsx scripts/smoke-dsh-runtime.mjs",
+    "self:smoke": "node --import tsx scripts/self-smoke.mjs",
+    "self:tests": "node scripts/self-test-policy.mjs",
+    "self:friction": "node scripts/self-friction.mjs",
+    "self:evolve": "node scripts/self-evolve.mjs"
   },
   "devDependencies": {
     "@types/node": "catalog:",
