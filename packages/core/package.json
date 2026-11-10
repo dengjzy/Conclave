@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node ../../scripts/build-plugins.mjs && tsx watch src/main.ts",
+    "dev": "node ../../scripts/build-plugins.mjs && tsx watch --exclude 'node_modules/**' --exclude '../../node_modules/**' src/main.ts",
     "start": "node ../../scripts/build-plugins.mjs && tsx src/main.ts",
     "typecheck": "tsc -p ."
   },

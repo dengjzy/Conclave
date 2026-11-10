@@ -5,6 +5,7 @@ import { t, tr } from '../i18n'
 import { HelperPanel } from './HelperPanel'
 import { useHelper, useHelperSupported } from '../helper-conversations'
 import { SquadWorkPanel } from './SquadWorkPanel'
+import { FlowPanel } from './FlowPanel'
 import { GitInspector } from './GitInspector'
 import { useEffect, useState } from 'react'
 import { openTodoCount, type RepoChanges, type Task, type SquadRun } from '@conclave/protocol'
@@ -12,34 +13,13 @@ import { pathShortener, type PlanItem } from '../chat-state'
 import { clearInspectorFile, setInspectorOpen, setTaskInspectorTab, showInspectorFile, showTaskPlan, useCore } from '../core-store'
 import { ProjectGroups, ProjectRow, useProjectHeads } from './BranchStatus'
 import { ChatPlanView } from './ChatPlan'
-import { ChangedFiles, CommitList, FileDiffView, GIT_TABS, InspectorPanel, useFocusCount, type InspectorTab } from './Inspector'
+import { ChangedFiles, CommitList, FileDiffView, GIT_TABS, InspectorPanel, type InspectorTab } from './Inspector'
 import { TodoPanel } from './TodoPanel'
 import { useConversationTodos, useTodosShown } from '../conversation-todos'
 import { projectName } from './ProjectPicker'
 import { WireLogView } from './WireLogView'
 import { DiffCommentConversation } from './DiffComments'
-
-// Read again whenever the task changes (every agent turn and exit), the window regains focus,
-// or the user refreshes. An older core without the method has nothing to show.
-function useTaskChanges(taskId: string, updatedAt: number, refreshCount: number): RepoChanges[] | null {
-  const gitRevision = useCore((state) => state.gitRevision)
-  const rpc = useCore((state) => state.rpc)
-  const focusCount = useFocusCount()
-  const [changes, setChanges] = useState<{ taskId: string; changes: RepoChanges[] } | null>(null)
-  useEffect(() => {
-    if (!rpc) return
-    let current = true
-    void rpc.call('tasks.changes', { id: taskId })
-      .catch(() => [])
-      .then((found) => {
-        if (current) setChanges({ taskId, changes: found })
-      })
-    return () => {
-      current = false
-    }
-  }, [rpc, taskId, updatedAt, focusCount, refreshCount, gitRevision])
-  return changes?.taskId === taskId ? changes.changes : null
-}
+import { useTaskChanges } from '../task-changes'
 
 function ChangeList({ changes, onOpen }: { changes: RepoChanges[] | null; onOpen: (repo: string, file: string) => void }) {
   if (changes === null) return <p className="inspector-empty muted">{t('ConversationInspector.loadingChanges')}</p>
@@ -88,10 +68,11 @@ export function TaskInspector({ task, widthRatio, onWidthRatioChange, plans = []
   const rpc = useCore((state) => state.rpc)
   const wanted = useCore((state) => state.taskInspectorTab)
   const selectedPlan = useCore((state) => state.taskInspectorPlan)
+  const flowsSupported = useCore((state) => state.rpc?.features.includes('flows') ?? false)
   const worktree = task.repos.some((repo) => repo.worktreePath !== null)
   const todosShown = useTodosShown() && task.conversationId !== null
   const todos = useConversationTodos(todosShown ? task.conversationId : null)
-  const tabs: InspectorTab[] = [...(helper ? ['helper' as const] : []), ...(calls?.length ? ['delegation' as const] : []),...(squadRuns.length ? ['squad' as const] : []),...(worktree ? GIT_TABS : []), ...(plans.length > 0 ? ['plan' as const] : []), ...(todosShown ? ['todos' as const] : []), ...(wire && task.conversationId ? ['wire' as const] : []), ...(task.conversationId ? ['pull-request' as const] : [])]
+  const tabs: InspectorTab[] = [...(helper ? ['helper' as const] : []), ...(calls?.length ? ['delegation' as const] : []),...(squadRuns.length ? ['squad' as const] : []), ...(flowsSupported ? ['flow' as const] : []), ...(worktree ? GIT_TABS : []), ...(plans.length > 0 ? ['plan' as const] : []), ...(todosShown ? ['todos' as const] : []), ...(wire && task.conversationId ? ['wire' as const] : []), ...(task.conversationId ? ['pull-request' as const] : [])]
   const tab = tabs.includes(wanted) ? wanted : (tabs[0] ?? 'changes')
   const [refreshCount, setRefreshCount] = useState(0)
   const [gitMaximized, setGitMaximized] = useState(false)
@@ -126,6 +107,8 @@ export function TaskInspector({ task, widthRatio, onWidthRatioChange, plans = []
           <AgentCalls key={parent.id} conversation={parent} />
         ) : tab === 'squad' ? (
           <SquadWorkPanel runs={squadRuns} onConversation={(id) => onMemberConversation?.(id)} />
+        ) : tab === 'flow' ? (
+          <FlowPanel task={task} />
         ) : tab === 'todos' && task.conversationId ? (
           <TodoPanel conversationId={task.conversationId} />
         ) : tab === 'wire' && task.conversationId ? (

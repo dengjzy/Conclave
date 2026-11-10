@@ -15,6 +15,7 @@ const SELECT = `SELECT id, title, title_locked AS titleLocked, agent, workspace_
   task_id AS taskId, pinned_at AS pinnedAt, archived_at AS archivedAt, routine_id AS routineId, forked_from_id AS forkedFromId,
   discussion_id AS discussionId, squad_run_id AS squadRunId, workspace_read_only AS workspaceReadOnly, helper_of AS helperOf, source,
   agent_profile AS profile, parent_conversation_id AS parentConversationId, agent_call_id AS agentCallId,
+  mcp_servers AS mcpServers,
   model_provider AS modelProvider, initial_message AS initialMessage
   FROM conversations`
 const STAGE_SELECT = `SELECT id, conversation_id AS conversationId, agent, provider_session_id AS providerSessionId,
@@ -55,6 +56,7 @@ function conversation(row: Record<string, unknown>): Conversation {
   const { lastExitCode, lastExitAt, ...rest } = row
   const references: unknown = JSON.parse(String(row.referencePaths ?? '[]'))
   return Conversation.parse({ ...rest, profile: parsedJson(row.profile, AgentProfile), source: source(row.source), projectPaths: JSON.parse(String(row.projectPaths)),
+    mcpServers: parsedJson(row.mcpServers, z.array(z.string())) ?? undefined,
     referencePaths: Array.isArray(references) && references.length ? references : undefined,
     initialMessage: row.initialMessage == null ? undefined : ConversationInitialMessage.parse(JSON.parse(String(row.initialMessage))),
     titleLocked: Boolean(row.titleLocked), managedWorkspace: Boolean(row.managedWorkspace), planOnly: Boolean(row.planOnly), workspaceReadOnly: Boolean(row.workspaceReadOnly),
@@ -89,6 +91,10 @@ export class ConversationStore {
   helper(parentId: string): Conversation | null {
     const row = this.db.prepare(`${SELECT} WHERE helper_of = ?`).get(parentId)
     return row ? conversation(row) : null
+  }
+
+  setTask(id: string, taskId: string): void {
+    this.db.prepare('UPDATE conversations SET task_id = ?, updated_at = ? WHERE id = ?').run(taskId, Date.now(), id)
   }
 
   byTask(taskId: string): Conversation | null {
@@ -128,6 +134,12 @@ export class ConversationStore {
 
   setProfile(id: string, profile: AgentProfile, parentId: string | null = null, callId: string | null = null): void {
     this.db.prepare('UPDATE conversations SET agent_profile = ?, parent_conversation_id = ?, agent_call_id = ? WHERE id = ?').run(JSON.stringify(profile), parentId, callId, id)
+  }
+
+  // The user's MCP servers this conversation's agents may use, by name; null when it picks none
+  // of its own and they get every server the agent may use.
+  setMcpServers(id: string, names: readonly string[] | null): void {
+    this.db.prepare('UPDATE conversations SET mcp_servers = ? WHERE id = ?').run(names === null ? null : JSON.stringify(names), id)
   }
 
   setSquad(id: string, runId: string | null, readOnly: boolean): void {

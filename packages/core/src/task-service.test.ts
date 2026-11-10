@@ -16,10 +16,14 @@ import { ProjectRegistry } from './project-registry'
 import { CredentialStore } from './credential-store'
 import { ModelProviderStore } from './model-providers'
 import { TaskService, type TaskEvent } from './task-service'
+import { TaskContractStore } from './task-contract-store'
 import { TaskStore } from './task-store'
 import { ScheduleService } from './schedule-service'
 import { ProjectConfigStore } from './project-config'
 import { WorktreeSetup } from './worktree-setup'
+import { CheckRunner } from './check-runner'
+import { CommandCheckProvider } from './command-check'
+import { HiddenTestProvider } from './hidden-test-provider'
 
 // A message to a Claude chat agent: its text, after any images as blocks of their own.
 const UserMessage = z.object({
@@ -1191,6 +1195,68 @@ describe('TaskService', () => {
       writeFileSync(path.join(repo, '.env'), 'TOKEN=1')
       return repo
     }
+
+    it('keeps a contract and treats a failure it already knew about as the baseline', async () => {
+      const configs = new ProjectConfigStore(path.join(dir, 'project-trust.json'))
+      const terminals = projectTerminals()
+      service.setWorktreeSetup(new WorktreeSetup(configs, terminals))
+      const contracts = new TaskContractStore(path.join(dir, 'conclave.db'))
+      service.setTaskContracts(contracts)
+      try {
+        const repo = configured('contract-app')
+        await configs.trust(repo, (await configs.info(repo))?.hash ?? '')
+        const task = readyTask('Contract', [repo])
+        await service.start(task.id)
+
+        terminals.codes['pnpm test'] = 1
+        const results = await service.check(task.id)
+        const failure = results?.[0]?.failures[0] ?? ''
+        const signature = results?.[0]?.signature ?? ''
+        expect(failure).toContain('test failed: login.spec')
+        expect(signature).not.toBe('')
+
+        service.setContract(task.id, { verification: { baseline: [signature] } })
+        expect(service.contract(task.id)?.verification.baseline).toEqual([signature])
+        expect((await service.submitChecked(task.id)).status).toBe('review')
+      } finally {
+        contracts.close()
+      }
+    })
+
+    it('stores a trust hash on save and blocks a contract check whose script changed in the worktree', async () => {
+      const configs = new ProjectConfigStore(path.join(dir, 'project-trust.json'))
+      const terminals = projectTerminals()
+      const setup = new WorktreeSetup(configs, terminals)
+      service.setWorktreeSetup(setup)
+      service.setCheckRunner(new CheckRunner(new CommandCheckProvider(terminals), setup, new HiddenTestProvider(terminals)))
+      const contracts = new TaskContractStore(path.join(dir, 'conclave.db'))
+      service.setTaskContracts(contracts)
+      try {
+        const repo = initRepo('trusted-check')
+        mkdirSync(path.join(repo, 'scripts'))
+        writeFileSync(path.join(repo, 'package.json'), JSON.stringify({ scripts: { check: 'node scripts/check.mjs' } }))
+        writeFileSync(path.join(repo, 'scripts', 'check.mjs'), 'console.log("ok")')
+        git(repo, 'add', '.')
+        git(repo, 'commit', '-q', '-m', 'check')
+
+        const task = readyTask('Trusted check', [repo])
+        const running = await service.start(task.id)
+        const check = { repo, command: 'node scripts/check.mjs', timeoutMs: 600_000, required: true }
+        service.setContract(task.id, { verification: { checks: [check] } })
+        expect(service.contract(task.id)?.verification.trustedHash).toMatch(/^[0-9a-f]{64}$/)
+
+        const first = await service.check(task.id)
+        expect(first?.[0]).toMatchObject({ status: 'pass', command: 'node scripts/check.mjs' })
+
+        writeFileSync(path.join(running.repos[0]!.worktreePath!, 'scripts', 'check.mjs'), 'console.log("cheat")')
+        const blocked = await service.check(task.id)
+        expect(blocked?.[0]?.status).toBe('blocked')
+        expect(blocked?.[0]?.failures[0]).toContain('检查文件已更改')
+        expect(terminals.ran.filter((each) => each.command === 'node scripts/check.mjs')).toHaveLength(1)
+      } finally {
+        contracts.close()
+      }
+    })
 
     it('asks for trust first, sets the worktree up before the agent hears of it, and checks before review', async () => {
       const configs = new ProjectConfigStore(path.join(dir, 'project-trust.json'))

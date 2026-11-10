@@ -143,11 +143,25 @@ export class TerminalService {
 
   // Resolves with the exit code once the command ends, however it does: by itself, stopped from
   // the panel, or its tab closed (null).
-  waitForExit(id: string): Promise<number | null> {
+  waitForExit(id: string, timeoutMs?: number): Promise<number | null> {
     const row = this.rows().find((each) => each.id === id)
     if (!row) return Promise.resolve(null)
     if (row.exited === 1) return Promise.resolve(row.exitCode)
-    return new Promise((resolve) => this.exits.set(row.sessionId, [...(this.exits.get(row.sessionId) ?? []), resolve]))
+    if (!timeoutMs) return new Promise((resolve) => this.exits.set(row.sessionId, [...(this.exits.get(row.sessionId) ?? []), resolve]))
+    return new Promise((resolve) => {
+      let settled = false
+      const finish = (code: number | null) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        resolve(code)
+      }
+      const timer = setTimeout(() => {
+        // The flow's deadline stops the run; this stops the command it was waiting on.
+        void this.daemon.request('kill', { sessionId: row.sessionId }).catch(() => {}).finally(() => finish(null))
+      }, timeoutMs)
+      this.exits.set(row.sessionId, [...(this.exits.get(row.sessionId) ?? []), finish])
+    })
   }
 
   private settle(sessionId: string, exitCode: number | null): void {

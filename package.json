@@ -19,6 +19,8 @@
     "dev": "pnpm --parallel --filter @conclave/daemon --filter @conclave/core --filter @conclave/web run dev",
     "dev:daemon": "pnpm --filter @conclave/daemon run dev",
     "dev:core": "pnpm --filter @conclave/core run dev",
+    "dev:core:supervised": "node scripts/supervise-core.mjs",
+    "dev:core:watchdog": "node scripts/watch-core.mjs",
     "dev:web": "pnpm --filter @conclave/web run dev",
     "build": "node scripts/build-plugins.mjs && pnpm --filter @conclave/web run build",
     "typecheck": "pnpm --filter @conclave/plugin-sdk build && pnpm -r run typecheck",

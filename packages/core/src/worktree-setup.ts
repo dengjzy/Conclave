@@ -1,11 +1,13 @@
 import { cp, lstat, realpath } from 'node:fs/promises'
 import path from 'node:path'
-import type { ProjectConfig } from '@conclave/protocol'
+import type { CheckResult, ProjectConfig } from '@conclave/protocol'
 import type { ProjectConfigStore, ProjectSetup, TrustedSetup } from './project-config'
 import type { TerminalService } from './terminal-service'
 
 // What a run hands an agent of a failure: the end of the output, where the tab has the rest.
 const FAILURE_TAIL = 2000
+// A project's check or setup is finite; a stuck one must not hold the task forever.
+const PROJECT_COMMAND_TIMEOUT_MS = 30 * 60_000
 
 function inside(root: string, target: string): boolean {
   const relative = path.relative(root, target)
@@ -50,7 +52,7 @@ export async function runProjectCommand(
   if (!command) return null
   const env = { CONCLAVE_ROOT_PATH: setup.topLevel, CONCLAVE_WORKTREE_PATH: worktree }
   const terminal = await terminals.run(conversationId, worktree, command, { title: `${purpose} · ${path.basename(worktree)}`, env, purpose })
-  const exitCode = await terminals.waitForExit(terminal.id)
+  const exitCode = await terminals.waitForExit(terminal.id, PROJECT_COMMAND_TIMEOUT_MS)
   const output = await terminals.read(conversationId, terminal.id, FAILURE_TAIL).catch(() => null)
   if (exitCode === 0) await terminals.kill(terminal.id).catch(() => {})
   return { terminalId: terminal.id, exitCode, tail: output?.output ?? '' }
@@ -104,18 +106,46 @@ export class WorktreeSetup {
   }
 
   // Runs each project's check where the agent works on it, all at once; null when no project has
-  // one, else each failure as the agent is told of it.
-  async check(conversationId: string, repos: readonly { path: string; dir: string }[]): Promise<string[] | null> {
+  // one. Each run is kept as a result, including how long it took and what it printed, so a
+  // scheduler can tell a failed test from a check that never started.
+  async checkDetailed(conversationId: string, repos: readonly { path: string; dir: string }[]): Promise<CheckResult[] | null> {
     const setups = await this.requireTrusted(repos.map((repo) => repo.path))
     const checked = repos.flatMap((repo) => {
       const setup = setups.find((each) => each.repoPath === repo.path)
       return setup?.config.check ? [{ setup, dir: repo.dir, command: setup.config.check }] : []
     })
     if (checked.length === 0) return null
-    const runs = await Promise.all(checked.map(async ({ setup, dir, command }) => {
-      const run = await runProjectCommand(this.terminals, conversationId, setup, dir, 'check')
-      return runFailed(run) ? describeFailedRun(command, dir, run) : null
+    return Promise.all(checked.map(async ({ setup, dir, command }) => {
+      const started = Date.now()
+      let run: ProjectRun | null = null
+      let error: string | null = null
+      try {
+        run = await runProjectCommand(this.terminals, conversationId, setup, dir, 'check')
+      } catch (caught) {
+        error = caught instanceof Error ? caught.message : String(caught)
+      }
+      const failure = run && runFailed(run) ? describeFailedRun(command, dir, run) : error
+      const exitCode = run?.exitCode ?? null
+      const tail = run?.tail ?? ''
+      return {
+        repo: setup.repoPath,
+        command,
+        status: error ? 'blocked' : exitCode === 0 ? 'pass' : 'fail',
+        exitCode,
+        durationMs: Date.now() - started,
+        tail,
+        // A terminal's own id changes every run; the output and exit code do not.
+        signature: `${setup.repoPath}\n${command}\n${exitCode ?? 'null'}\n${tail || error || ''}`,
+        failures: failure ? [failure] : [],
+        flaky: false
+      } satisfies CheckResult
     }))
-    return runs.flatMap((failure) => (failure ? [failure] : []))
+  }
+
+  // Runs each project's check where the agent works on it, all at once; null when no project has
+  // one, else each failure as the agent is told of it.
+  async check(conversationId: string, repos: readonly { path: string; dir: string }[]): Promise<string[] | null> {
+    const results = await this.checkDetailed(conversationId, repos)
+    return results === null ? null : results.flatMap((result) => result.failures)
   }
 }

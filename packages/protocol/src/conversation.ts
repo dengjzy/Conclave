@@ -102,6 +102,10 @@ export const Conversation = z.object({
   discussionId: z.string().uuid().nullable().optional(),
   squadRunId: z.string().uuid().nullable().optional(),
   profile: AgentProfile.nullable().optional(),
+  // The user's MCP servers this conversation hands its agents, by name; null or absent means every
+  // one its agent may use. A child agent keeps the selection of the conversation it works for.
+  // Older cores leave it out.
+  mcpServers: z.array(z.string().min(1).max(200)).max(100).nullable().optional(),
   parentConversationId: z.string().uuid().nullable().optional(),
   agentCallId: z.string().uuid().nullable().optional(),
   delegation: z.object({ open: z.number().int().nonnegative(), awaiting: z.number().int().nonnegative(), writing: z.boolean() }).optional(),

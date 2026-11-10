@@ -36,7 +36,9 @@ import { runAgentSmokeTest } from './agent-smoke-test'
 import type { ScheduleService } from './schedule-service'
 import type { RoutineService } from './routine-service'
 import type { SquadService } from './squad-service'
+import type { FlowService } from './flow-service'
 import type { TodoStore } from './todo-store'
+import type { IdeaStore } from './idea-store'
 import type { DiscussionService } from './discussion-service'
 import { AgentTerminals } from './agent-terminals'
 import { AgentCliInstaller } from './agent-cli-installation'
@@ -100,7 +102,9 @@ export function createRpcHandlers(
   automation?: UsageAutomation,
   projectStar?: ProjectStar,
   profiles?: AgentProfileService,
-  bookmarks?: BookmarkStore
+  bookmarks?: BookmarkStore,
+  flows?: FlowService,
+  ideas?: IdeaStore
 ): RpcHandlers {
   const profileService = () => {
     if (!profiles) throw new Rejection('profile-unavailable')
@@ -109,6 +113,14 @@ export function createRpcHandlers(
   const bookmarkStore = (): BookmarkStore => {
     if (!bookmarks) throw new Rejection('bookmarks-unavailable')
     return bookmarks
+  }
+  const flowService = (): FlowService => {
+    if (!flows) throw new Rejection('flow-unavailable')
+    return flows
+  }
+  const ideaStore = (): IdeaStore => {
+    if (!ideas) throw new Rejection('ideas-unavailable')
+    return ideas
   }
   const maintenance = (): AgentCliMaintenance => {
     if (!cliMaintenance) throw new Rejection('agent-cli-maintenance-unavailable')
@@ -422,6 +434,19 @@ export function createRpcHandlers(
       return conversationId ? userActed(conversationId, () => service.resumeChat(id, allowBypass)) : service.resumeChat(id, allowBypass)
     },
     'tasks.submit': ({ id }) => service.submitChecked(id),
+    'tasks.contract': ({ id }) => service.contract(id),
+    'tasks.setContract': ({ id, contract }) => service.setContract(id, contract),
+    'tasks.check': ({ id }) => service.check(id),
+    'flows.start': ({ id, allowBypass, agents }) => flowService().start(id, allowBypass, agents),
+    'flows.startConversation': ({ conversationId, allowBypass }) => flowService().startFromConversation(conversationId, allowBypass),
+    'flows.list': ({ taskId }) => flowService().list(taskId),
+    'flows.get': ({ id }) => flowService().get(id),
+    'flows.control': ({ id, action }) => flowService().control(id, action),
+    'ideas.list': () => ideaStore().list(),
+    'ideas.create': (fields) => ideaStore().create(fields),
+    'ideas.update': ({ id, ...fields }) => ideaStore().update(id, fields),
+    'ideas.remove': ({ id }) => { ideaStore().remove(id); return OK },
+
     'tasks.handoff': ({ id, agent, note, allowBypass, permissionMode, model, effort, references }) => service.handoff(id, agent, note, allowBypass, { permissionMode, model, effort, references }),
     'tasks.savePlan': ({ id, stageId, requestId }) => service.savePlan(id, stageId, requestId),
     'tasks.delete': async ({ id }) => {

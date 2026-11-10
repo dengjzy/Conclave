@@ -374,7 +374,38 @@ export const MIGRATIONS = [
      PRIMARY KEY (conversation_id, agent, provider_session_id, cwd)
    );`,
   `ALTER TABLE conversations ADD COLUMN initial_message TEXT;`,
-  `ALTER TABLE conversation_native_sessions ADD COLUMN artifacts TEXT;`
+  `ALTER TABLE conversation_native_sessions ADD COLUMN artifacts TEXT;`,
+  // What "done" means for a task, kept apart from the task row (TaskContract as JSON).
+  `CREATE TABLE task_contracts (
+     task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+     version INTEGER NOT NULL,
+     data TEXT NOT NULL,
+     updated_at INTEGER NOT NULL
+   );`,
+  // One autonomous run of a task: its plan, attempts and state, kept as one JSON snapshot.
+  `CREATE TABLE flows (
+     id TEXT PRIMARY KEY,
+     task_id TEXT NOT NULL,
+     data TEXT NOT NULL
+   );
+   CREATE INDEX flows_task ON flows(task_id);`,
+  // The user's ideas and standalone to-dos. A conversation or task is attached when they start one.
+  `CREATE TABLE ideas (
+     id TEXT PRIMARY KEY,
+     title TEXT NOT NULL,
+     notes TEXT NOT NULL DEFAULT '',
+     status TEXT NOT NULL,
+     tags TEXT NOT NULL DEFAULT '[]',
+     project_path TEXT,
+     conversation_id TEXT,
+     task_id TEXT,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL
+   );
+   CREATE INDEX ideas_status ON ideas(status, updated_at DESC);`,
+  // The user's MCP servers a conversation hands its agents, by name (JSON); null when it has none
+  // of its own. A child agent (test author, replanner) keeps the selection it works for.
+  `ALTER TABLE conversations ADD COLUMN mcp_servers TEXT;`
 ]
 
 

@@ -3,7 +3,7 @@ import { RouteBadge } from './RouteBadge'
 import { useHelper, useHelperSupported } from '../helper-conversations'
 import { useCallback, useEffect, useState, type DragEvent } from 'react'
 import { usePlans } from '../chat-state'
-import { markRoutineRunSeen, openBeside, openOverview, selectConversation, selectDiscussion, setConversationInspectorOpen, setRoutinesOpen, useCore, useWireLogShown } from '../core-store'
+import { markRoutineRunSeen, openBeside, openOverview, perform, selectConversation, selectDiscussion, selectTask, setConversationInspectorOpen, setInspectorOpen, setRoutinesOpen, setTaskInspectorTab, useCore, useWireLogShown } from '../core-store'
 import { conversationState } from '../conversation-state'
 import { agentLabel } from '../labels'
 import { primaryProjectName } from './ProjectPicker'
@@ -13,14 +13,26 @@ import { ConversationChat } from './ConversationChat'
 import { ConversationInspector } from './ConversationInspector'
 import { ConversationStatus } from './ConversationStatus'
 import { beginHandoff, newConversationFrom, renameConversation, useReuseConversationSupported } from './ConversationActions'
-import { CloseIcon, CopyIcon, InspectorIcon, SplitIcon } from './icons'
+import { CloseIcon, CopyIcon, InspectorIcon, PlayIcon, SplitIcon } from './icons'
+import { flowWorktree } from './flow-trajectory'
 import { PRIMARY_KEY_LABEL } from '../shortcut-keys'
 import { DEFAULT_SIDE_PANEL_RATIO } from './side-panel-size'
 import { TitleEditor } from './TitleEditor'
 import { useOpenTodoCount, useTodosShown } from '../conversation-todos'
 import { CONVERSATION_DRAG_TYPE, draggedConversation } from '../conversation-drag'
 import type { ConversationPane } from './conversation-pane'
-import { canReuseConversation, type AgentKind, type Conversation } from '@conclave/protocol'
+import { canReuseConversation, type AgentKind, type Conversation, type Flow } from '@conclave/protocol'
+
+const NODE_LABEL = { plan: 'FlowPanel.node.plan', implement: 'FlowPanel.node.implement', verify: 'FlowPanel.node.verify', gate: 'FlowPanel.node.gate' } as const
+const NODE_STATE = { pending: 'FlowPanel.nodeState.pending', running: 'FlowPanel.nodeState.running', done: 'FlowPanel.nodeState.done', failed: 'FlowPanel.nodeState.failed', skipped: 'FlowPanel.nodeState.skipped' } as const
+
+const RUN_LABEL = {
+  running: 'FlowPanel.state.running',
+  review: 'FlowPanel.state.review',
+  paused: 'FlowPanel.state.paused',
+  failed: 'FlowPanel.state.failed',
+  cancelled: 'FlowPanel.state.cancelled'
+} as const
 
 // Where a fork came from: a way back while the source is still here.
 function ForkOrigin({ id }: { id: string }) {
@@ -35,6 +47,48 @@ function ForkOrigin({ id }: { id: string }) {
 }
 
 // Whether the conversation has anything for the inspector to show, and what its button says.
+export // A flow started from this chat stays here: its state, its evidence and its controls.
+function RunBar({ run, onRun }: { run: Flow; onRun: (flow: Flow) => void }) {
+  const [busy, setBusy] = useState(false)
+  const task = useCore((state) => state.tasks[run.taskId])
+  const worktree = task ? flowWorktree(task) : null
+  const control = async (action: 'cancel' | 'resume') => {
+    if (busy) return
+    setBusy(true)
+    const next = await perform((rpc) => rpc.call('flows.control', { id: run.id, action }))
+    setBusy(false)
+    if (next) onRun(next)
+  }
+  const running = run.state === 'running'
+  const paused = run.state === 'paused'
+  return <div className="conversation-run" data-state={run.state}>
+    <span className="conversation-run-state">{t(RUN_LABEL[run.state])}</span>
+    <span className="conversation-run-detail">
+      {worktree ? `${worktree.branch} · ${worktree.path}` : ''}
+      {run.attempts.length > 0 ? `${worktree ? ' · ' : ''}${tr('ConversationView.runAttempts', { value1: run.attempts.length })}` : ''}
+      {run.hiddenTests ? ` · ${tr('ConversationView.runHidden', { value1: run.hiddenTests.files.length })}` : ''}
+      {run.redFirst !== 'skipped' ? ` · ${tr('ConversationView.runRed', { value1: run.redFirst })}` : ''}
+      {run.note ? ` · ${run.note}` : ''}
+    </span>
+    {running && <button type="button" className="button ghost conversation-run-action" disabled={busy} onClick={() => void control('cancel')}>{t('ConversationView.runStop')}</button>}
+    {paused && <button type="button" className="button conversation-run-action" disabled={busy} onClick={() => void control('resume')}>{t('ConversationView.runResume')}</button>}
+    {task && <button type="button" className="button ghost conversation-run-action" onClick={() => { selectTask(task.id); setTaskInspectorTab('flow'); setInspectorOpen(true) }}>{t('ConversationView.runOpen')}</button>}
+    <details className="conversation-run-more">
+      <summary>{t('ConversationView.runDetails')}</summary>
+      <ol className="conversation-run-nodes">
+        {run.nodes.map((node) => <li key={node.id} data-state={node.state}>
+          <span>{t(NODE_LABEL[node.kind])}</span>
+          <span className="muted">{node.agent ?? ''}</span>
+          <span>{t(NODE_STATE[node.state])}</span>
+        </li>)}
+      </ol>
+      {run.attempts.length > 0 && <ol className="conversation-run-attempts">
+        {run.attempts.map((attempt) => <li key={attempt.id} data-state={attempt.state}>{`#${attempt.number} · ${attempt.agent ?? ''} · ${attempt.failureKind ?? attempt.state}`}</li>)}
+      </ol>}
+    </details>
+  </div>
+}
+
 export function useConversationPanel(conversation: Conversation | undefined) {
   const id = conversation?.id ?? ''
   const plans = usePlans(id)
@@ -62,6 +116,10 @@ export function ConversationView({ id, pane }: { id: string; pane?: Conversation
   }, [id])
   const [renaming, setRenaming] = useState(false)
   const [busy, setBusy] = useState(false)
+  const rpc = useCore((state) => state.rpc)
+  const flowsRevision = useCore((state) => state.flowsRevision)
+  const flowsSupported = rpc?.features.includes('flows') ?? false
+  const [run, setRun] = useState<Flow | null>(null)
   const reuseSupported = useReuseConversationSupported()
   const inspectorOpen = useCore((state) => state.conversationInspectorOpen)
   const [panelRatio, setPanelRatio] = useState(DEFAULT_SIDE_PANEL_RATIO)
@@ -112,6 +170,15 @@ export function ConversationView({ id, pane }: { id: string; pane?: Conversation
       }
     }
   }
+  useEffect(() => { setRun(null) }, [id])
+
+  useEffect(() => {
+    if (!run || !rpc) return
+    let live = true
+    void rpc.call('flows.get', { id: run.id }).then((next) => { if (live) setRun(next) }).catch(() => {})
+    return () => { live = false }
+  }, [rpc, flowsRevision, run?.id])
+
   return <section
     className="detail terminal-view conversation-view"
     aria-label={pane ? t('ConversationView.pane', { value1: pane.index + 1, value2: conversation.title }) : t('ConversationView.conversation', { value1: conversation.title })}
@@ -133,6 +200,7 @@ export function ConversationView({ id, pane }: { id: string; pane?: Conversation
         <RouteBadge conversation={conversation} />
         <span className="muted" title={conversation.projectPaths.join('\n') || conversation.workspacePath}>{primaryProjectName(conversation.projectPaths)}</span>
         <BranchStatus target={{ kind: 'conversation', id }} updatedAt={conversation.updatedAt} />
+        {run && <span className={run.state === 'paused' || run.state === 'failed' ? 'conversation-exit-failed' : 'muted'} title={run.note ?? undefined}>{t(RUN_LABEL[run.state])}</span>}
         <span className={state.failed ? 'conversation-exit-failed' : 'muted'} title={state.detail ?? undefined}>{state.label}</span>
         {archived && <span className="archived-tag">{t('ConversationList.archived')}</span>}
         {conversation.parentConversationId && <button type="button" className="link-button" onClick={() => selectConversation(conversation.parentConversationId ?? null)}>{t('AgentProfiles.parent')}</button>}
@@ -162,12 +230,26 @@ export function ConversationView({ id, pane }: { id: string; pane?: Conversation
             {!inspecting && todoLeft > 0 && <span className="tool-button-badge" aria-hidden="true">{todoLeft}</span>}
           </button>
         )}
+        {flowsSupported && !conversation.discussionId && !conversation.parentConversationId && (
+          <button
+            type="button"
+            className="tool-button"
+            aria-label={run ? t(RUN_LABEL[run.state]) : t('ConversationView.run')}
+            data-tooltip={run?.note ?? (run ? t(RUN_LABEL[run.state]) : t('ConversationView.run'))}
+            disabled={busy || run?.state === 'running'}
+            onClick={() => void action(async () => {
+              const started = await perform((rpc) => rpc.call('flows.startConversation', { conversationId: id, allowBypass: false }))
+              if (started) setRun(started)
+            })}
+          ><PlayIcon /></button>
+        )}
         <span className="toolbar-separator" aria-hidden="true" />
         {pane
           ? <button type="button" className="tool-button" aria-label={t('ConversationView.closeThisPane')} data-tooltip={t('ConversationView.closeThisPane')} onClick={pane.onClose}><CloseIcon /></button>
           : <button type="button" className="tool-button" aria-label={t('BackdropPicker.close')} data-tooltip={t('BackdropPicker.close')} onClick={openOverview}><CloseIcon /></button>}
       </div>
     </header>
+    {run && <RunBar run={run} onRun={setRun} />}
     <div className="terminal-body">
       <ConversationChat conversation={conversation} onHandoff={conversation.discussionId || conversation.parentConversationId ? undefined : openHandoff} />
       {!pane && hasPanel && inspectorOpen && <ConversationInspector conversation={conversation} widthRatio={panelRatio} onWidthRatioChange={setPanelRatio} wire={wire} />}

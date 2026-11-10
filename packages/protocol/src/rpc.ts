@@ -3,6 +3,8 @@ import { ChatReference } from './chat-reference'
 import { AgentProfile, AgentProfileFields, AgentCall, AgentCallTarget } from './agent-profile'
 import { GitTarget, GitBranch, GitStatus, GitHistory, GitDetail, GitComparison, GitAction, GitResult, GitOutgoing } from './git'
 import { AgentKind, MAX_DETAILS_LENGTH, MAX_TASK_REPOS, RepoStartOptions, Task, TaskStatus } from './task'
+import { CheckResult, TaskContract, TaskContractFields } from './contract'
+import { Flow } from './flow'
 import { ATTACHMENT_CHUNK_BYTES, AttachmentId, AttachmentInfo, Base64Chunk, ImageRef, MAX_ATTACHMENT_BYTES, MAX_CHAT_IMAGES, MAX_TASK_IMAGES } from './attachments'
 import { LoginNotice, LoginPrompt, SourceDescriptor, SourceId, SourceInbox, SourceProblem } from './source'
 import { PluginId, PluginInfo, PluginInstallSource, PluginVersion, RecommendedPlugin } from './plugin'
@@ -34,6 +36,7 @@ import { Squad, SquadFields, SquadRun, SquadWork, SquadPlanRef } from './squad'
 import { KnowledgeFolder, KnowledgeVault } from './knowledge'
 import { CommitSha, RecommendedSkillRepo, SkillActivation, SkillRepo, SkillRepoId, SkillSearchResult, SkillUpdateCheck } from './skills'
 import { TodoList, TodoOwner, TodoText, TodoTitle } from './todos'
+import { Idea, IdeaFields } from './idea'
 import { McpImportCandidate, McpImportItem, McpProbe, McpServer, McpServerInput, McpServerName } from './mcp'
 import { ModelProvider, ModelProviderId, ModelProviderInput, ModelProviderProbe } from './model-provider'
 import { AgentAccount, AgentAccountId, AgentAccounts } from './agent-account'
@@ -105,7 +108,9 @@ const UsageParams = z.object({ windowKinds: z.array(z.string()).optional() })
 // conversation-references: history_read resolves explicit conclave://conversation/<id> references.
 // chat-references: user messages and queues retain the composer's explicit reference targets.
 // durable-initial-message: core saves the first message before starting its agent (conversations.submit).
-export const CORE_FEATURES = ['conversation-session-cleanup', 'chat-references', 'conversation-references', 'plugins', 'plugin-recommendations', 'chat-options', 'chat-images', 'task-start', 'worktrees', 'conversation-branches', 'conversation-commit-push', 'find-file', 'conversation-projects', 'browser', 'keep-awake', 'terminal-commands', 'bookmarks', 'usage-limit', 'agent-stats', 'conversation-stats', 'prompt-suggestions', 'environment', 'conversation-pin', 'schedules', 'chat-commands', 'file-mentions', 'plan-modes', 'agent-terminals', 'schedule-images', 'dashboard', 'task-conversation-summaries', 'routines', 'ports', 'conversation-fork', 'conversation-configuration', 'conversation-commit-steps', 'conversation-worktrees', 'conversation-start-branch', 'wire-log', 'file-preview', 'deferred-conversation-start', 'agent-cli-installation', 'agent-cli-maintenance', 'task-launch-options', 'git-management', 'git-commit-branches', 'task-handoff', 'handoff-model', 'handoff-mode', 'task-launch', 'discussions', 'discussion-summary-choice', 'discussion-members', 'discussion-projects', 'discussion-topics', 'discussion-requirements', 'task-cancel', 'task-redo-in-place', 'conversation-archive', 'discussion-archive', 'translate', 'commit-message', 'conversation-todos', 'knowledge-base', 'knowledge-base-kind', 'skills-library', 'skills-search', 'skills-activation', 'mcp-servers', 'source-investigate', 'todo-overview', 'conversation-helper', 'small-model-stats', 'terminal-color-prompt', 'git-commit-actions', 'file-editor', 'project-config', 'project-config-edit', 'model-providers', 'git-update', 'git-push-target', 'task-auto-run', 'session-import', 'agent-accounts', 'usage-analytics', 'task-references', 'release-idle-chats', 'project-star', 'git-favorites', 'project-files', 'durable-initial-message'] as const
+// task-contracts: a task keeps what "done" means (tasks.contract, tasks.setContract) and can run
+// flows: core runs a task autonomously, one implement turn and one check at a time (flows.*).
+export const CORE_FEATURES = ['conversation-session-cleanup', 'chat-references', 'conversation-references', 'plugins', 'plugin-recommendations', 'chat-options', 'chat-images', 'task-start', 'worktrees', 'conversation-branches', 'conversation-commit-push', 'find-file', 'conversation-projects', 'browser', 'keep-awake', 'terminal-commands', 'bookmarks', 'usage-limit', 'agent-stats', 'conversation-stats', 'prompt-suggestions', 'environment', 'conversation-pin', 'schedules', 'chat-commands', 'file-mentions', 'plan-modes', 'agent-terminals', 'schedule-images', 'dashboard', 'task-conversation-summaries', 'routines', 'ports', 'conversation-fork', 'conversation-configuration', 'conversation-commit-steps', 'conversation-worktrees', 'conversation-start-branch', 'wire-log', 'file-preview', 'deferred-conversation-start', 'agent-cli-installation', 'agent-cli-maintenance', 'task-launch-options', 'git-management', 'git-commit-branches', 'task-handoff', 'handoff-model', 'handoff-mode', 'task-launch', 'discussions', 'discussion-summary-choice', 'discussion-members', 'discussion-projects', 'discussion-topics', 'discussion-requirements', 'task-cancel', 'task-redo-in-place', 'conversation-archive', 'discussion-archive', 'translate', 'commit-message', 'conversation-todos', 'knowledge-base', 'knowledge-base-kind', 'skills-library', 'skills-search', 'skills-activation', 'mcp-servers', 'source-investigate', 'todo-overview', 'conversation-helper', 'small-model-stats', 'terminal-color-prompt', 'git-commit-actions', 'file-editor', 'project-config', 'project-config-edit', 'model-providers', 'git-update', 'git-push-target', 'task-auto-run', 'session-import', 'agent-accounts', 'usage-analytics', 'task-references', 'release-idle-chats', 'project-star', 'git-favorites', 'project-files', 'durable-initial-message', 'task-contracts', 'flows', 'ideas'] as const
 // session-import: core lists the sessions agents ran outside Conclave and imports them as conversations (sessionImports.*).
 // agent-accounts: Claude and Codex sign in to several accounts, one active each, and a usage limit
 // moves the agent to the next with quota (accounts.*); usage readings name their account.
@@ -338,6 +343,18 @@ export const rpcMethods = {
   'tasks.start': { params: TaskRef.extend({ allowBypass: AllowBypass }).extend(TaskLaunchOptions.shape), result: Task },
   'tasks.resumeChat': { params: TaskRef.extend({ allowBypass: AllowBypass }), result: Task },
   'tasks.submit': { params: TaskRef, result: Task },
+  // What "done" means for a task, before it starts. A contract with no check can still be run,
+  // but only a person may accept it. Needs task-contracts.
+  'tasks.contract': { params: TaskRef, result: TaskContract.nullable() },
+  'tasks.setContract': { params: TaskRef.extend({ contract: TaskContractFields }), result: TaskContract },
+  // Runs the task's checks without handing it in; null when no project has one.
+  'tasks.check': { params: TaskRef, result: z.array(CheckResult).nullable() },
+  // One autonomous run of a task: implement, then run its checks, then hand it in or retry.
+  'flows.start': { params: TaskRef.extend({ allowBypass: AllowBypass, agents: z.array(AgentKind).max(10).optional() }), result: Flow },
+  'flows.startConversation': { params: z.object({ conversationId: z.string().uuid(), allowBypass: AllowBypass }), result: Flow },
+  'flows.list': { params: z.object({ taskId: z.string().optional() }), result: z.array(Flow) },
+  'flows.get': { params: z.object({ id: z.string().uuid() }), result: Flow },
+  'flows.control': { params: z.object({ id: z.string().uuid(), action: z.enum(['cancel', 'resume']) }), result: Flow },
   // Gives the task to another agent, which goes on with its chat at once from a handoff (see checkTaskHandoff).
   'tasks.handoff': { params: TaskRef.extend({ agent: AgentKind, note: z.string().max(10000), allowBypass: AllowBypass }).extend(HandoffOptions.shape), result: Task },
   'tasks.savePlan': { params: TaskRef.extend({ stageId: z.string().uuid(), requestId: z.string().min(1).max(200) }), result: Task },
@@ -420,6 +437,12 @@ export const rpcMethods = {
   'todos.check': { params: ConversationRef.extend({ groupId: z.string(), itemId: z.string().optional(), done: z.boolean() }), result: TodoList },
   'todos.edit': { params: ConversationRef.extend({ groupId: z.string(), itemId: z.string().optional(), text: TodoText }), result: TodoList },
   'todos.remove': { params: ConversationRef.extend({ groupId: z.string(), itemId: z.string().optional() }), result: TodoList },
+  // The user's own ideas and to-dos, before they have a conversation or a task.
+  'ideas.list': { params: z.object({}), result: z.array(Idea) },
+  'ideas.create': { params: IdeaFields, result: Idea },
+  'ideas.update': { params: IdeaFields.partial().extend({ id: z.string(), conversationId: z.string().uuid().nullable().optional(), taskId: z.string().nullable().optional() }), result: Idea },
+  'ideas.remove': { params: z.object({ id: z.string() }), result: Ok },
+
   // Puts a free conversation away, read-only, or takes it out again. Its agent must be idle, and is
   // let go. Needs conversation-archive.
   'conversations.setArchived': { params: ConversationRef.extend({ archived: z.boolean() }), result: Conversation },
@@ -860,6 +883,8 @@ export const rpcNotifications = {
   // unique within a stage only; an older core leaves the stage out.
   'conversations.chatDelta': z.object({ conversationId: z.string(), stageId: z.string().optional(), itemId: z.string(), append: z.string() }),
   'tasks.changed': z.object({ task: Task }),
+  'flows.changed': z.object({ flow: Flow }),
+  'ideas.changed': z.object({}),
   'tasks.deleted': z.object({ id: z.string() }),
   'sessions.data': z.object({ sessionId: z.string(), data: z.string(), offset: z.number().int() }),
   'sessions.exit': z.object({ sessionId: z.string(), exitCode: z.number() }),

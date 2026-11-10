@@ -101,4 +101,28 @@ describe('WorktreeSetup', () => {
       rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  it('keeps each check as a result, with how it ended and what it printed', async () => {
+    const terminals = fakeTerminals({ 'pnpm test': 2 })
+    const configs = [setup('/code/app', { check: 'pnpm test' })]
+    const runner = new WorktreeSetup({ requireTrusted: async () => configs }, terminals)
+    const results = await runner.checkDetailed('conv', [{ path: '/code/app', dir: '/wt/app' }])
+    expect(results).toHaveLength(1)
+    expect(results?.[0]).toMatchObject({
+      repo: '/code/app',
+      command: 'pnpm test',
+      status: 'fail',
+      exitCode: 2
+    })
+    expect(results?.[0]?.failures[0]).toContain('boom')
+    expect(results?.[0]?.durationMs).toBeGreaterThanOrEqual(0)
+  })
+
+  it('reports a check that passed as a pass', async () => {
+    const terminals = fakeTerminals({ 'pnpm test': 0 })
+    const configs = [setup('/code/app', { check: 'pnpm test' })]
+    const runner = new WorktreeSetup({ requireTrusted: async () => configs }, terminals)
+    const results = await runner.checkDetailed('conv', [{ path: '/code/app', dir: '/wt/app' }])
+    expect(results?.[0]).toMatchObject({ status: 'pass', exitCode: 0, failures: [] })
+  })
 })

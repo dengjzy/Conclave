@@ -24,17 +24,22 @@ import {
   isStartRef,
   MAX_CHAT_IMAGES,
   MAX_TASK_IMAGES,
+  newCheckFailures,
   reopenStatus,
   startKind,
+  TaskContractFields,
   type AgentKind,
+  type CheckResult,
   type Conversation,
   type FileDiff,
+  type HiddenTestPlan,
   type ProjectHead,
   type RepoChanges,
   type RepoStartOptions,
   type RpcParsedParams,
   type SourceSnapshot,
   type Task,
+  type TaskContract,
   type TaskLaunchOptions,
   type TaskImage,
   type TaskRepo,
@@ -46,12 +51,14 @@ import {
 import { agentPrompt, chatPlanPrompt, chatStartPrompt, leaderStartPrompt, type PlanBrief, type PreviousAttempt, type PromptImages } from './agent-prompt'
 import type { AgentRunStore } from './agent-run-store'
 import type { AttachmentStore } from './attachment-store'
+import { checkTrust } from './contract-trust'
 import type { ConversationService, HandoffChoice, ModelChoice } from './conversation-service'
 import type { ProjectRegistry } from './project-registry'
 import { needsSlug } from './branch-slug'
 import { Rejection } from './rejection'
 import { fileDiff, repoChanges } from './task-changes'
 import type { TaskPatch, TaskStore } from './task-store'
+import type { TaskContractStore } from './task-contract-store'
 import type { TrustedSetup } from './project-config'
 import type { WorktreeSetup } from './worktree-setup'
 import { normalizeRepoPath, prepareRefineWorkspace, prepareWorkspace, projectHead, removePlanningCheckouts, restartBranches, startOptions, withKnownWorktrees } from './workspace'
@@ -66,7 +73,9 @@ export type BranchNamer = (agent: AgentKind, title: string, modelProvider: strin
 const SLUG_WAIT_MS = 10_000
 
 // What a task needs of its chat.
-export type TaskConversations = Pick<ConversationService, 'startForTask' | 'send' | 'markUnattended' | 'savePlan' | 'stopForTask' | 'deleteForTask' | 'get' | 'runUsage' | 'capacityAvailable' | 'validateStartOptions'>
+export type TaskConversations = Pick<ConversationService, 'startForTask' | 'send' | 'markUnattended' | 'savePlan' | 'stopForTask' | 'deleteForTask' | 'get' | 'attachToTask' | 'runUsage' | 'capacityAvailable' | 'validateStartOptions'>
+
+export type TaskCheckRunner = { run(task: Task, conversationId: string, contract: TaskContract | null, hiddenTests?: HiddenTestPlan | null): Promise<CheckResult[] | null> }
 
 export type TaskSquads = {
   preparing(id: string): boolean
@@ -86,11 +95,15 @@ export class TaskService {
   private readonly launching = new Set<string>()
   private gitGuard: ((dirs: readonly string[]) => Promise<void>) | null = null
   setGitGuard(guard: (dirs: readonly string[]) => Promise<void>): void { this.gitGuard = guard }
-  private setup: Pick<WorktreeSetup, 'requireTrusted' | 'setUp' | 'check'> | null = null
+  private setup: Pick<WorktreeSetup, 'requireTrusted' | 'setUp' | 'check' | 'checkDetailed'> | null = null
+  private contracts: Pick<TaskContractStore, 'get' | 'save' | 'delete'> | null = null
+  private checkRunner: TaskCheckRunner | null = null
   private readonly checking = new Set<string>()
   // Tasks whose agent is up but waits on setup: not yet waiting on the user.
   private readonly settingUp = new Set<string>()
-  setWorktreeSetup(setup: Pick<WorktreeSetup, 'requireTrusted' | 'setUp' | 'check'>): void { this.setup = setup }
+  setWorktreeSetup(setup: Pick<WorktreeSetup, 'requireTrusted' | 'setUp' | 'check' | 'checkDetailed'>): void { this.setup = setup }
+  setTaskContracts(contracts: Pick<TaskContractStore, 'get' | 'save' | 'delete'>): void { this.contracts = contracts }
+  setCheckRunner(runner: TaskCheckRunner): void { this.checkRunner = runner }
   private namer: BranchNamer | null = null
   private readonly naming = new Map<string, Promise<void>>()
   setBranchNamer(namer: BranchNamer): void { this.namer = namer }
@@ -621,20 +634,72 @@ export class TaskService {
     })
   }
 
+  // A flow that starts from an existing chat reuses that chat instead of opening a task chat.
+  attachConversation(id: string, conversationId: string): Task {
+    const task = this.get(id)
+    if (task.status !== 'pending') throw new Rejection('task-not-pending')
+    if (!this.chats) throw new Rejection('task-chat-unavailable')
+    this.chats.attachToTask(conversationId, id)
+    return this.changed(this.save(id, { status: 'running', awaitingInput: false }))
+  }
+
+  // The scheduler chose an implementer before a flow starts. A pending task may name none.
+  assignAgent(id: string, agent: AgentKind): Task {
+    const task = this.get(id)
+    if (task.status !== 'pending') throw new Rejection('task-not-pending')
+    return this.changed(this.save(id, { agent }))
+  }
+
+  contract(id: string): TaskContract | null {
+    this.get(id)
+    return this.contracts?.get(id) ?? null
+  }
+
+  setContract(id: string, fields: TaskContractFields): TaskContract {
+    this.get(id)
+    if (!this.contracts) throw new Rejection('task-contracts-unavailable')
+    // Hash the copy the verifier will run in: the task worktree once it exists, the repo before.
+    const parsed = TaskContractFields.parse(fields)
+    const { checks } = parsed.verification
+    const roots = new Map(this.get(id).repos.map((repo) => [repo.path, repo.worktreePath ?? repo.path]))
+    const trustedHash = checks.length > 0
+      ? checkTrust(checks, (repo) => ({ root: roots.get(repo) ?? repo, repo })).hash
+      : undefined
+    return this.contracts.save(id, { ...parsed, verification: { ...parsed.verification, trustedHash } })
+  }
+
+  // Runs the task's checks without handing it in, for a scheduler or a UI that wants the result
+  // before deciding. Null when no project has a check, or the task has no chat to run it in.
+  async check(id: string, hiddenTests: HiddenTestPlan | null = null): Promise<CheckResult[] | null> {
+    const task = this.get(id)
+    if (!task.conversationId) return null
+    return this.runChecks(task, task.conversationId, hiddenTests)
+  }
+
+  private async runChecks(task: Task, conversationId = task.conversationId, hiddenTests: HiddenTestPlan | null = null): Promise<CheckResult[] | null> {
+    if (!conversationId) return null
+    const contract = this.contracts?.get(task.id) ?? null
+    if (this.checkRunner) return this.checkRunner.run(task, conversationId, contract, hiddenTests)
+    if (!this.setup) return null
+    return this.setup.checkDetailed(conversationId, task.repos.map((repo) => ({ path: repo.path, dir: repo.worktreePath ?? repo.path })))
+  }
+
   // Handed in by the user, the task goes for review only once each project's check passes; a check
   // that fails goes back to the agent to fix, and the task keeps running.
-  async submitChecked(id: string): Promise<Task> {
+  async submitChecked(id: string, options: { squad?: boolean } = {}): Promise<Task> {
     const task = this.get(id)
     const blocker = checkSubmit(task, this.turnOf(task))
     if (blocker) throw new Rejection(blocker)
-    if (this.squads?.busy(task.id)) throw new Rejection('squad-busy')
+    if (!options.squad && this.squads?.busy(task.id)) throw new Rejection('squad-busy')
     if (task.conversationId && this.delegationBusy?.(task.conversationId)) throw new Rejection('agent-call-writing', '请先等待委派工作结束')
     const { conversationId } = task
-    if (!this.setup || !conversationId) return this.submit(id)
+    if (!conversationId || (!this.setup && !this.checkRunner)) return this.submit(id, options)
     if (this.checking.has(task.id)) throw new Rejection('check-running')
     this.checking.add(task.id)
     try {
-      const failures = await this.setup.check(conversationId, task.repos.map((repo) => ({ path: repo.path, dir: repo.worktreePath ?? repo.path })))
+      const results = await this.runChecks(task, conversationId)
+      const baseline = this.contracts?.get(task.id)?.verification.baseline ?? []
+      const failures = results === null ? null : newCheckFailures(results, baseline)
       // The user may have gone on with the agent while it ran.
       const now = this.get(id)
       const after = checkSubmit(now, this.turnOf(now))
@@ -646,7 +711,7 @@ export class TaskService {
     } finally {
       this.checking.delete(task.id)
     }
-    return this.submit(id)
+    return this.submit(id, options)
   }
 
   private turnOf(task: Task) {
@@ -670,10 +735,10 @@ export class TaskService {
 
   // A chat task is handed in for review by the user: its agent does not end with the work. A squad
   // hands its task in this way, without the projects' check.
-  submit(id: string): Task {
+  submit(id: string, options: { squad?: boolean } = {}): Task {
     const task = this.get(id)
     const turn = task.conversationId ? (this.requireChats().get(task.conversationId).chat?.turn ?? null) : null
-    if (this.squads?.busy(task.id)) throw new Rejection('squad-busy')
+    if (!options.squad && this.squads?.busy(task.id)) throw new Rejection('squad-busy')
     if (task.conversationId && this.delegationBusy?.(task.conversationId)) throw new Rejection('agent-call-writing', '请先等待委派工作结束')
     const blocker = checkSubmit(task, turn)
     if (blocker) {
@@ -827,6 +892,7 @@ export class TaskService {
     // checkouts hold none, so they go, unless one holds changes after all.
     await removePlanningCheckouts(task.id, this.worktreesRoot)
     this.store.delete(task.id)
+    this.contracts?.delete(task.id)
     this.emit({ type: 'deleted', id: task.id })
     // Their dependency edges went with the task.
     dependents.forEach((dependent) => {

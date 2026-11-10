@@ -220,6 +220,8 @@ export class ConversationService {
   private readonly cancelStops = new Map<string, Promise<void>>()
   // The tail of each conversation's sends and retries, for an agent that takes them one at a time.
   private readonly serialActions = new Map<string, Promise<void>>()
+  // Readers waiting for a turn that started after a time, resolved by chat items rather than polling.
+  private readonly turnWaiters = new Map<string, Set<() => void>>()
   private readonly initialDeliveries = new Map<string, Promise<void>>()
   private initialMessagesClosed = false
   private readonly readySessions = new Set<string>()
@@ -285,6 +287,7 @@ export class ConversationService {
         this.rememberCatalog(conversationId, items)
         this.settleAsks(items)
         this.emit({ type: 'chatItems', conversationId, items })
+        this.settleTurnWaiters(conversationId)
         this.answerUnattended(conversationId, items)
       },
       delta: (conversationId, stageId, itemId, append) => this.emit({ type: 'chatDelta', conversationId, stageId, itemId, append }),
@@ -617,7 +620,7 @@ export class ConversationService {
     agent: AgentKind,
     projectPaths: readonly string[],
     allowBypass?: boolean,
-    start: { permissionMode?: string; model?: string; effort?: string; agentPreset?: string; worktree?: boolean; branch?: string; deferStart?: boolean; helperOf?: string; modelProvider?: string; profile?: AgentProfile; parentId?: string; callId?: string; readOnly?: boolean; referencePaths?: readonly string[] } = {},
+    start: { permissionMode?: string; model?: string; effort?: string; agentPreset?: string; worktree?: boolean; branch?: string; deferStart?: boolean; helperOf?: string; modelProvider?: string; profile?: AgentProfile; mcpServers?: readonly string[] | null; parentId?: string; callId?: string; readOnly?: boolean; referencePaths?: readonly string[] } = {},
     routine: { id: string; title: string } | null = null,
     id: string = randomUUID(),
     discussion: { id: string; title: string } | null = null,
@@ -645,6 +648,7 @@ export class ConversationService {
       this.store.create(agent, currentParent.workspacePath, currentParent.projectPaths, id, this.store.projectStarts(parent.id), null, null, null, parent.id)
       this.store.setModelProvider(id, modelProvider)
       this.store.setChatOptions(id, { permissionMode, allowBypass: allowBypass ?? false, [agent]: { model: start.model, effort: start.effort } })
+      if (start.mcpServers !== undefined) this.store.setMcpServers(id, start.mcpServers)
       this.changed(this.get(id))
       return start.deferStart ? this.get(id) : this.start(id, agent, '', false)
     }
@@ -693,6 +697,7 @@ export class ConversationService {
     const created = this.store.create(agent, workspace, projects, id, starts, null, routine, discussion)
     if (start.modelProvider) this.store.setModelProvider(id, start.modelProvider)
     if (start.profile) this.store.setProfile(id, start.profile, start.parentId ?? null, start.callId ?? null)
+    if (start.mcpServers !== undefined) this.store.setMcpServers(id, start.mcpServers)
     if (readOnly) this.store.setWorkspaceReadOnly(id, true)
     if (start.referencePaths?.length) this.store.setReferencePaths(id, start.referencePaths)
     if (squad) this.store.setSquad(id, squad.runId, squad.readOnly)
@@ -1230,7 +1235,7 @@ export class ConversationService {
     }) ?? null
     let userMcp: AgentMcpServer[] = []
     try {
-      userMcp = this.userMcpFor?.(agent, Boolean(current.discussionId || current.workspaceReadOnly || stage.planOnly), current.profile?.mcpServers) ?? []
+      userMcp = this.userMcpFor?.(agent, Boolean(current.discussionId || current.workspaceReadOnly || stage.planOnly), current.mcpServers ?? current.profile?.mcpServers) ?? []
     } catch (error) {
       this.wire?.record(id, stage.id, [{ dir: 'note', text: JSON.stringify({ event: 'user-mcp-unavailable', error: error instanceof Error ? error.message : String(error) }) }])
     }
@@ -2000,6 +2005,36 @@ export class ConversationService {
   }
 
   // The newest chat stages' items, oldest first; `before` pages further back.
+  // Resolves true when a turn that started at or after `since` has completed, false on timeout.
+  // The chat items settle it; a child conversation does not need to poll the page.
+  waitForTurn(id: string, since: number, timeoutMs: number): Promise<boolean> {
+    const completed = (): boolean => {
+      try { return this.chatPage(id).items.some((item) => item.kind === 'turn' && item.at >= since && item.state === 'completed') }
+      catch { return false }
+    }
+    if (completed()) return Promise.resolve(true)
+    return new Promise((resolve) => {
+      let settled = false
+      let timer: NodeJS.Timeout
+      const check = (): void => { if (completed()) finish(true) }
+      const finish = (ok: boolean): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        this.turnWaiters.get(id)?.delete(check)
+        resolve(ok)
+      }
+      timer = setTimeout(() => finish(false), timeoutMs)
+      const waiters = this.turnWaiters.get(id) ?? new Set<() => void>()
+      waiters.add(check)
+      this.turnWaiters.set(id, waiters)
+    })
+  }
+
+  private settleTurnWaiters(id: string): void {
+    for (const check of [...(this.turnWaiters.get(id) ?? [])]) check()
+  }
+
   chatPage(id: string, before?: string): { items: ChatItem[]; before: string | null } {
     const conversation = this.get(id)
     const stages = this.store.stages(id)
@@ -2083,6 +2118,16 @@ export class ConversationService {
     if (!this.store.get(id)) { await this.deletion.delete(id); return }
     this.free(id, true)
     await this.deletion.delete(id)
+  }
+
+  // A flow started from a chat makes that chat the task's own conversation.
+  attachToTask(id: string, taskId: string): void {
+    const conversation = this.get(id)
+    if (!conversation) throw new Rejection('conversation-not-found')
+    if (conversation.taskId) throw new Rejection('task-conversation')
+    this.store.setTask(id, taskId)
+    const updated = this.get(id)
+    if (updated) this.changed(updated)
   }
 
   // A task's chat goes with its task; the worktrees it worked in stay.

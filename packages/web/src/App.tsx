@@ -5,6 +5,8 @@ import { ArrowLeftIcon, SidebarIcon } from './components/icons'
 import { NewTaskDialog } from './components/NewTaskDialog'
 import { SettingsPage } from './components/SettingsPage'
 import { SourceInboxView } from './components/SourceInboxView'
+import { IdeasEntry } from './components/IdeasEntry'
+import { IdeasView } from './components/IdeasView'
 import { InboxEntry } from './components/InboxEntry'
 import { SourceLoginDialog } from './components/SourceLoginDialog'
 import { ProjectTrustDialog } from './components/ProjectTrustDialog'
@@ -72,6 +74,7 @@ export function App() {
   const worktreesOpen = useCore((s) => s.worktreesOpen)
   const routinesOpen = useCore((s) => s.routinesOpen)
   const overviewOpen = useCore((s) => s.overviewOpen)
+  const ideasOpen = useCore((s) => s.ideasOpen)
   const guideOpen = useCore((s) => s.guideOpen)
   useFirstRunSetup()
   const inboxOpen = useCore((s) => s.inboxOpen)
@@ -201,6 +204,7 @@ export function App() {
   const hasActiveDetail = Boolean(
     settingsOpen ||
     overviewOpen ||
+    ideasOpen ||
     inboxOpen ||
     worktreesOpen ||
     routinesOpen ||
@@ -220,7 +224,9 @@ export function App() {
       ? discussionTitle || t('DiscussionView.groupChat_910')
       : selectedId
         ? taskTitle || t('sidebar.tasks')
-        : overviewOpen
+        : ideasOpen
+          ? t('Ideas.title')
+          : overviewOpen
           ? t('OverviewEntry.overview_1276')
           : settingsOpen
             ? t('StatusBar.settings')
@@ -280,6 +286,7 @@ export function App() {
               onItemSelect={onMobileSelect}
             >
               <OverviewEntry />
+              <IdeasEntry />
               <InboxEntry />
               <RoutinesEntry />
               <EnvironmentNotice />
@@ -288,6 +295,8 @@ export function App() {
             </Sidebar>
             {overviewOpen ? (
               guideOpen ? <GuideView /> : <OverviewView />
+            ) : ideasOpen ? (
+              <IdeasView />
             ) : inboxOpen ? (
               <SourceInboxView />
             ) : worktreesOpen ? (

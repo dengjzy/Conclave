@@ -22,6 +22,7 @@ import { TitleEditor } from './TitleEditor'
 import { TaskActivity } from './TaskActivity'
 import { TaskDependencies } from './TaskDependencies'
 import { useTaskActivity } from '../work-activity'
+import { IdeasView } from './IdeasView'
 
 // The way back from a task to the board, at the start of its header; Esc goes there too.
 export function BoardCrumb() {
@@ -41,6 +42,7 @@ const useBoardFilter = create<BoardFilter & { allDone: boolean }>(() => ({ query
 // The tasks, one column per status. Each card offers the step that moves its task on; the rest is
 // in the task itself, which a click opens.
 export function TaskBoard() {
+  const [tab, setTab] = useState<'runs' | 'ideas'>('runs')
   const tasks = useCore((s) => s.tasks)
   const filter = useBoardFilter()
   const sort = usePreferences((p) => p.taskSort)
@@ -75,28 +77,34 @@ export function TaskBoard() {
   return (
     <section className="task-board" aria-label={t('GitInspector.task')}>
       <header className="task-board-header">
-        <h2>{t('GitInspector.task')}</h2>
-        <input
-          className="input task-board-search"
-          type="search"
-          aria-label={t('DependencyPicker.searchTasks')}
-          placeholder={t('TaskBoard.titleSourceKeyOrTaskId')}
-          value={filter.query}
-          onChange={(event) => useBoardFilter.setState({ query: event.target.value })}
-        />
-        <ProjectFilter tasks={list} value={filter.project} />
-        <AgentFilter tasks={list} value={filter.agent} />
-        <span className="task-board-spacer" />
-        <button
-          type="button"
-          className="task-board-chip"
-          aria-pressed={abandoned}
-          onClick={() => setPreference('showAbandonedTasks', !abandoned)}
-        >{t('ChatRequestCards.cancelled')}</button>
-        <SortButton value={sort} />
-        <button type="button" className="button primary task-board-new" onClick={() => setNewTaskOpen(true)}>{tr('TaskBoard.newTask', { value1: <span className="task-board-key">{TASK_SHORTCUT_LABEL}</span> })}</button>
+        <h2>{tab === 'runs' ? t('TaskBoard.runs') : t('Ideas.title')}</h2>
+        <div className="task-board-tabs" role="tablist">
+          <button type="button" role="tab" aria-selected={tab === 'runs'} data-active={tab === 'runs' || undefined} onClick={() => setTab('runs')}>{t('TaskBoard.runs')}</button>
+          <button type="button" role="tab" aria-selected={tab === 'ideas'} data-active={tab === 'ideas' || undefined} onClick={() => setTab('ideas')}>{t('Ideas.title')}</button>
+        </div>
+        {tab === 'runs' && <>
+          <input
+            className="input task-board-search"
+            type="search"
+            aria-label={t('DependencyPicker.searchTasks')}
+            placeholder={t('TaskBoard.titleSourceKeyOrTaskId')}
+            value={filter.query}
+            onChange={(event) => useBoardFilter.setState({ query: event.target.value })}
+          />
+          <ProjectFilter tasks={list} value={filter.project} />
+          <AgentFilter tasks={list} value={filter.agent} />
+          <span className="task-board-spacer" />
+          <button
+            type="button"
+            className="task-board-chip"
+            aria-pressed={abandoned}
+            onClick={() => setPreference('showAbandonedTasks', !abandoned)}
+          >{t('ChatRequestCards.cancelled')}</button>
+          <SortButton value={sort} />
+          <button type="button" className="button primary task-board-new" onClick={() => setNewTaskOpen(true)}>{tr('TaskBoard.newTask', { value1: <span className="task-board-key">{TASK_SHORTCUT_LABEL}</span> })}</button>
+        </>}
       </header>
-      <TaskDependencies columns={columns}>
+      {tab === 'ideas' ? <IdeasView embedded /> : <TaskDependencies columns={columns}>
         <div className="task-board-columns">
           {columns.map((column) => (
             <Column key={column.status} column={column} narrowed={narrowed} top={column.status === 'pending' && <TaskQuickAdd onCreated={setFreshId} />}>
@@ -116,7 +124,7 @@ export function TaskBoard() {
             </Column>
           ))}
         </div>
-      </TaskDependencies>
+      </TaskDependencies>}
       {menu && menuTask && (
         <TaskContextMenu task={menuTask} at={menu.at} onClose={closeMenu} onRename={() => setRenamingId(menuTask.id)} />
       )}

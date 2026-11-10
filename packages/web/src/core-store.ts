@@ -40,7 +40,8 @@ import {
   type Discussion,
   type Squad,
   type SquadRun,
-  type SquadPlanRef
+  type SquadPlanRef,
+  type Idea
 } from '@conclave/protocol'
 import { receiveChatDelta, receiveChatItems } from './chat-state'
 import { forgetDiscussionPosts, receiveDiscussionPosts } from './discussions'
@@ -104,6 +105,12 @@ export type CoreState = {
   draftProfileId: string | null
   squads: Record<string, Squad>
   squadRuns: Record<string, SquadRun>
+  // Bumped when a flow changes; a task inspector reads its flow again on this.
+  flowsRevision: number
+  // Ideas and standalone to-dos, and a page of their own.
+  ideas: Record<string, Idea>
+  ideasRevision: number
+  ideasOpen: boolean
   selectedSquadId: string | null
   squadDraft: boolean
   squadLaunch: boolean
@@ -245,6 +252,10 @@ export const useCore = create<CoreState>()(() => ({
   draftProfileId: null,
   squads: {},
   squadRuns: {},
+  flowsRevision: 0,
+  ideas: {},
+  ideasRevision: 0,
+  ideasOpen: false,
   selectedSquadId: null,
   squadDraft: false,
   squadLaunch: false,
@@ -342,6 +353,7 @@ export function selectTask(id: string | null): void {
       worktreesOpen: false,
       routinesOpen: false,
       overviewOpen: false,
+      ideasOpen: false,
       settingsOpen: false,
       view: chat ? 'chat' : 'detail',
       inspectorOpen: review || s.inspectorOpen
@@ -655,7 +667,7 @@ export function selectConversation(id: string | null): void {
   setSplitPanes(panesAfterSelect(savedPanes(), current, id))
   useCore.setState((s) => {
     const { [id ?? '']: _seen, ...unseen } = s.unseen
-    return { selectedConversationId: id, section: 'conversations', inspectorFile: s.section === 'conversations' && s.selectedConversationId === id ? s.inspectorFile : null, settingsOpen: false, worktreesOpen: false, routinesOpen: false, overviewOpen: false, inboxOpen: false, conversationDraft: false, discussionDraft: false, unseen }
+    return { selectedConversationId: id, section: 'conversations', inspectorFile: s.section === 'conversations' && s.selectedConversationId === id ? s.inspectorFile : null, settingsOpen: false, worktreesOpen: false, routinesOpen: false, overviewOpen: false, ideasOpen: false, inboxOpen: false, conversationDraft: false, discussionDraft: false, unseen }
   })
   if (id) markRoutineRunSeen(id)
 }
@@ -751,7 +763,7 @@ export type DraftIssue = { provider: string; instance: string; key: string; titl
 // `projects`: what the page starts with, as from a project's group; without, it starts with none.
 // `issue`: the inbox issue the conversation is opened to look into.
 export function openConversationDraft(projects?: readonly string[], issue: DraftIssue | null = null, from: CoreState['conversationDraftFrom'] = null): void {
-  useCore.setState({ selectedConversationId: null, selectedDiscussionId: null, section: 'conversations', settingsOpen: false, worktreesOpen: false, routinesOpen: false, overviewOpen: false, inboxOpen: false, conversationDraft: true, discussionDraft: false, conversationDraftMode: 'single', conversationDraftKey: crypto.randomUUID(), discussionDraftFrom: null, conversationDraftProjects: projects ? { paths: [...projects] } : null, conversationDraftIssue: issue, conversationDraftFrom: from, draftProfileId: null })
+  useCore.setState({ selectedConversationId: null, selectedDiscussionId: null, section: 'conversations', settingsOpen: false, worktreesOpen: false, routinesOpen: false, overviewOpen: false, inboxOpen: false, conversationDraft: true, discussionDraft: false, ideasOpen: false, conversationDraftMode: 'single', conversationDraftKey: crypto.randomUUID(), discussionDraftFrom: null, conversationDraftProjects: projects ? { paths: [...projects] } : null, conversationDraftIssue: issue, conversationDraftFrom: from, draftProfileId: null })
 }
 
 export type ConversationDraftMode = CoreState['conversationDraftMode']
@@ -787,7 +799,7 @@ export function closeConversationDraft(): void {
   openOverview()
 }
 
-const PAGES_CLOSED = { settingsOpen: false, worktreesOpen: false, routinesOpen: false, overviewOpen: false, inboxOpen: false } as const
+const PAGES_CLOSED = { settingsOpen: false, worktreesOpen: false, routinesOpen: false, overviewOpen: false, ideasOpen: false, inboxOpen: false } as const
 
 export function selectSquad(id: string | null, draft = false): void {
   useCore.setState({ section: 'squads', agentProfilesTab: 'squads', selectedSquadId: id, squadDraft: draft, ...PAGES_CLOSED })
@@ -876,7 +888,8 @@ export function setInboxOpen(open: boolean): void {
         settingsOpen: false,
         worktreesOpen: false,
         routinesOpen: false,
-        overviewOpen: false
+        overviewOpen: false,
+        ideasOpen: false
       }
     : OVERVIEW)
 }
@@ -913,11 +926,11 @@ export function setNewTaskOpen(open: boolean, draft: NewTaskDraft | null = null)
 }
 
 export function setSettingsOpen(open: boolean, section: string | null = null): void {
-  useCore.setState({ settingsOpen: open, settingsSection: section, ...(open ? { overviewOpen: false } : {}) })
+  useCore.setState({ settingsOpen: open, settingsSection: section, ...(open ? { overviewOpen: false, ideasOpen: false } : {}) })
 }
 
 export function setWorktreesOpen(open: boolean): void {
-  useCore.setState(open ? { worktreesOpen: true, routinesOpen: false, overviewOpen: false, inboxOpen: false, settingsOpen: false } : OVERVIEW)
+  useCore.setState(open ? { worktreesOpen: true, routinesOpen: false, overviewOpen: false, ideasOpen: false, inboxOpen: false, settingsOpen: false } : OVERVIEW)
 }
 
 // The reservations are a tab of the routines' page: what runs once, beside what runs again.
@@ -932,7 +945,7 @@ export function openUsageCard(agent: AgentKind | null): void {
 
 export function setRoutinesOpen(open: boolean, tab?: RoutinesTab): void {
   if (!open) return openOverview()
-  useCore.setState({ routinesOpen: true, ...(tab ? { routinesTab: tab } : {}), worktreesOpen: false, overviewOpen: false, inboxOpen: false, settingsOpen: false })
+  useCore.setState({ routinesOpen: true, ...(tab ? { routinesTab: tab } : {}), worktreesOpen: false, overviewOpen: false, ideasOpen: false, inboxOpen: false, settingsOpen: false })
 }
 
 export function useSchedulesOpen(): boolean {
@@ -942,7 +955,7 @@ export function useSchedulesOpen(): boolean {
 // The overview has no close of its own: it is what every other page leaves behind when it closes,
 // but a task, which goes back to the task board.
 const OVERVIEW = {
-  overviewOpen: true, guideOpen: false, section: 'tasks', selectedId: null, selectedConversationId: null, conversationDraft: false, discussionDraft: false,
+  overviewOpen: true, ideasOpen: false, guideOpen: false, section: 'tasks', selectedId: null, selectedConversationId: null, conversationDraft: false, discussionDraft: false,
   squadDraft: false, inboxOpen: false, worktreesOpen: false, routinesOpen: false, settingsOpen: false
 } as const
 
@@ -980,6 +993,12 @@ export function useActionableItems(): ActionableItem[] {
 
 export function setOverviewView(view: OverviewPane): void {
   useCore.setState({ overviewView: view, overviewScroll: 0 })
+}
+
+export function setIdeasOpen(open: boolean): void {
+  useCore.setState(open
+    ? { ideasOpen: true, overviewOpen: false, inboxOpen: false, worktreesOpen: false, routinesOpen: false, settingsOpen: false, selectedId: null, selectedConversationId: null, conversationDraft: false, discussionDraft: false }
+    : { ideasOpen: false })
 }
 
 export function setOverviewFilter(filter: OverviewFilter): void {
@@ -1402,6 +1421,12 @@ export function startCoreConnection(): void {
         rpc.on('squads.runChanged', ({ run }) => {
           if (!initialized) runChanges.set(run.id, run)
           useCore.setState((state) => ({ squadRuns: { ...state.squadRuns, [run.id]: run } }))
+        })
+        rpc.on('flows.changed', () => {
+          useCore.setState((state) => ({ flowsRevision: state.flowsRevision + 1 }))
+        })
+        rpc.on('ideas.changed', () => {
+          useCore.setState((state) => ({ ideasRevision: state.ideasRevision + 1 }))
         })
         rpc.on('git.changed', () => useCore.setState((s) => ({ gitRevision: s.gitRevision + 1 })))
         rpc.on('tasks.changed', ({ task }) => {

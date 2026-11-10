@@ -22,9 +22,20 @@ import { ProjectStar } from './project-star'
 import { createRpcHandlers } from './rpc-handlers'
 import { SessionImports } from './session-imports'
 import { TodoStore } from './todo-store'
+import { IdeaStore } from './idea-store'
 import { DiscussionService } from './discussion-service'
 import { startRpcServer, type RpcServer } from './rpc-server'
 import { TaskService } from './task-service'
+import { TaskContractStore } from './task-contract-store'
+import { CommandCheckProvider } from './command-check'
+import { CheckRunner } from './check-runner'
+import { HiddenTestProvider } from './hidden-test-provider'
+import { RedFirstProvider } from './red-first'
+import { FlowService } from './flow-service'
+import { TestAuthorService } from './test-author'
+import { ReplannerService } from './replanner'
+import { PlannerService } from './planner-service'
+import { FlowStore } from './flow-store'
 import { ProjectRegistry } from './project-registry'
 import { GitFavoriteStore } from './git-favorite-store'
 import { TaskStore } from './task-store'
@@ -95,6 +106,7 @@ const smallModels = new SmallModelStore(paths.database)
 smallModels.recoverQuick()
 const attachments = new AttachmentStore(paths.attachments)
 let server: RpcServer | null = null
+let flows: FlowService | null = null
 let awake: ComputerAwakeService | null = null
 const refreshAwake = () => awake?.refresh(conversations.workingCount(), schedules.openCount())
 
@@ -107,6 +119,7 @@ const wire = new WireLog(paths.sessions, (conversationId, stageId, entries) =>
 
 // Each conversation's to-dos; they go with it.
 const todos = new TodoStore(paths.database, (conversationId, groups) => server?.broadcast('todos.changed', { conversationId, groups }))
+const ideas = new IdeaStore(paths.database, () => server?.broadcast('ideas.changed', {}))
 
 // Built before the task service, which runs its chat tasks in it; each hands the other its events.
 const conversations = new ConversationService(
@@ -147,6 +160,7 @@ const conversations = new ConversationService(
       }
       routines.observe(event.conversationId, event.items)
       discussions.observe(event.conversationId, event.items)
+      flows?.observe(event.conversationId, event.items)
       notifyChatItems(event.conversationId, limits.decorate(smallModels.decorate(event.items)))
     } else if (event.type === 'planApproved') {
       service.recordPlan(event.taskId, event.plan)
@@ -202,6 +216,9 @@ const service = new TaskService(
   conversations,
   runs
 )
+
+const taskContracts = new TaskContractStore(paths.database)
+service.setTaskContracts(taskContracts)
 
 const sourceConfig = new SourceConfigStore(paths.sourcesConfig)
 const credentials = new CredentialStore(paths.credentials)
@@ -334,6 +351,13 @@ const discussions = new DiscussionService(paths.database, {
 
 
 const terminals = new TerminalService(paths.database, daemon, (list) => server?.broadcast('terminals.changed', { terminals: list }), Date.now, new ShellPrompt(path.join(paths.home, 'shell')))
+
+const hiddenTests = new HiddenTestProvider(terminals)
+flows = new FlowService(new FlowStore(paths.database), service, conversations, {
+  changed: (flow) => server?.broadcast('flows.changed', { flow })
+}, new TestAuthorService(conversations), new RedFirstProvider(hiddenTests), new ReplannerService(conversations), new PlannerService(conversations))
+
+
 conversations.setNativeDeletion({
   adapter: (agent) => adapterOf(agent).nativeSessions,
   executor: new NativeSessionRunner(daemon, undefined, undefined, (agent, session) => conversations.cleanupNative(agent, session), (agent, session, processSessionId) => conversations.registerNative(agent, session, processSessionId)),
@@ -345,6 +369,12 @@ const environment = new EnvironmentService({
   platform: process.platform,
   signedIn,
   changed: (environment) => server?.broadcast('system.environmentChanged', { environment })
+})
+// A flow may switch only to agents this machine can actually run with an account; the task's own
+// agent stays first even when it is missing, so a start still reports why.
+flows?.setAvailableAgents(async () => {
+  const found = await environment.check()
+  return AGENT_KINDS.filter((agent) => found.checks.some((check) => check.tool === agent && check.status !== 'missing' && !check.problem && check.signedIn === true))
 })
 
 const cliMaintenance = new AgentCliMaintenance(paths.database, {
@@ -372,6 +402,7 @@ conversations.setAccounts(accounts)
 const projectConfigs = new ProjectConfigStore(paths.projectTrust)
 const worktreeSetup = new WorktreeSetup(projectConfigs, terminals)
 service.setWorktreeSetup(worktreeSetup)
+service.setCheckRunner(new CheckRunner(new CommandCheckProvider(terminals), worktreeSetup, hiddenTests))
 conversations.setWorktreeSetup(worktreeSetup)
 const terminalCommands = new TerminalCommandStore(paths.database, (commands) => server?.broadcast('terminalCommands.changed', { commands }))
 const bookmarks = new BookmarkStore(paths.database, (list) => server?.broadcast('bookmarks.changed', { bookmarks: list }))
@@ -467,6 +498,7 @@ daemon.onConnect(() => {
       await smallModels.recoverHelpers({ stages: () => conversations.chatStageRefs(), items: (id, stageId) => conversations.stageChatItems(id, stageId) })
       terminals.reconcile(sessions)
       await discussions.reconcile()
+      await flows?.reconcile()
       void environment.check(true).catch((error: unknown) => console.error('[conclave-core] agent discovery failed', error))
       // What came due while core or the daemon was away goes now, not at the next tick.
       await schedules.tick()
@@ -518,7 +550,7 @@ server = await startRpcServer({
   handlers: createRpcHandlers(service, conversations, projects, gitFavorites, daemon, usage, sources, {
     store: attachments,
     uploads: new AttachmentUploads(attachments)
-  }, terminals, worktrees, browser, awake, terminalCommands, limits, runs, turns, chatSettings, environment, schedules, chatCommands, routines, discussions, wire, () => server?.broadcast('git.changed', {}), undefined, todos, plugins, skills, mcpServers, smallModels, projectConfigs, modelProviders, sessionImports, accounts, cliMaintenance, analytics, automation, new ProjectStar(sources), undefined, bookmarks)
+  }, terminals, worktrees, browser, awake, terminalCommands, limits, runs, turns, chatSettings, environment, schedules, chatCommands, routines, discussions, wire, () => server?.broadcast('git.changed', {}), undefined, todos, plugins, skills, mcpServers, smallModels, projectConfigs, modelProviders, sessionImports, accounts, cliMaintenance, analytics, automation, new ProjectStar(sources), undefined, bookmarks, flows ?? undefined, ideas)
 })
 await writeCoreEndpoint({ port: server.port, token, pid: process.pid, protocolVersion: PROTOCOL_VERSION, version: packageJson.version })
 daemon.start()
@@ -540,6 +572,7 @@ void analytics.catchUp((stage) => conversations.stageChatItems(stage.conversatio
 sources.start()
 // Idle chat agents are checked for once a minute, so one goes within a minute of its limit.
 setInterval(() => void conversations.releaseIdle(), 60_000).unref()
+setInterval(() => flows?.tick(), 30_000).unref()
 // Wire logs are for looking at soon after: a week on, they go.
 wire.prune()
 setInterval(() => wire.prune(), 6 * 60 * 60_000).unref()
@@ -565,6 +598,7 @@ async function shutdown(): Promise<void> {
   await analytics.close()
   routines.stop()
   autoArchive.stop()
+  flows?.close()
   discussions.close()
   sources.stop()
   await plugins.close()
@@ -574,6 +608,7 @@ async function shutdown(): Promise<void> {
   daemon.stop()
   await server?.close()
   await removeCoreEndpoint(process.pid)
+  taskContracts.close()
   store.close()
   conversationsStore.close()
   runs.close()

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -27,19 +28,20 @@ describe('TaskStore migrations', () => {
     const raw = new DatabaseSync(file)
     const upgrade = MIGRATIONS.findIndex((sql) => sql.includes('conversation_native_sessions ADD COLUMN artifacts'))
     applyLegacyMigrations(raw, MIGRATIONS.slice(0, upgrade))
-    const conversation = new ConversationStore(file)
-    const created = conversation.create('antigravity', '/project', ['/project'])
+    // Rows as that schema had them: today's store reads columns it did not have yet.
+    const id = randomUUID()
+    raw.prepare(`INSERT INTO conversations (id, title, title_locked, agent, workspace_path, managed_workspace, created_at, updated_at)
+      VALUES (?, 'Old chat', 0, 'antigravity', '/project', 0, 1, 1)`).run(id)
     const native = { id: 'old', root: '/history', locator: '/history/brain/old', cwd: '/project' }
     raw.prepare('INSERT INTO conversation_native_sessions (conversation_id,agent,provider_session_id,cwd,native) VALUES (?,?,?,?,?)')
-      .run(created.id, 'antigravity', 'old', '/project', JSON.stringify(native))
-    conversation.close()
+      .run(id, 'antigravity', 'old', '/project', JSON.stringify(native))
     raw.close()
     const migrated = new TaskStore(file)
     const kept = new ConversationStore(file)
     try {
-      expect(kept.nativeSessions([created.id])).toEqual([{ agent: 'antigravity', providerSessionId: 'old', session: native }])
-      kept.rememberNativeTarget(created.id, 'antigravity', 'old', '/project', 'new', '/history', [{ root: '/new/brain', locator: '/new/brain/old' }])
-      expect(kept.nativeSessions([created.id])[0]?.session.artifacts).toHaveLength(2)
+      expect(kept.nativeSessions([id])).toEqual([{ agent: 'antigravity', providerSessionId: 'old', session: native }])
+      kept.rememberNativeTarget(id, 'antigravity', 'old', '/project', 'new', '/history', [{ root: '/new/brain', locator: '/new/brain/old' }])
+      expect(kept.nativeSessions([id])[0]?.session.artifacts).toHaveLength(2)
     } finally { kept.close(); migrated.close() }
   })
 

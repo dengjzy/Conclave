@@ -1,7 +1,7 @@
 import { getLocale, t, tr } from '../i18n'
 import { useEffect, useMemo, useState } from 'react'
 import { agentDescriptor, ChatPermissionMode, DEFAULT_DISCUSSION_ROUNDS, MIN_DISCUSSION_MEMBERS, type AgentKind, type ChatCatalog, type ExternalSession } from '@conclave/protocol'
-import { closeConversationDraft, perform, selectConversation, selectDiscussion, setSettingsOpen, useChatImagesSupported, useChatOptionsSupported, useConversationWorktreesSupported, useCore, useDiscussionsSupported, useScheduleImagesSupported, useSchedulesSupported, useSessionImportSupported, useSourceInvestigateSupported, useStartBranchSupported } from '../core-store'
+import { closeConversationDraft, perform, selectConversation, selectDiscussion, setNewTaskOpen, setSettingsOpen, useChatImagesSupported, useChatOptionsSupported, useConversationWorktreesSupported, useCore, useDiscussionsSupported, useScheduleImagesSupported, useSchedulesSupported, useSessionImportSupported, useSourceInvestigateSupported, useStartBranchSupported } from '../core-store'
 import { resumeSession, useExternalSessionsWhen } from '../external-sessions'
 import { OtherProjectsHint } from './OtherProjectsHint'
 import { ConversationTip } from './ConversationTip'
@@ -30,7 +30,6 @@ import { composerDraft, EMPTY_DRAFT, saveComposerDraft } from '../composer-draft
 import { inboxKey, rememberInvestigationProjects } from '../source-inboxes'
 import { catalogKey, providerFor } from '../model-provider-choice'
 import { ProviderPicker } from './ProviderPicker'
-import { ConversationModePicker } from './ConversationCreateMenu'
 import { createDiscussion, defaultMemberName, loadDiscussionPosts } from '../discussions'
 import { discussionModelChoice } from '../discussion-model'
 
@@ -98,6 +97,7 @@ export function ConversationDraft() {
   const [draft] = useState(() => composerDraft(composerId))
   const { value, setText, setValue } = useMentionedText({ text: draft.text, mentions: draft.mentions })
   const { text } = value
+  const flowsSupported = useCore((state) => state.rpc?.features.includes('flows') ?? false)
   const [busy, setBusy] = useState(false)
   // Kept per agent, so switching back finds the mode picked for it.
   const [modes, setModes] = useState<Partial<Record<AgentKind, ChatPermissionMode>>>(() => {
@@ -338,8 +338,9 @@ export function ConversationDraft() {
   return (
     <section className="detail terminal-view conversation-view" aria-label={t('ConversationDraft.newConversation')}>
       <header className="detail-header conversation-header">
-        {issue ? <span className="terminal-view-title">{t('ConversationDraft.investigateIssue')}</span> : <ConversationModePicker mode="single" disabled={busy} />}
+        {issue ? <span className="terminal-view-title">{t('ConversationDraft.investigateIssue')}</span> : <span className="muted">{t('ConversationDraft.newConversation')}</span>}
         <div className="toolbar">
+          {flowsSupported && <button type="button" className="tool-button autonomous-task-button" onClick={() => setNewTaskOpen(true, { title: written.trim().slice(0, 200), repos: projectPaths, agent: null })}>{t('ConversationDraft.autonomousTask')}</button>}
           <button type="button" className="tool-button" aria-label={t('BackdropPicker.close')} data-tooltip={t('BackdropPicker.close')} onClick={closeConversationDraft}><CloseIcon /></button>
         </div>
       </header>

@@ -2,7 +2,6 @@ import { t, tr } from '../i18n'
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
 import { AgentKind, IMAGE_MIME_TYPES, type TaskImage } from '@conclave/protocol'
 import { dismissError, perform, selectTask, setNewTaskOpen, useCore } from '../core-store'
-import { defaultAgent } from '../default-agent'
 import { useInstalledAgents } from '../installed-agents'
 import { PRIMARY_KEY_LABEL, hasPrimaryModifier } from '../shortcut-keys'
 import { AgentQuotaHint, useRecommendation } from './AgentQuota'
@@ -37,7 +36,7 @@ export function NewTaskDialog() {
   const [draft] = useState(() => useCore.getState().newTaskDraft)
   const [title, setTitle] = useState(draft?.title ?? '')
   const [repos, setRepos] = useState<string[]>(() => [...(draft?.repos ?? [])])
-  const [agent, setAgent] = useState<AgentKind | null>(() => (draft ? draft.agent : defaultAgent(tasks, useCore.getState().conversations)))
+  const [agent, setAgent] = useState<AgentKind | null>(() => (draft ? draft.agent : null))
   const installed = useInstalledAgents()
   const recommended = useRecommendation(installed)?.agent ?? null
   const squads = useCore((state) => state.squads)
@@ -54,6 +53,9 @@ export function NewTaskDialog() {
   const [createMore, setCreateMore] = useState(false)
   const [lastCreated, setLastCreated] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const rpc = useCore((state) => state.rpc)
+  const canAutoRun = rpc?.features.includes('flows') ?? false
+  const [autoRun, setAutoRun] = useState(true)
   // State lags a render behind; the ref stops a double press from creating twice.
   const submitting = useRef(false)
   const canSubmit = title.trim() !== '' && connected && !busy && uploading === 0
@@ -102,6 +104,9 @@ export function NewTaskDialog() {
     setBusy(false)
     if (!task) {
       return
+    }
+    if (autoRun && canAutoRun) {
+      await perform((rpc) => rpc.call('flows.start', { id: task.id }))
     }
     if (createMore) {
       // Keep repos and agent: a batch of tasks usually shares them.
@@ -225,14 +230,15 @@ export function NewTaskDialog() {
           <span className="new-task-agent-chip">
             <ChatPicker
               label={t('NewTaskDialog.assignee')}
-              value={squadId ? `squad:${squadId}` : agent ?? ''}
-              placeholder={squadId ? t('NewTaskDialog.developmentSquad') : t('AgentPicker.chooseAgent')}
-              options={executorOptions(installed, squads, squadId, recommended)}
+              value={squadId ? `squad:${squadId}` : agent ?? 'auto'}
+              placeholder={squadId ? t('NewTaskDialog.developmentSquad') : t('NewTaskDialog.autoAgent')}
+              options={[{ value: 'auto', label: t('NewTaskDialog.autoAgent'), description: t('NewTaskDialog.autoAgentDescription') }, ...executorOptions(installed, squads, squadId, recommended).filter((option) => option.value !== '')]}
               size="large"
               placement="below"
               onChange={(value) => {
                 if (value.startsWith('squad:')) { setSquadId(value.slice(6)); return }
                 setSquadId(null)
+                if (value === 'auto') { setAgent(null); return }
                 const parsed = AgentKind.safeParse(value)
                 setAgent(parsed.success ? parsed.data : null)
               }}
@@ -288,9 +294,10 @@ export function NewTaskDialog() {
             }}
           />
           <span className="new-task-footer-spacer" />
+          {canAutoRun && <label className="switch new-task-auto-run"><input type="checkbox" role="switch" checked={autoRun} onChange={(e) => setAutoRun(e.target.checked)} /><span className="switch-track" aria-hidden="true" /><span>{t('NewTaskDialog.autoRun')}</span></label>}
           <label className="switch">{tr('NewTaskDialog.createMore', { value1: <input type="checkbox" role="switch" checked={createMore} onChange={(e) => setCreateMore(e.target.checked)} />, value2: <span className="switch-track" aria-hidden="true" /> })}</label>
           {createMore && lastCreated && <span className="muted modal-created">{tr('NewTaskDialog.created', { lastCreated: lastCreated })}</span>}
-          <button type="button" className="button primary modal-submit" disabled={!canSubmit} onClick={() => void submit()}>{tr('NewTaskDialog.createTask', { value1: <kbd>{PRIMARY_KEY_LABEL}↵</kbd> })}</button>
+          <button type="button" className="button primary modal-submit" disabled={!canSubmit} onClick={() => void submit()}>{autoRun && canAutoRun ? t('NewTaskDialog.createAndRun') : tr('NewTaskDialog.createTask', { value1: <kbd>{PRIMARY_KEY_LABEL}↵</kbd> })}</button>
         </footer>
       </div>
     </dialog>

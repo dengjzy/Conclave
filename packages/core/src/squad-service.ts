@@ -1,6 +1,6 @@
 import type { AgentProfile } from '@conclave/protocol'
 import { randomUUID } from 'node:crypto'
-import { agentDescriptor, checkSquadStart, SquadFields, squadModes, squadWorkOpen, squadWorkActive, type AgentKind, type ChatItem, type Conversation, type Squad, type SquadPlanRef, type SquadRun, type SquadWork, type Task, type TaskLaunchOptions } from '@conclave/protocol'
+import { agentDescriptor, checkSquadStart, contractNeedsHuman, SquadFields, squadModes, squadWorkOpen, squadWorkActive, type AgentKind, type ChatItem, type Conversation, type Squad, type SquadPlanRef, type SquadRun, type SquadWork, type Task, type TaskLaunchOptions } from '@conclave/protocol'
 import type { ConversationService } from './conversation-service'
 import type { TaskService } from './task-service'
 import { Rejection } from './rejection'
@@ -329,8 +329,22 @@ export class SquadService {
     if (run.summary && !leaderBusy) {
       const turn = leader ? this.chats.chatPage(leader.id).items.findLast((item) => item.kind === 'turn') : null
       if (turn?.kind !== 'turn' || turn.state !== 'completed') { this.announce(this.store.patchRun(id, { state: 'paused', summary: null })); return }
+      // A contract with no machine check, or one that reserves the verdict for a person, keeps the
+      // squad paused instead of handing the task in on its own.
+      const contract = this.tasks.contract(run.taskId)
+      if (contract && contractNeedsHuman(contract)) { this.announce(this.store.patchRun(id, { state: 'paused' })); return }
+      try {
+        // The squad's summary is the hand-in: the projects' checks run before the task reaches review,
+        // and a failure goes back to the leader as an ordinary message so it can dispatch a fix.
+        await this.tasks.submitChecked(run.taskId, { squad: true })
+      } catch (error) {
+        if (error instanceof Rejection && (error.reason === 'check-failed' || error.reason === 'check-running')) {
+          this.announce(this.store.patchRun(id, { state: 'running', summary: null }))
+          return
+        }
+        throw error
+      }
       this.announce(this.store.patchRun(id, { state: 'review' }))
-      this.tasks.submit(run.taskId)
       if (leader) await this.chats.stop(leader.id)
       return
     }

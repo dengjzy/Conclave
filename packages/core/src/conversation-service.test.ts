@@ -100,6 +100,15 @@ describe('ConversationService', () => {
     expect(store.chatOptions(conversation.id).permissionMode).toBe('ask')
   })
 
+  it('launches its agents with the user MCP servers the conversation picked', async () => {
+    const handed: (readonly string[] | null | undefined)[] = []
+    service.setUserMcpProvider((_agent, _readOnly, selected) => { handed.push(selected); return [] })
+    const conversation = await service.create('claude', [], true, { mcpServers: ['docs'], deferStart: true })
+    expect(conversation.mcpServers).toEqual(['docs'])
+    await service.continue(conversation.id, false)
+    expect(handed).toEqual([['docs']])
+  })
+
   it('refuses to resume a legacy unsupported read-only conversation', async () => {
     const legacy = store.create('gemini', root, [root], randomUUID())
     store.setWorkspaceReadOnly(legacy.id, true)
@@ -1588,6 +1597,32 @@ describe('ConversationService', () => {
       const task = store.create('claude', root, [root], randomUUID(), {}, { id: 'task-1', title: 'Dark mode' })
       await expect(service.fork(task.id, stage.id, slow.id)).rejects.toMatchObject({ reason: 'task-conversation' })
     })
+  })
+
+  it('settles a wait for the turn on the chat items, not on its timeout', async () => {
+    const echo = daemon.reply
+    daemon.reply = () => {}
+    const created = await service.create('claude', [root])
+    const since = Date.now()
+    await service.send(created.id, 'build it')
+    await settle()
+    let settled: boolean | null = null
+    const waiting = service.waitForTurn(created.id, since, 10_000).then((ok) => { settled = ok; return ok })
+    await settle()
+    expect(settled).toBeNull()
+    // The agent finishes; the items resolve the wait without the deadline passing.
+    echo(created.sessionId!, 'build it')
+    await expect(waiting).resolves.toBe(true)
+    expect(settled).toBe(true)
+    daemon.reply = echo
+  })
+
+  it('gives up a wait for a turn that never comes at its deadline', async () => {
+    const echo = daemon.reply
+    daemon.reply = () => {}
+    const created = await service.create('claude', [root])
+    await expect(service.waitForTurn(created.id, Date.now(), 30)).resolves.toBe(false)
+    daemon.reply = echo
   })
 
 })
