@@ -10,7 +10,8 @@ const RUN_STATE: Record<Flow['state'], string> = localized(() => ({
   review: t('FlowPanel.state.review'),
   paused: t('FlowPanel.state.paused'),
   failed: t('FlowPanel.state.failed'),
-  cancelled: t('FlowPanel.state.cancelled')
+  cancelled: t('FlowPanel.state.cancelled'),
+  waiting_environment: '等待环境'
 }))
 
 // The way into a run from the task itself. The trajectory lives in the inspector, which is not

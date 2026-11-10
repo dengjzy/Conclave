@@ -37,6 +37,7 @@ import type { ScheduleService } from './schedule-service'
 import type { RoutineService } from './routine-service'
 import type { SquadService } from './squad-service'
 import type { FlowService } from './flow-service'
+import type { EvolutionService } from './evolution-service'
 import type { TodoStore } from './todo-store'
 import type { IdeaStore } from './idea-store'
 import type { DiscussionService } from './discussion-service'
@@ -104,7 +105,8 @@ export function createRpcHandlers(
   profiles?: AgentProfileService,
   bookmarks?: BookmarkStore,
   flows?: FlowService,
-  ideas?: IdeaStore
+  ideas?: IdeaStore,
+  evolution?: EvolutionService
 ): RpcHandlers {
   const profileService = () => {
     if (!profiles) throw new Rejection('profile-unavailable')
@@ -121,6 +123,10 @@ export function createRpcHandlers(
   const ideaStore = (): IdeaStore => {
     if (!ideas) throw new Rejection('ideas-unavailable')
     return ideas
+  }
+  const evolutionService = (): EvolutionService => {
+    if (!evolution) throw new Rejection('evolution-unavailable')
+    return evolution
   }
   const maintenance = (): AgentCliMaintenance => {
     if (!cliMaintenance) throw new Rejection('agent-cli-maintenance-unavailable')
@@ -442,6 +448,11 @@ export function createRpcHandlers(
     'flows.list': ({ taskId }) => flowService().list(taskId),
     'flows.get': ({ id }) => flowService().get(id),
     'flows.control': ({ id, action }) => flowService().control(id, action),
+    'flows.supplyEnvironment': ({ id, mcpServers, env, note }) => flowService().supplyEnvironment(id, { mcpServers, env, note }),
+    'evolution.status': () => evolutionService().status(),
+    'evolution.trigger': (options) => evolutionService().trigger(options),
+    'evolution.listGenerations': ({ limit }) => evolutionService().listGenerations(limit),
+    'evolution.addFriction': (item) => evolutionService().addFriction(item),
     'ideas.list': () => ideaStore().list(),
     'ideas.create': (fields) => ideaStore().create(fields),
     'ideas.update': ({ id, ...fields }) => ideaStore().update(id, fields),

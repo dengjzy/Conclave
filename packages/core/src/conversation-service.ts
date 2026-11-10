@@ -723,6 +723,11 @@ export class ConversationService {
     return this.changeInitialTarget(id, () => this.changeAdditionalProjects(id, projectPaths))
   }
 
+  setMcpServers(id: string, servers: readonly string[] | null): Conversation {
+    this.store.setMcpServers(id, servers)
+    return this.changed(this.get(id))
+  }
+
   private async changeAdditionalProjects(id: string, projectPaths: readonly string[]): Promise<Conversation> {
     const conversation = this.free(id)
     if (conversation.squadRunId || conversation.parentConversationId) throw new Rejection('squad-managed')

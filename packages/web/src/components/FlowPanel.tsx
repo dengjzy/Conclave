@@ -15,7 +15,8 @@ const FLOW_STATE: Record<Flow['state'], string> = localized(() => ({
   review: t('FlowPanel.state.review'),
   paused: t('FlowPanel.state.paused'),
   failed: t('FlowPanel.state.failed'),
-  cancelled: t('FlowPanel.state.cancelled')
+  cancelled: t('FlowPanel.state.cancelled'),
+  waiting_environment: '等待环境'
 }))
 
 const NODE_STATE: Record<FlowNode['state'], string> = localized(() => ({

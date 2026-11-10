@@ -39,9 +39,10 @@ Conclave directly drives your locally installed and authenticated Agent CLIs. Co
 - **Concurrent Fan-out**: Select multiple agents and broadcast prompts simultaneously for side-by-side comparative review.
 - **Multi-Turn Discussions**: Coordinate agents in multi-round structured topic debates, cross-reviewing arguments with an assigned host synthesizing consensus.
 
-### 2. Engineering Squads & Task Delegation
-- Configure dedicated agents, models, and roles for Team Lead, Developers, and Reviewers.
-- After the Lead approves the plan, assign members to work concurrently in isolated worktrees: read-only analysis in parallel, serialized code editing with automated approvals.
+### 2. Contract-Driven Autonomous Flows & HITL Environment Bus
+- **Acceptance Contracts**: Explicit definition of "done" with command checks, trusted script hashing, and historical baseline filtering.
+- **TDD Red-First & Hidden Tests**: Read-only test authors author blind test suites and verify failing red tests on start commits before implementation.
+- **Dynamic Environment Demand & Supply**: Suspends with structured demands when blocked by missing tools, env vars, or MCP plugins, resuming immediately upon human supply.
 
 ### 3. Contextual Conversation Handoff
 - Switch between execution agents within any ongoing conversation; full context and message history transfer smoothly without copy-pasting.
@@ -52,6 +53,10 @@ Conclave directly drives your locally installed and authenticated Agent CLIs. Co
 ### 5. Automations & Scheduled Runs
 - **Recurring & One-Off Schedules**: Set up recurring routines (hourly/daily/custom Cron expressions) or one-shot reservations to trigger agents for routine inspections or maintenance tasks.
 - **Queue & History Telemetry**: Track real-time execution queues, historical statuses, and execution logs with full traceability.
+
+### 6. Recursive Self-Improvement (RSI)
+- **Conclave fixing Conclave**: Built-in native `EvolutionService` claiming open friction items and mutating Conclave code in shadow worktrees.
+- **5-Gate Hard Gating**: Verified against typecheck, full unit test suite, production build, headless isolated core boot (`self:smoke`), and anti-cheat test policy (`self:tests`), fast-forwarding to `self/evolve`.
 
 ---
 
@@ -87,7 +92,57 @@ Conclave adopts a modern decoupled multi-process architecture:
 * **`packages/core`**: SQLite storage, Git worktree orchestration, task pipelines, static asset delivery, and WebSocket JSON-RPC endpoints.
 * **`packages/web`**: Responsive browser application with rich terminal, diff views, and multi-agent debate stages.
 
+### Autonomous Flow & RSI Engine Architecture
+
+Following the **"Thin Harness"** philosophy, Conclave focuses on isolated sandboxes, deterministic exit-code gates, and environment buses:
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                   Router Layer (Event Triage & Friction Modeling)       │
+│      - Tasks / Friction ──▶ Synthesize Dynamic Harness Checks          │
+│      - Sign Acceptance Contract (checks / baseline / risk)             │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │ Spawn Isolated Worker
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│               Worker Layer (Autonomous Loop in Isolated Worktree)      │
+│                                                                        │
+│   ┌────────────────────────────────────────────────────────────────┐   │
+│   │                      The Autonomous Loop                       │   │
+│   │                                                                │   │
+│   │   [Plan/Hypothesis] ──▶ [Implement] ──▶ [Verify Contract]      │   │
+│   │          ▲                                     │               │   │
+│   │          │ (Replanner Diagnosis)               │               │   │
+│   │          └────── [Logical Fail / Next Agent] ◀─┤               │   │
+│   │                                                │               │   │
+│   └────────────────────────────────────────────────┼───────────────┘   │
+└───────────────────────┬────────────────────────────┼───────────────────┘
+                        │                            │
+             [Missing Tool/MCP Block]                │ [All 5 Gates Green]
+                        ▼                            ▼
+┌─────────────────────────────────┐        ┌─────────────────────────────┐
+│  HITL Environment Bus           │        │   RSI Survival of Fittest   │
+│   - State: waiting_environment  │        │   - Commit Verified Tree    │
+│   - Emit: EnvironmentDemand     │        │   - Fast-Forward self/evolve│
+│   - User: Inject MCP / Env / Pay│        │   - Archive Friction & Trace│
+│   - RPC: flows.supplyEnvironment│        └─────────────────────────────┘
+└─────────────────────────────────┘
+```
+
 ---
+
+## References & Design Philosophy
+
+1. **[DeepSeek Harness (dsh-superagent-prototype)](https://github.com/deepseek-ai/dsh-superagent-prototype)**:
+   - *Human Attention Bottleneck*: Humans can track at most 3-5 concurrent sessions; background work runs asynchronously and silently.
+   - *Router-Worker Separation*: Long-lived Router listens and delegates; disposable Workers run in clean workspaces with fresh contexts.
+   - *Thin Harness*: Stronger models require thinner scaffolding.
+2. **[Andrej Karpathy - autoresearch](https://github.com/karpathy/autoresearch)**:
+   - *Tight Scoping*: Constrain mutation surface to target areas.
+   - *Deterministic Objective Evaluation*: Scalar and exit-code verified benchmarks over subjective claims.
+   - *Continuous Survival of the Fittest*: Commit on improvements, prune on failures.
+3. **SWE-bench & TDD Red-First**:
+   - *Blind Verification*: Author tests independently and confirm failure on base commits before implementation.
 
 ## Supported Agents
 

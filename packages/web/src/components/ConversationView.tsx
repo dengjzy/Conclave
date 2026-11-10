@@ -31,7 +31,8 @@ const RUN_LABEL = {
   review: 'FlowPanel.state.review',
   paused: 'FlowPanel.state.paused',
   failed: 'FlowPanel.state.failed',
-  cancelled: 'FlowPanel.state.cancelled'
+  cancelled: 'FlowPanel.state.cancelled',
+  waiting_environment: 'FlowPanel.state.paused'
 } as const
 
 // Where a fork came from: a way back while the source is still here.

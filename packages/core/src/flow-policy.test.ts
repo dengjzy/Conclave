@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CheckResult } from '@conclave/protocol'
-import { attemptHistory, classifyFailure, failureSignature } from './flow-policy'
+import { attemptHistory, classifyFailure, detectEnvironmentDemand, failureSignature } from './flow-policy'
 
 const result = (tail: string, signature = 'sig', status: 'fail' | 'blocked' = 'fail'): CheckResult => ({
   repo: '/code', command: 'pnpm test', status, exitCode: 1, durationMs: 1, tail, signature, failures: [tail], flaky: false
@@ -45,5 +45,31 @@ describe('attemptHistory', () => {
     }
     expect(attemptHistory(flow as never)).toContain('#1 claude · fail · test')
     expect(attemptHistory(flow as never)).toContain('#2 codex · fail · compile')
+  })
+})
+
+describe('detectEnvironmentDemand', () => {
+  it('detects missing command tool', () => {
+    const demand = detectEnvironmentDemand([result('/bin/sh: line 1: adb: command not found')])
+    expect(demand).toMatchObject({
+      type: 'command',
+      target: 'adb'
+    })
+  })
+
+  it('detects missing environment variable', () => {
+    const demand = detectEnvironmentDemand([result('Error: GITHUB_TOKEN is not defined in environment')])
+    expect(demand).toMatchObject({
+      type: 'env_var',
+      target: 'GITHUB_TOKEN'
+    })
+  })
+
+  it('detects service connection failure', () => {
+    const demand = detectEnvironmentDemand([result('connect ECONNREFUSED 127.0.0.1:5432')])
+    expect(demand).toMatchObject({
+      type: 'service',
+      target: '127.0.0.1:5432'
+    })
   })
 })

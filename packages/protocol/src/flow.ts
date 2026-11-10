@@ -7,9 +7,18 @@ import { Replan } from './replan'
 // checks, and the task reaches review only when the flow says so. The first version is deliberately
 // linear; the nodes and attempts are kept as data so a planner can grow the graph later.
 
-export const FLOW_STATES = ['running', 'review', 'paused', 'failed', 'cancelled'] as const
+export const FLOW_STATES = ['running', 'review', 'paused', 'failed', 'cancelled', 'waiting_environment'] as const
 export const FlowState = z.enum(FLOW_STATES)
 export type FlowState = z.infer<typeof FlowState>
+
+export const EnvironmentDemand = z.object({
+  id: z.string().uuid(),
+  type: z.enum(['command', 'mcp', 'env_var', 'service']),
+  target: z.string().trim().min(1),
+  reason: z.string().trim().min(1),
+  suggestion: z.string().optional()
+})
+export type EnvironmentDemand = z.infer<typeof EnvironmentDemand>
 
 export const FLOW_NODE_KINDS = ['plan', 'implement', 'verify', 'gate'] as const
 export const FlowNodeKind = z.enum(FLOW_NODE_KINDS)
@@ -77,6 +86,8 @@ export const Flow = z.object({
   note: z.string().nullable(),
   // What was tried and what happened, for a person reading a paused or finished run.
   report: z.string().nullable().default(null),
+  // Structured demand for environment/tools when blocked.
+  demand: EnvironmentDemand.nullable().default(null),
   createdAt: z.number(),
   updatedAt: z.number()
 })

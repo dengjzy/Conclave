@@ -32,6 +32,7 @@ import { CheckRunner } from './check-runner'
 import { HiddenTestProvider } from './hidden-test-provider'
 import { RedFirstProvider } from './red-first'
 import { FlowService } from './flow-service'
+import { EvolutionService } from './evolution-service'
 import { TestAuthorService } from './test-author'
 import { ReplannerService } from './replanner'
 import { PlannerService } from './planner-service'
@@ -357,6 +358,10 @@ flows = new FlowService(new FlowStore(paths.database), service, conversations, {
   changed: (flow) => server?.broadcast('flows.changed', { flow })
 }, new TestAuthorService(conversations), new RedFirstProvider(hiddenTests), new ReplannerService(conversations), new PlannerService(conversations))
 
+const evolution = new EvolutionService(paths.home, process.cwd(), service, flows, {
+  changed: (status) => server?.broadcast('evolution.changed', { status })
+})
+
 
 conversations.setNativeDeletion({
   adapter: (agent) => adapterOf(agent).nativeSessions,
@@ -550,7 +555,7 @@ server = await startRpcServer({
   handlers: createRpcHandlers(service, conversations, projects, gitFavorites, daemon, usage, sources, {
     store: attachments,
     uploads: new AttachmentUploads(attachments)
-  }, terminals, worktrees, browser, awake, terminalCommands, limits, runs, turns, chatSettings, environment, schedules, chatCommands, routines, discussions, wire, () => server?.broadcast('git.changed', {}), undefined, todos, plugins, skills, mcpServers, smallModels, projectConfigs, modelProviders, sessionImports, accounts, cliMaintenance, analytics, automation, new ProjectStar(sources), undefined, bookmarks, flows ?? undefined, ideas)
+  }, terminals, worktrees, browser, awake, terminalCommands, limits, runs, turns, chatSettings, environment, schedules, chatCommands, routines, discussions, wire, () => server?.broadcast('git.changed', {}), undefined, todos, plugins, skills, mcpServers, smallModels, projectConfigs, modelProviders, sessionImports, accounts, cliMaintenance, analytics, automation, new ProjectStar(sources), undefined, bookmarks, flows ?? undefined, ideas, evolution)
 })
 await writeCoreEndpoint({ port: server.port, token, pid: process.pid, protocolVersion: PROTOCOL_VERSION, version: packageJson.version })
 daemon.start()

@@ -6,6 +6,7 @@ import {
   type ChatItem,
   type CheckResult,
   type Conversation,
+  type EnvironmentDemand,
   type Flow,
   type FlowNode,
   type HiddenTestPlan,
@@ -16,7 +17,7 @@ import {
 import type { ConversationService } from './conversation-service'
 import type { FlowStore } from './flow-store'
 import { defaultPlan, graphPlan } from './flow-planner'
-import { attemptHistory, classifyFailure, failureSignature } from './flow-policy'
+import { attemptHistory, classifyFailure, detectEnvironmentDemand, failureSignature } from './flow-policy'
 import { Rejection } from './rejection'
 import type { TaskService } from './task-service'
 import type { RedFirstResult } from './red-first'
@@ -25,7 +26,7 @@ const RETRY_LIMIT = 4000
 
 const failure = (error: unknown) => error instanceof Rejection ? error.reason : error instanceof Error ? error.message : String(error)
 
-type FlowChats = Pick<ConversationService, 'get' | 'send' | 'chatPage' | 'interrupt' | 'stop'>
+type FlowChats = Pick<ConversationService, 'get' | 'send' | 'chatPage' | 'interrupt' | 'stop' | 'setMcpServers'>
 type FlowTasks = Pick<TaskService, 'get' | 'start' | 'create' | 'attachConversation' | 'check' | 'submit' | 'contract' | 'handoff' | 'assignAgent'>
 type TestAuthor = { author(task: Task, mcpServers: readonly string[] | null): Promise<HiddenTestPlan | null> }
 type RedFirst = { run(task: Task, conversationId: string, plan: HiddenTestPlan): Promise<RedFirstResult> }
@@ -95,6 +96,7 @@ export class FlowService {
       redFirst: this.redFirst ? 'pending' : 'skipped',
       note: null,
       report: null,
+      demand: null,
       replan: null,
       replans: [],
       createdAt: now,
@@ -187,8 +189,37 @@ export class FlowService {
         flow.report = this.report(flow)
         return this.save(flow)
       }
-      if (flow.state !== 'paused' && flow.state !== 'failed') throw new Rejection('flow-not-paused')
+      if (flow.state !== 'paused' && flow.state !== 'failed' && flow.state !== 'waiting_environment') throw new Rejection('flow-not-paused')
       return this.resume(flow)
+    })
+  }
+
+  // Supplies missing environment (such as MCP servers or environment variables) to a flow
+  // that was suspended waiting for environment setup.
+  async supplyEnvironment(id: string, options: { mcpServers?: readonly string[]; env?: Record<string, string>; note?: string } = {}): Promise<Flow> {
+    return this.serially(id, async () => {
+      const flow = this.store.get(id)
+      if (flow.state !== 'waiting_environment' && flow.state !== 'paused') throw new Rejection('flow-not-waiting-environment', '当前流程并未在等待环境补给')
+      const implement = flow.nodes.find((node) => node.kind === 'implement')
+      if (implement?.conversationId && options.mcpServers?.length && this.chats.setMcpServers) {
+        const conversation = this.chats.get(implement.conversationId)
+        if (conversation) {
+          const current = conversation.mcpServers ?? []
+          const merged = [...new Set([...current, ...options.mcpServers])]
+          this.chats.setMcpServers(implement.conversationId, merged)
+        }
+      }
+      flow.demand = null
+      flow.state = 'running'
+      flow.note = options.note ? `环境已就绪：${options.note}` : '环境已补充，恢复运行'
+      const node = activeFlowNode(flow) ?? implement
+      if (node?.conversationId) {
+        await this.chats.send(node.conversationId, `环境已经配置完毕${options.note ? `（${options.note}）` : ''}。请重新运行验收检查，继续完成任务。`, [], false, false, this.ref(flow, node)).catch(() => {})
+      }
+      this.save(flow)
+      this.announce(flow)
+      void this.advance(flow.id).catch(() => {})
+      return this.store.get(flow.id)
     })
   }
 
@@ -206,6 +237,7 @@ export class FlowService {
     implement.error = null
     flow.attempts.push({ id: randomUUID(), nodeId: implement.id, number: implement.attempts, state: 'running', agent: implement.agent, result: null, failureKind: null, signature: null, error: null, startedAt: implement.startedAt, endedAt: null })
     flow.state = 'running'
+    flow.demand = null
     flow.note = null
     this.save(flow)
     try {
@@ -417,8 +449,10 @@ export class FlowService {
       return
     }
     if (kind === 'environment') {
-      flow.state = 'paused'
-      flow.note = `环境问题，重试不会改变结果：\n${detail}`
+      const demand = detectEnvironmentDemand(results)
+      flow.state = 'waiting_environment'
+      flow.demand = demand
+      flow.note = `等待环境就绪（${demand?.type ?? 'env'}: ${demand?.target ?? 'unknown'}）：\n${detail}`
       flow.report = this.report(flow)
       this.save(flow)
       this.announce(flow)
@@ -464,6 +498,7 @@ export class FlowService {
     implement.error = null
     flow.attempts.push({ id: randomUUID(), nodeId: implement.id, number: implement.attempts, state: 'running', agent: implement.agent, result: null, failureKind: null, signature: null, error: null, startedAt: implement.startedAt, endedAt: null })
     flow.state = 'running'
+    flow.demand = null
     flow.note = null
     this.save(flow)
     try {
@@ -522,6 +557,7 @@ export class FlowService {
       `尝试：`,
       ...flow.attempts.slice(-8).map((attempt) => `#${attempt.number} ${keyOf(attempt.nodeId)} ${attempt.agent ?? '—'} · ${attempt.result ?? attempt.state}${attempt.failureKind ? ` · ${attempt.failureKind}` : ''}`),
       flow.hiddenTests ? `隐藏测试：${flow.hiddenTests.files.length} 个文件 · ${flow.hiddenTests.command}` : flow.testAuthor === 'failed' ? '隐藏测试：未生成（测试作者没有给出计划，本次只有契约检查）' : '',
+      flow.demand ? `等待环境：${flow.demand.type} · ${flow.demand.target} (${flow.demand.reason})` : '',
       flow.redFirst !== 'skipped' ? `Red-first：${flow.redFirst}` : '',
       flow.replan ? `最新重规划：${flow.replan.diagnosis}${flow.replan.steps.length ? `（${flow.replan.steps.length} 步）` : ''}` : ''
     ].filter(Boolean)

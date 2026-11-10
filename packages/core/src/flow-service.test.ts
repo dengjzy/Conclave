@@ -364,11 +364,19 @@ describe('FlowService', () => {
     service.close()
   })
 
-  it('pauses on an environment failure instead of retrying it', async () => {
-    const flow = await startWithFailure([fail('env', 'blocked')])
-    expect(flow.state).toBe('paused')
-    expect(flow.note).toContain('环境问题')
+  it('waits on an environment failure and can be supplied with environment', async () => {
+    const envCheck: CheckResult = { repo: '/repo', command: 'cargo test', status: 'blocked', exitCode: 127, durationMs: 1, tail: 'cargo: command not found', signature: 'cargo-missing', failures: ['cargo: command not found'], flaky: false }
+    const flow = await startWithFailure([envCheck])
+    expect(flow.state).toBe('waiting_environment')
+    expect(flow.note).toContain('等待环境就绪')
+    expect(flow.demand?.type).toBe('command')
+    expect(flow.demand?.target).toBe('cargo')
     expect(sends).toHaveLength(0)
+
+    const resumed = await flows.supplyEnvironment(flow.id, { mcpServers: ['rust-tools'], note: 'cargo ready' })
+    expect(resumed.state).toBe('running')
+    expect(resumed.demand).toBeNull()
+    expect(sends).toHaveLength(1)
   })
 
   it('pauses when the attempts run out', async () => {

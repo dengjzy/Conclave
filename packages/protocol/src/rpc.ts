@@ -5,6 +5,7 @@ import { GitTarget, GitBranch, GitStatus, GitHistory, GitDetail, GitComparison, 
 import { AgentKind, MAX_DETAILS_LENGTH, MAX_TASK_REPOS, RepoStartOptions, Task, TaskStatus } from './task'
 import { CheckResult, TaskContract, TaskContractFields } from './contract'
 import { Flow } from './flow'
+import { EvolutionGeneration, EvolutionStatus, FrictionItem } from './evolution'
 import { ATTACHMENT_CHUNK_BYTES, AttachmentId, AttachmentInfo, Base64Chunk, ImageRef, MAX_ATTACHMENT_BYTES, MAX_CHAT_IMAGES, MAX_TASK_IMAGES } from './attachments'
 import { LoginNotice, LoginPrompt, SourceDescriptor, SourceId, SourceInbox, SourceProblem } from './source'
 import { PluginId, PluginInfo, PluginInstallSource, PluginVersion, RecommendedPlugin } from './plugin'
@@ -355,6 +356,36 @@ export const rpcMethods = {
   'flows.list': { params: z.object({ taskId: z.string().optional() }), result: z.array(Flow) },
   'flows.get': { params: z.object({ id: z.string().uuid() }), result: Flow },
   'flows.control': { params: z.object({ id: z.string().uuid(), action: z.enum(['cancel', 'resume']) }), result: Flow },
+  // Supplies missing environment (MCP servers, env vars, etc.) to a waiting flow and resumes it.
+  'flows.supplyEnvironment': {
+    params: z.object({
+      id: z.string().uuid(),
+      mcpServers: z.array(z.string()).optional(),
+      env: z.record(z.string(), z.string()).optional(),
+      note: z.string().optional()
+    }),
+    result: Flow
+  },
+  // Self-evolution loop: status, triggers, history and friction items.
+  'evolution.status': { params: z.object({}), result: EvolutionStatus },
+  'evolution.trigger': {
+    params: z.object({
+      frictionId: z.string().optional(),
+      agent: AgentKind.optional(),
+      dryRun: z.boolean().optional()
+    }),
+    result: EvolutionGeneration
+  },
+  'evolution.listGenerations': { params: z.object({ limit: z.number().int().positive().max(50).optional() }), result: z.array(EvolutionGeneration) },
+  'evolution.addFriction': {
+    params: z.object({
+      summary: z.string().trim().min(1),
+      repro: z.string().trim().min(1),
+      expect: z.string().trim().min(1),
+      paths: z.array(z.string()).optional()
+    }),
+    result: FrictionItem
+  },
   // Gives the task to another agent, which goes on with its chat at once from a handoff (see checkTaskHandoff).
   'tasks.handoff': { params: TaskRef.extend({ agent: AgentKind, note: z.string().max(10000), allowBypass: AllowBypass }).extend(HandoffOptions.shape), result: Task },
   'tasks.savePlan': { params: TaskRef.extend({ stageId: z.string().uuid(), requestId: z.string().min(1).max(200) }), result: Task },
@@ -884,6 +915,7 @@ export const rpcNotifications = {
   'conversations.chatDelta': z.object({ conversationId: z.string(), stageId: z.string().optional(), itemId: z.string(), append: z.string() }),
   'tasks.changed': z.object({ task: Task }),
   'flows.changed': z.object({ flow: Flow }),
+  'evolution.changed': z.object({ status: EvolutionStatus }),
   'ideas.changed': z.object({}),
   'tasks.deleted': z.object({ id: z.string() }),
   'sessions.data': z.object({ sessionId: z.string(), data: z.string(), offset: z.number().int() }),
