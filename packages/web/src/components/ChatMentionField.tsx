@@ -8,6 +8,7 @@ import { ChatReference, validChatReferences } from '@conclave/protocol'
 import { LinkMark, ReferenceMark, useOpenReference } from './ChatReference'
 import { textLinks } from '../text-links'
 import { shiftMentions, type Mention, type MentionedText, type MentionTarget } from '../chat-mentions'
+import { chatListKeymap } from './chat-list-continuation'
 
 const EMPTY: MentionedText = { text: '', mentions: [] }
 // How many of the texts the input held are kept with their mentions, for undo to find again.
@@ -167,7 +168,7 @@ export function MentionField({ value, setValue, input, onSelectionChange, placeh
       state: EditorState.create({
         doc: initial.current.text,
         extensions: [
-          referenceState, typing, decorations, history(), drawSelection(),
+          referenceState, typing, decorations, history(), drawSelection(), chatListKeymap,
           invertedEffects.of((transaction) => transaction.docChanged || transaction.effects.some((effect) => effect.is(setMentions))
             ? [setMentions.of(transaction.startState.field(referenceState))] : []),
           keymap.of([...defaultKeymap, ...historyKeymap]), EditorView.lineWrapping,

@@ -17,6 +17,7 @@ import { ChatAddMenu, ChatImageStrip, useComposerImages } from './ChatImages'
 import { useChatCommandMenu } from './ChatCommandMenu'
 import { useChatMentionMenu } from './ChatMentionMenu'
 import { MentionField, useMentionedText } from './ChatMentionField'
+import { stripTrailingEmptyListItem } from './chat-list-continuation'
 import { ChatOptionsBar } from './ChatOptionsBar'
 import { RouteBadge } from './RouteBadge'
 import { HandoffAgentPicker, HandoffModePicker, HandoffModelPicker, useComposerHandoff } from './ChatHandoff'
@@ -307,8 +308,9 @@ export function ChatComposer({ conversation, state, compact = false }: { convers
       return
     }
     // Quotes go before what the user wrote; a command must open its message, so it goes alone.
-    const quoting = quotes.length > 0 && !message.trim().startsWith('/')
-    const composed = quoting ? composeMessage(quotes, message) : message.trim()
+    const clean = stripTrailingEmptyListItem(message.trim())
+    const quoting = quotes.length > 0 && !clean.startsWith('/')
+    const composed = quoting ? composeMessage(quotes, clean) : clean
     if (!canTake || (composed === '' && attached.images.length === 0) || (steer && !canSteer)) return
     const rpc = useCore.getState().rpc
     // Selection can create an empty helper before its composer receives the first message.
@@ -349,8 +351,9 @@ export function ChatComposer({ conversation, state, compact = false }: { convers
       setText(expanded)
       return
     }
-    const quoting = quotes.length > 0 && !written.trim().startsWith('/')
-    const composed = quoting ? composeMessage(quotes, written) : written.trim()
+    const clean = stripTrailingEmptyListItem(written.trim())
+    const quoting = quotes.length > 0 && !clean.startsWith('/')
+    const composed = quoting ? composeMessage(quotes, clean) : clean
     if (!canSendNew || (composed === '' && attached.images.length === 0)) return
     setBusy(true)
     const went = await sendToNewConversation(conversation, composed, attached.images, messageReferences(writtenMessage, composed))
@@ -364,9 +367,10 @@ export function ChatComposer({ conversation, state, compact = false }: { convers
   // The message goes with the handoff as the note the new agent reads first; images wait for the next.
   const handOff = async () => {
     if (busy || starting || handoff.blocker) return
+    const clean = stripTrailingEmptyListItem(written.trim())
     const quoting = quotes.length > 0
     setBusy(true)
-    const message = quoting ? composeMessage(quotes, written) : written.trim()
+    const message = quoting ? composeMessage(quotes, clean) : clean
     const went = await handoff.send(message, messageReferences(writtenMessage, message))
     setBusy(false)
     if (went) {
