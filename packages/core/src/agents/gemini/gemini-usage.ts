@@ -68,9 +68,10 @@ export function parseGeminiQuota(body: unknown): UsageWindow[] {
   })
 }
 
-export async function readGeminiUsage(): Promise<UsageReading> {
-  if (await geminiAuthType() !== 'oauth-personal') return await geminiSignedIn() ? { signedIn: true, windows: [], plan: null } : { signedIn: false }
-  const credential = Credential.safeParse(parseJson(await readFile(path.join(geminiHome(), 'oauth_creds.json'), 'utf8').catch(() => null))).data
+export async function readGeminiUsage(home?: string): Promise<UsageReading> {
+  const env = home ? { ...process.env, GEMINI_CLI_HOME: home } : process.env
+  if (await geminiAuthType(env) !== 'oauth-personal') return await geminiSignedIn(home) ? { signedIn: true, windows: [], plan: null } : { signedIn: false }
+  const credential = Credential.safeParse(parseJson(await readFile(path.join(geminiHome(env), 'oauth_creds.json'), 'utf8').catch(() => null))).data
   if (!credential || (!credential.access_token && !credential.refresh_token)) return { signedIn: false }
   try {
     const headers = { Authorization: `Bearer ${await accessToken(credential)}`, 'Content-Type': 'application/json' }

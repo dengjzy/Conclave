@@ -217,6 +217,9 @@ describe('AgentAccountStore', () => {
     process.env.CLAUDE_CONFIG_DIR = own
     process.env.CODEX_HOME = path.join(root, 'own-codex')
     vi.stubEnv('GEMINI_HOME', path.join(root, 'own-antigravity'))
+    vi.stubEnv('GEMINI_CLI_HOME', path.join(root, 'own-gemini'))
+    vi.stubEnv('GEMINI_API_KEY', '')
+    vi.stubEnv('GOOGLE_API_KEY', '')
     signIns = []
     exits = []
     changes = []
@@ -237,8 +240,8 @@ describe('AgentAccountStore', () => {
     const accounts = store()
     await accounts.load()
     expect(accounts.list()).toMatchObject({
-      accounts: [{ id: 'default', agent: 'claude', signedIn: false }, { id: 'default', agent: 'codex', signedIn: false }, { id: 'default', agent: 'antigravity', signedIn: false }],
-      active: { claude: 'default', codex: 'default', antigravity: 'default' },
+      accounts: [{ id: 'default', agent: 'claude', signedIn: false }, { id: 'default', agent: 'codex', signedIn: false }, { id: 'default', agent: 'antigravity', signedIn: false }, { id: 'default', agent: 'gemini', signedIn: false }],
+      active: { claude: 'default', codex: 'default', antigravity: 'default', gemini: 'default' },
       autoSwitch: true
     })
     expect(await accounts.launch('claude')).toEqual({ id: 'default', env: null })
