@@ -104,6 +104,37 @@ describe('DSH balance', () => {
     expect(JSON.stringify(reading)).not.toContain('sk-')
   })
 
+  it('hides the DSH key when it is another key of a provider account already shown', async () => {
+    await credentials('sk-native-fixture')
+    fetch.mockImplementation(async (_url, init) => {
+      const authorization = new Headers(init?.headers).get('authorization')
+      const total = authorization === 'Bearer sk-other-fixture' ? '3.00' : '11.06'
+      return Response.json({ is_available: true, balance_infos: [{ currency: 'CNY', total_balance: total, granted_balance: '0', topped_up_balance: total }] })
+    })
+    const reading = await readDshUsage(undefined, [
+      provider(KEY, { id: 'custom', name: 'DeepSeek' }),
+      provider('sk-other-fixture', { id: 'other', name: 'DeepSeek 备用' })
+    ])
+    expect(reading).toMatchObject({ balances: [
+      { id: 'custom:CNY', name: 'DeepSeek', total: 11.06 },
+      { id: 'other:CNY', name: 'DeepSeek 备用', total: 3 }
+    ] })
+    expect(requestedKeys()).toEqual([`Bearer ${KEY}`, 'Bearer sk-other-fixture', 'Bearer sk-native-fixture'])
+  })
+
+  it('keeps the DSH key when its balance is a different account', async () => {
+    await credentials('sk-native-fixture')
+    fetch.mockImplementation(async (_url, init) => {
+      const total = new Headers(init?.headers).get('authorization') === 'Bearer sk-native-fixture' ? '2.00' : '11.06'
+      return Response.json({ is_available: true, balance_infos: [{ currency: 'CNY', total_balance: total, granted_balance: '0', topped_up_balance: total }] })
+    })
+    const reading = await readDshUsage(undefined, [provider(KEY, { id: 'custom', name: 'DeepSeek' })])
+    expect(reading).toMatchObject({ balances: [
+      { id: 'custom:CNY', name: 'DeepSeek', total: 11.06 },
+      { id: 'dsh:deepseek:CNY', name: 'DeepSeek', total: 2 }
+    ] })
+  })
+
   it('recognizes an official Responses endpoint', async () => {
     await readDshUsage(undefined, [provider(KEY, { openai: { chatUrl: null, responsesUrl: 'https://api.deepseek.com/v1' } })])
     expect(requestedKeys()).toEqual([`Bearer ${KEY}`])
