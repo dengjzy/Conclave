@@ -4,8 +4,19 @@ import { ChatPermissionMode, checkSquadStart, squadModes, type Task } from '@con
 import { dismissError, openChatWhileStarting, perform, selectSquad, useCore } from '../core-store'
 import { reasonText } from '../labels'
 import { useEditsInPlace } from './TaskLaunch'
+import { usePreferences } from '../preferences'
 import { ChatPicker } from './ChatPicker'
 import { CloseIcon, SquadIcon } from './icons'
+
+function preferredSquadMode(modes: ChatPermissionMode[], preferred?: string): ChatPermissionMode {
+  if (preferred && modes.includes(preferred as ChatPermissionMode) && preferred !== 'ask') {
+    return preferred as ChatPermissionMode
+  }
+  if (modes.includes('bypass')) return 'bypass'
+  if (modes.includes('auto')) return 'auto'
+  if (modes.includes('acceptEdits')) return 'acceptEdits'
+  return modes[0] ?? 'ask'
+}
 
 export function SquadLaunchDialog({ task, onSingle }: { task: Task; onSingle(): void }) {
   const dialog = useRef<HTMLDialogElement>(null)
@@ -16,7 +27,9 @@ export function SquadLaunchDialog({ task, onSingle }: { task: Task; onSingle(): 
   const error = useCore((state) => state.error)
   const available = Object.values(squads).filter((squad) => squad.archivedAt === null)
   const [squadId, setSquadId] = useState(task.squadId ?? available[0]?.id ?? '')
-  const [requested, setRequested] = useState<ChatPermissionMode>('ask')
+  const planRunMode = usePreferences((state) => state.planRunMode)
+  const globalDefault = usePreferences((state) => state.globalDefaultPermission)
+  const [requested, setRequested] = useState<ChatPermissionMode | null>(null)
   const [busy, setBusy] = useState(false)
   // Without a plan to go by, the leader plans with the user first unless told to divide the work up
   // as it goes.
@@ -25,7 +38,8 @@ export function SquadLaunchDialog({ task, onSingle }: { task: Task; onSingle(): 
   const planning = leaderPlans && planFirst
   const squad = squads[squadId]
   const modes = squad ? squadModes(squad, true) : []
-  const mode = modes.includes(requested) ? requested : modes[0] ?? 'ask'
+  const defaultMode = preferredSquadMode(modes, planRunMode ?? globalDefault)
+  const mode = requested && modes.includes(requested) ? requested : defaultMode
   const dependencies = task.dependsOn.flatMap((id) => tasks[id] ? [tasks[id]] : [])
   // Planning reads only, so it may begin before the dependencies are done.
   const blocker = planning ? (task.status !== 'pending' ? 'not-pending' : task.repos.length ? null : 'missing-repo') : checkSquadStart(task, dependencies, Boolean(plan))
@@ -53,6 +67,15 @@ export function SquadLaunchDialog({ task, onSingle }: { task: Task; onSingle(): 
           <ChatPicker label={t('SquadLaunchDialog.developmentPermissions')} value={mode} placeholder={t('ChatPlan.askEachTime')} size="field" placement="below"
             options={modes.map((each) => ({ value: each, label: each === 'ask' ? t('ChatPlan.askEachTime') : each === 'acceptEdits' ? t('ChatPlan.acceptEditsAutomatically') : each === 'bypass' ? t('ChatPlan.allowEverything') : t('SquadLaunchDialog.automatic') }))}
             onChange={(value) => { const parsed = ChatPermissionMode.safeParse(value); if (parsed.success) setRequested(parsed.data) }} />
+          {mode === 'bypass' ? (
+            <p className="task-launch-hint muted" style={{ marginTop: '4px', fontSize: '12px' }}>
+              ⚡ {t('SquadLaunchDialog.bypassHint')}
+            </p>
+          ) : mode === 'ask' ? (
+            <p className="task-launch-hint" style={{ marginTop: '4px', fontSize: '12px', color: 'var(--color-warning-text, #b45309)' }}>
+              ⚠️ {t('SquadLaunchDialog.askWarning')}
+            </p>
+          ) : null}
         </div>
       </fieldset>
       {leaderPlans && (

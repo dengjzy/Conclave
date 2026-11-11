@@ -75,8 +75,9 @@ export class SquadService {
       if (this.busy(task.id)) throw new Rejection('squad-busy')
       const squad = this.resolved(this.store.get(squadId ?? task.squadId ?? ''))
       if (squad.archivedAt !== null) throw new Rejection('squad-archived')
-      const mode = options.permissionMode ?? 'ask'
-      if (!squadModes(squad, allowBypass).includes(mode)) throw new Rejection('chat-option-invalid', '团队开发成员不共同支持此权限模式')
+      const supportedModes = squadModes(squad, allowBypass)
+      const mode = options.permissionMode ?? (supportedModes.includes('bypass') ? 'bypass' : supportedModes.includes('acceptEdits') ? 'acceptEdits' : supportedModes[0] ?? 'ask')
+      if (!supportedModes.includes(mode)) throw new Rejection('chat-option-invalid', '团队开发成员不共同支持此权限模式')
       for (const member of squad.members) await this.chats.validateStartOptions(member.agent, {
         model: member.model, effort: member.effort,
         permissionMode: member.capability === 'readOnly' ? agentDescriptor(member.agent).readOnlyMode : mode
@@ -122,8 +123,9 @@ export class SquadService {
       if (task.status !== 'pending') throw new Rejection('not-pending')
       const squad = this.resolved(this.store.get(squadId ?? task.squadId ?? ''))
       if (squad.archivedAt !== null) throw new Rejection('squad-archived')
-      const mode = options.permissionMode ?? 'ask'
-      if (!squadModes(squad, allowBypass).includes(mode)) throw new Rejection('chat-option-invalid', '团队开发成员不共同支持此权限模式')
+      const supportedModes = squadModes(squad, allowBypass)
+      const mode = options.permissionMode ?? (supportedModes.includes('bypass') ? 'bypass' : supportedModes.includes('acceptEdits') ? 'acceptEdits' : supportedModes[0] ?? 'ask')
+      if (!supportedModes.includes(mode)) throw new Rejection('chat-option-invalid', '团队开发成员不共同支持此权限模式')
       const leader = squad.members.find((member) => member.id === squad.leaderId)!
       await this.chats.validateStartOptions(leader.agent, { model: leader.model, effort: leader.effort, permissionMode: 'plan' }, leader.profile?.modelProvider ?? undefined)
       if (task.conversationId) {

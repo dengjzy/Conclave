@@ -247,7 +247,7 @@ describe('squad execution', () => {
     // The leader goes on from its own planning session rather than a fresh one.
     const leading = daemon.spawns.at(-1)!.args
     expect(leading.slice(leading.indexOf('--resume'), leading.indexOf('--resume') + 2)).toEqual(['--resume', providerSession])
-    await waitFor(() => JSON.stringify(daemon.written(chats.get(conversationId).sessionId!)).includes('只负责协调'))
+    await waitFor(() => JSON.stringify(daemon.written(chats.get(conversationId).sessionId!)).includes('负责全局主导'))
     expect(daemon.written(planning).filter((frame) => JSON.stringify(frame).includes('"behavior":"allow"'))).toEqual([])
   })
 
@@ -273,7 +273,7 @@ describe('squad execution', () => {
     const sent = daemon.written(leading).filter((frame) => JSON.stringify(frame).includes('"type":"user"'))
     expect(sent).toHaveLength(1)
     expect(JSON.stringify(sent[0])).toContain('handoffs')
-    expect(JSON.stringify(sent[0])).toContain('只负责协调')
+    expect(JSON.stringify(sent[0])).toContain('负责全局主导')
   })
 
   it('picks a stopped planning leader up again as planning, not as a squad run', async () => {
