@@ -235,7 +235,16 @@ function GrokMark() {
   )
 }
 
-const AGENT_MARKS = { claude: ClaudeMark, codex: CodexMark, cursor: CursorMark, opencode: OpenCodeMark, pi: PiMark, dsh: DeepSeekMark, antigravity: AntigravityMark, zcode: ZCodeMark, kimi: KimiMark, gemini: GeminiMark, grok: GrokMark } satisfies Record<AgentKind, () => ReactElement>
+// omp's mark from https://omp.sh/favicon.svg, drawn in one colour as the other mono marks are.
+function OmpMark() {
+  return (
+    <svg className="agent-mark agent-mark-omp" viewBox="0 0 64 64" fill="currentColor" aria-hidden="true">
+      <path d="M14 16h36v8H40v32h-8V24h-6v22h-8V24h-4z" />
+    </svg>
+  )
+}
+
+const AGENT_MARKS = { claude: ClaudeMark, codex: CodexMark, cursor: CursorMark, opencode: OpenCodeMark, pi: PiMark, dsh: DeepSeekMark, antigravity: AntigravityMark, zcode: ZCodeMark, kimi: KimiMark, gemini: GeminiMark, grok: GrokMark, omp: OmpMark } satisfies Record<AgentKind, () => ReactElement>
 
 export function AgentIcon({ agent }: { agent: AgentKind | null }) {
   if (agent === null) return <NoAgentMark />

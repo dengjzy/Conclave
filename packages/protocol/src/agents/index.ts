@@ -13,12 +13,13 @@ import { zcode } from './zcode'
 import { kimi } from './kimi'
 import { gemini } from './gemini'
 import { grok } from './grok'
+import { omp } from './omp'
 
 export type { AgentDescriptor, AgentModeText } from './agent-descriptor'
 export { modelPrice } from './model-prices'
 
 // One entry per agent kind: one left out fails to compile.
-export const AGENT_DESCRIPTORS = { claude, codex, cursor, opencode, pi, dsh, antigravity, zcode, kimi, gemini, grok } satisfies Record<AgentKind, AgentDescriptor>
+export const AGENT_DESCRIPTORS = { claude, codex, cursor, opencode, pi, dsh, antigravity, zcode, kimi, gemini, grok, omp } satisfies Record<AgentKind, AgentDescriptor>
 
 export function agentDescriptor(kind: AgentKind, locale: UiLocale = 'zh-CN'): AgentDescriptor {
   const descriptor = AGENT_DESCRIPTORS[kind]

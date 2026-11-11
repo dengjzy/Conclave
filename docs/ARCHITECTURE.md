@@ -441,6 +441,8 @@ Kimi Code 使用官方 `kimi acp` 和通用 ACP driver，dialect 负责四种原
 
 Grok CLI 也复用通用 ACP driver（`agents/grok/`）：通过官方 `grok agent stdio` 接入。启动命令仅传递 `['agent', 'stdio', '--no-auto-update']`，多项目目录通过 ACP 协议 `additionalDirectories` 与 `startNote` 提示词告知；支持 Default、Plan、Auto 和 YOLO（Bypass）四种权限映射，通过环境变量 `GROK_DEPLOYMENT_KEY`、`XAI_API_KEY`、`GROK_API_KEY` 或 `~/.grok/auth.json` 校验认证状态，并支持每周额度展示。细节见 [Grok Agent](GROK.md)。
 
+omp 也复用通用 ACP driver（`agents/omp/`）：通过 `omp acp` 接入，启动时固定 `--approval-mode write`，让普通文件写入直接进行、命令与破坏性编辑交给 ACP 权限请求；多项目目录在命令行用 `--add-dir` 交给它。omp 的 ACP 只有 Default 与 Plan：Plan 会在同一回合里自行批准并离开，不能保证规划阶段只读，所以只把 Default 映射为 Conclave 的「自动接受编辑」，不提供规划、只读、无人值守和全部放行，也不进入讨论或小队的只读席位。模型目录来自 `omp models --json`，默认模型取 `modelRoles`；MCP 服务器随 `session/new` 传入，ACP 模式不自动读取磁盘上的 omp MCP 配置（设置页只把 `~/.omp/agent/config.yml` 标为它自己的来源）。细节见 [omp](OMP.md)。
+
 ### 项目 Star
 
 设置 → 支持与反馈集中提供项目地址、GitHub Star 和 GitHub Issues 反馈入口，交流尚未开放时显示文字占位；关于页显示 Web 端版本、协议版本、Conclave core 连接状态和 Git。支持页可查询并为 `dengjzy/Conclave` 点 Star。Web 客户端仅调用 `support.starStatus` / `support.star`，通过 `project-star` 能力判断 core 是否支持；旧 core 只提供 GitHub 网页入口。状态不写入本机偏好，进入支持页或返回窗口时自动检查，以 GitHub 的响应为准，不提供手动检测按钮。

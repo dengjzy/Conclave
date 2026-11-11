@@ -414,7 +414,9 @@ export class SourceService {
     const { agent, projectPaths, allowBypass, note, references, ...start } = options
     const title = issue.title.trim() || issue.key
     // Unless asked otherwise, it only reads: a finding first, then the user decides on a fix.
-    const permissionMode = start.permissionMode ?? agentDescriptor(agent).discussionMode
+    const descriptor = agentDescriptor(agent)
+    if (descriptor.capabilities.readOnly === false) throw new Rejection('read-only-unsupported', `${descriptor.label} 不支持只读排查`)
+    const permissionMode = start.permissionMode ?? descriptor.discussionMode
     const conversation = await conversations.investigate(agent, projectPaths, allowBypass ?? (permissionMode === 'bypass'), { ...start, permissionMode }, {
       source,
       title,

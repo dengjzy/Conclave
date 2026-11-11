@@ -393,6 +393,9 @@ describe('SourceService', () => {
     expect(opened[1]).toMatchObject({ note: '先看日志', start: { permissionMode: 'plan' } })
     await service.investigate('demo', 'default', 'D-2', { agent: 'codex', projectPaths: [] })
     expect(opened[2]?.start).toMatchObject({ permissionMode: 'readOnly' })
+    // An agent without a read-only mode cannot look into an issue safely.
+    await expect(service.investigate('demo', 'default', 'D-1', { agent: 'omp', projectPaths: [] })).rejects.toMatchObject({ reason: 'read-only-unsupported' })
+    expect(opened).toHaveLength(3)
   })
 
   it('stops and empties the inbox when disabled, ignoring a refresh still under way', async () => {
