@@ -4,6 +4,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StateCreator } from 'zustand'
 import { createRpcClient, Task, type RpcConnection, type SourceDescriptor, type SourceInbox, type SourceIssue } from '@conclave/protocol'
 import { useCore } from '../core-store'
+import { buildTurnStops, ChatTurnRail } from './ChatTurnRail'
+import { conversationSessionId } from './ConversationActions'
+import { PluginSettings } from './PluginSettings'
 import { SidebarTasks } from './SidebarTasks'
 import { setAgendaChannel, TaskBoard } from './TaskBoard'
 
@@ -189,5 +192,42 @@ describe('unified Agenda workbench', () => {
     expect(html).toContain('接入 Jira 事项流')
     expect(html).toContain('未连接')
     expect(html).toContain('>登录</button>')
+  })
+
+  it('marks GitHub, GitLab, and Jira as built-in inside PluginSettings instead of uninstalled plugins', () => {
+    connectWorkbench()
+    const html = renderToStaticMarkup(createElement(PluginSettings))
+    expect(html).toContain('内置事项渠道')
+    expect(html).toContain('GitHub · GitLab · Jira（已内置）')
+    expect(html).toContain('前往事项配置')
+  })
+
+  it('prefers underlying CLI providerSessionId for copying session ID and renders multi-turn rail stops', () => {
+    expect(
+      conversationSessionId({
+        id: '11111111-1111-4111-8111-111111111111',
+        providerSessionId: 'dfd164ec-2ebf-4623-8400-51e4627faaad'
+      })
+    ).toEqual({
+      full: 'dfd164ec-2ebf-4623-8400-51e4627faaad',
+      short: 'dfd164ec…'
+    })
+    expect(conversationSessionId({ id: '11111111-1111-4111-8111-111111111111' })).toEqual({
+      full: '11111111-1111-4111-8111-111111111111',
+      short: '11111111…'
+    })
+
+    const container = { current: null }
+    const single = buildTurnStops([{ key: 'u1', prompt: 'Hello', reply: 'Hi', at: now }])
+    expect(renderToStaticMarkup(createElement(ChatTurnRail, { turns: single, container, onJump: () => {} }))).toBe('')
+
+    const turns = buildTurnStops([
+      { key: 'u1', prompt: 'Inspect architecture', reply: 'Here is the overview', at: now },
+      { key: 'u2', prompt: 'Update agenda channels', reply: 'Built-in GitHub, GitLab, and Jira are active', at: now }
+    ])
+    const railHtml = renderToStaticMarkup(createElement(ChatTurnRail, { turns, container, onJump: () => {} }))
+    expect(railHtml).toContain('aria-label="对话轮次导航"')
+    expect(railHtml).toContain('第 1 / 2 轮：Inspect architecture')
+    expect(railHtml).toContain('第 2 / 2 轮：Update agenda channels')
   })
 })

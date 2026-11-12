@@ -49,6 +49,8 @@ export const Conversation = z.object({
   referencePaths: z.array(z.string()).optional(),
   managedWorkspace: z.boolean(),
   sessionId: z.string().nullable(),
+  // Latest underlying CLI/ACP session id for resuming outside or displaying to the user; omitted when none exists yet.
+  providerSessionId: z.string().nullable().optional(),
   // Native history cleanup can be retried with conversations.delete after a failure.
   deletion: z.object({ state: z.enum(['running', 'failed']), error: z.string().optional() }).optional(),
   // Includes CLI checks and handshake, before the agent can take a message.

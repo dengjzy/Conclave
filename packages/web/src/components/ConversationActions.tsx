@@ -150,6 +150,11 @@ export async function retryConversationDeletion(id: string): Promise<boolean> {
   return (await perform((rpc) => rpc.call('conversations.delete', { id }))) !== null
 }
 
+export function conversationSessionId(conversation: Pick<Conversation, 'id' | 'providerSessionId'>): { full: string; short: string } {
+  const full = conversation.providerSessionId ?? conversation.id
+  return { full, short: full.length > 10 ? `${full.slice(0, 8)}…` : full }
+}
+
 // The row's right-click menu: the header's actions, and the one place a conversation is deleted.
 export function ConversationContextMenu({ conversation, at, onClose, onRename, onHandoff, split = null }: {
   conversation: Conversation
@@ -173,11 +178,13 @@ export function ConversationContextMenu({ conversation, at, onClose, onRename, o
   const busy = conversation.chat?.turn === 'running' || conversation.chat?.turn === 'awaiting'
   const reusable = useReuseConversationSupported() && canReuseConversation(conversation)
   const handoff = other && !archived
+  const sessionInfo = conversationSessionId(conversation)
   return (
     <ContextMenu at={at} label={t('ConversationActions.actionsForConversation', { value1: conversation.title })} onClose={onClose}>
       {split && <MenuItem label={split === 'right' ? t('ConversationActions.openInRightSplitPane') : t('ConversationActions.openInOtherPane')} icon={<SplitIcon />} hint={t('ConversationActions.click', { PRIMARY_KEY_LABEL: PRIMARY_KEY_LABEL })} onSelect={pick(() => openBeside(conversation.id))} />}
       {pinnable && !archived && <MenuItem label={pinned ? t('ConversationActions.unpin') : t('ConversationActions.pin')} icon={<PinIcon />} onSelect={pick(() => void pinConversation(conversation.id, !pinned))} />}
       <MenuItem label={t('ConversationActions.rename')} icon={<PencilIcon />} onSelect={pick(onRename)} />
+      <MenuItem label={t('ConversationActions.copySessionId')} icon={<CopyIcon />} hint={sessionInfo.short} onSelect={pick(() => { void navigator.clipboard?.writeText(sessionInfo.full) })} />
       {(reusable || handoff || conversation.sessionId) && <>
         <div className="menu-separator" role="separator" />
         {reusable && <MenuItem label={t('ConversationActions.newWithSameConfiguration')} icon={<CopyIcon />} onSelect={pick(() => void newConversationFrom(conversation))} />}

@@ -11,6 +11,7 @@ const SELECT = `SELECT id, title, title_locked AS titleLocked, agent, workspace_
   project_paths AS projectPaths, reference_paths AS referencePaths,
   managed_workspace AS managedWorkspace, session_id AS sessionId, created_at AS createdAt,
   updated_at AS updatedAt, ${lastEnded('exit_code')} AS lastExitCode, ${lastEnded('ended_at')} AS lastExitAt,
+  (SELECT provider_session_id FROM conversation_stages WHERE conversation_id = conversations.id AND provider_session_id IS NOT NULL ORDER BY started_at DESC, rowid DESC LIMIT 1) AS providerSessionId,
   (SELECT plan_only FROM conversation_stages WHERE conversation_id = conversations.id ORDER BY started_at DESC, rowid DESC LIMIT 1) AS planOnly,
   task_id AS taskId, pinned_at AS pinnedAt, archived_at AS archivedAt, routine_id AS routineId, forked_from_id AS forkedFromId,
   discussion_id AS discussionId, squad_run_id AS squadRunId, workspace_read_only AS workspaceReadOnly, helper_of AS helperOf, source,
@@ -53,9 +54,11 @@ function parsedJson<T>(raw: unknown, schema: z.ZodType<T>): T | null {
 }
 
 function conversation(row: Record<string, unknown>): Conversation {
-  const { lastExitCode, lastExitAt, ...rest } = row
+  const { lastExitCode, lastExitAt, providerSessionId, ...rest } = row
   const references: unknown = JSON.parse(String(row.referencePaths ?? '[]'))
-  return Conversation.parse({ ...rest, profile: parsedJson(row.profile, AgentProfile), source: source(row.source), projectPaths: JSON.parse(String(row.projectPaths)),
+  return Conversation.parse({ ...rest,
+    ...(typeof providerSessionId === 'string' && providerSessionId ? { providerSessionId } : {}),
+    profile: parsedJson(row.profile, AgentProfile), source: source(row.source), projectPaths: JSON.parse(String(row.projectPaths)),
     mcpServers: parsedJson(row.mcpServers, z.array(z.string())) ?? undefined,
     referencePaths: Array.isArray(references) && references.length ? references : undefined,
     initialMessage: row.initialMessage == null ? undefined : ConversationInitialMessage.parse(JSON.parse(String(row.initialMessage))),

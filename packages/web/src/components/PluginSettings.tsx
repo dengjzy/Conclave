@@ -1,7 +1,7 @@
 import { getLocale, t, tr } from '../i18n'
 import { useEffect, useId, useState } from 'react'
 import type { PluginInfo, PluginInstallSource, RecommendedPlugin } from '@conclave/protocol'
-import { perform, useCore } from '../core-store'
+import { perform, setSettingsOpen, useCore } from '../core-store'
 import { pickPlugin } from '../desktop-bridge'
 import { SettingsGroup, Toggle } from './SettingsControls'
 import { ChatPicker } from './ChatPicker'
@@ -63,11 +63,35 @@ export function PluginSettings() {
     void run((connection) => connection.call('plugins.install', { source }), t('PluginSettings.pluginInstalled'))
   }
 
+  const externalRecommended = recommended.filter(
+    (entry) => entry.id !== 'conclave.github' && entry.id !== 'conclave.jira'
+  )
+
   return (
     <div className="plugin-settings">
       {status && <p className="settings-status" role="status">{status}</p>}
-      {recommended.length > 0 && <SettingsGroup title={t('PluginSettings.recommended')}>
-        {recommended.map((entry) => {
+      <SettingsGroup title={t('PluginSettings.builtinSourcesGroup')}>
+        <div className="settings-row">
+          <div className="settings-row-text">
+            <span className="settings-row-label">{t('PluginSettings.builtinSourcesTitle')}</span>
+            <p className="settings-row-description">{t('PluginSettings.builtinSourcesDesc')}</p>
+          </div>
+          <div className="settings-row-control">
+            <button
+              type="button"
+              className="button"
+              onClick={() => {
+                setSettingsOpen(false)
+                useCore.setState({ section: 'tasks', selectedId: null })
+              }}
+            >
+              {t('PluginSettings.openAgendaToConfigure')}
+            </button>
+          </div>
+        </div>
+      </SettingsGroup>
+      {externalRecommended.length > 0 && <SettingsGroup title={t('PluginSettings.recommended')}>
+        {externalRecommended.map((entry) => {
           const installed = plugins?.find((plugin) => plugin.id === entry.id)
           return <div className="settings-row" key={entry.id}>
             <div className="settings-row-text">
@@ -123,7 +147,7 @@ export function PluginSettings() {
           <div className="settings-field">
             <label className="settings-field-label" htmlFor={`${ids}-location`}>{kind === 'local' ? t('PluginSettings.pluginPath') : t('PluginSettings.githubRepository')}</label>
             <input id={`${ids}-location`} className="input mono" value={location} required disabled={busy} placeholder={kind === 'local' ? t('PluginSettings.fullPathToPluginDirectoryOrZip') : 'owner/repository'} onChange={(event) => { setLocation(event.target.value); setTrusted(false) }} />
-            {kind === 'local' && window.conclave?.pickPlugin && <div className="plugin-actions">
+            {kind === 'local' && typeof window !== 'undefined' && window.conclave?.pickPlugin && <div className="plugin-actions">
               <button className="button ghost" type="button" disabled={busy} onClick={() => { void pickPlugin('directory').then((path) => { if (path) { setLocation(path); setTrusted(false) } }) }}>{t('PluginSettings.chooseDirectory')}</button>
               <button className="button ghost" type="button" disabled={busy} onClick={() => { void pickPlugin('zip').then((path) => { if (path) { setLocation(path); setTrusted(false) } }) }}>{t('PluginSettings.chooseZip')}</button>
             </div>}

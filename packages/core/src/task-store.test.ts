@@ -404,4 +404,16 @@ describe('TaskStore migrations', () => {
     expect(reopened.get(id)?.source).toBeNull()
     reopened.close()
   })
+
+  it('exposes the latest non-null providerSessionId on Conversation when recorded on a stage', () => {
+    new TaskStore(file).close()
+    const conversations = new ConversationStore(file)
+    const id = '44444444-4444-4444-8444-444444444444'
+    const created = conversations.create('antigravity', '/code/app', ['/code/app'], id)
+    expect(created.providerSessionId).toBeUndefined()
+    const stage = conversations.startStage(id, 'antigravity', null, 0)
+    conversations.setProviderSession(stage.id, 'dfd164ec-2ebf-4623-8400-51e4627faaad')
+    expect(conversations.get(id)?.providerSessionId).toBe('dfd164ec-2ebf-4623-8400-51e4627faaad')
+    conversations.close()
+  })
 })

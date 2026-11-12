@@ -1,7 +1,7 @@
 import { getLocale, localized, t, tr } from '../i18n'
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import { create } from 'zustand'
-import { AGENT_KINDS, DEFAULT_INSTANCE, type AgentKind, type Task } from '@conclave/protocol'
+import { AGENT_KINDS, DEFAULT_INSTANCE, type AgentKind, type SourceDescriptor, type SourceInbox, type Task } from '@conclave/protocol'
 import { timeAgo } from '../conversation-state'
 import { selectTask, setInboxOpen, setNewTaskOpen, setSettingsOpen, useCore } from '../core-store'
 import { agentLabel, STATUS_LABEL } from '../labels'
@@ -15,7 +15,7 @@ import { AgendaSourceChannel } from './AgendaSourceChannel'
 import { ChatPicker } from './ChatPicker'
 import { menuPoint, type MenuPoint } from './ContextMenu'
 import { EvolutionPanel } from './EvolutionDialog'
-import { AgentIcon } from './icons'
+import { AgentIcon, CloseIcon } from './icons'
 import { projectName, projectNames } from './ProjectPicker'
 import { Spinner } from './Spinner'
 import { StatusIcon } from './StatusIcon'
@@ -123,6 +123,7 @@ export function TaskBoard() {
   const [menu, setMenu] = useState<{ id: string; at: MenuPoint } | null>(null)
   const closeMenu = useCallback(() => setMenu(null), [])
   const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [channelHubOpen, setChannelHubOpen] = useState(false)
   const menuTask = menu ? tasks[menu.id] : undefined
   const narrowed = filter.query.trim() !== '' || filter.project !== null || filter.agent !== null
   const now = Date.now()
@@ -323,16 +324,14 @@ export function TaskBoard() {
           </button>
         )}
 
-        {pluginsSupported && (
-          <button
-            type="button"
-            className="agenda-channel-more"
-            data-tooltip={t('Agenda.addChannelHint')}
-            onClick={() => setSettingsOpen(true, 'plugins')}
-          >
-            {t('Agenda.addChannel')}
-          </button>
-        )}
+        <button
+          type="button"
+          className="agenda-channel-more"
+          data-tooltip={t('Agenda.addChannelHint')}
+          onClick={() => setChannelHubOpen(true)}
+        >
+          {t('Agenda.addChannel')}
+        </button>
       </nav>
 
       {filter.channel === 'all' && totalRemoteWaiting > 0 && (
@@ -397,7 +396,141 @@ export function TaskBoard() {
       {menu && menuTask && (
         <TaskContextMenu task={menuTask} at={menu.at} onClose={closeMenu} onRename={() => setRenamingId(menuTask.id)} />
       )}
+
+      {channelHubOpen && (
+        <AgendaChannelModal
+          sources={sources}
+          inboxes={inboxes}
+          pluginsSupported={pluginsSupported}
+          onSelectChannel={(provider) => {
+            setChannelHubOpen(false)
+            useBoardFilter.setState({ channel: `source:${provider}` })
+          }}
+          onClose={() => setChannelHubOpen(false)}
+        />
+      )}
     </section>
+  )
+}
+
+const BUILTIN_CHANNELS = [
+  { provider: 'github', name: 'GitHub', descKey: 'Agenda.builtinGithubDesc' },
+  { provider: 'gitlab', name: 'GitLab', descKey: 'Agenda.builtinGitlabDesc' },
+  { provider: 'jira', name: 'Jira', descKey: 'Agenda.builtinJiraDesc' }
+] as const
+
+function AgendaChannelModal({
+  sources,
+  inboxes,
+  pluginsSupported,
+  onSelectChannel,
+  onClose
+}: {
+  sources: readonly SourceDescriptor[] | null
+  inboxes: Readonly<Record<string, SourceInbox>>
+  pluginsSupported: boolean
+  onSelectChannel: (provider: string) => void
+  onClose: () => void
+}) {
+  const ids = useId()
+  const dialog = useRef<HTMLDialogElement>(null)
+  const sourceList = sources ?? []
+  const missingBuiltins = sources !== null && !BUILTIN_CHANNELS.some((entry) => sourceList.some((s) => s.provider === entry.provider))
+
+  useEffect(() => {
+    const element = dialog.current
+    if (element && !element.open && typeof element.showModal === 'function') {
+      element.showModal()
+    }
+    return () => element?.close()
+  }, [])
+
+  const onBackdrop = (event: MouseEvent) => {
+    if (event.target === dialog.current) onClose()
+  }
+
+  return (
+    <dialog
+      ref={dialog}
+      className="modal agenda-channel-dialog"
+      aria-labelledby={`${ids}-heading`}
+      onCancel={(event) => {
+        event.preventDefault()
+        onClose()
+      }}
+      onClick={onBackdrop}
+    >
+      <div className="modal-body agenda-channel-modal-body">
+        <header className="new-task-header">
+          <div className="new-task-breadcrumb">
+            <span>Conclave</span>
+            <span className="new-task-breadcrumb-separator" aria-hidden="true">›</span>
+            <h2 id={`${ids}-heading`}>{t('Agenda.channelHubTitle')}</h2>
+          </div>
+          <div className="new-task-window-actions">
+            <button type="button" className="icon-button" aria-label={t('BackdropPicker.close')} onClick={onClose}>
+              <CloseIcon />
+            </button>
+          </div>
+        </header>
+
+        <div className="agenda-channel-hub">
+          <section className="agenda-channel-hub-section">
+            <h3 className="agenda-section-heading">{t('Agenda.builtinChannelsTitle')}</h3>
+            {missingBuiltins && <p className="settings-status" role="status">{t('Agenda.restartCoreForBuiltin')}</p>}
+            <div className="agenda-channel-hub-list">
+              {BUILTIN_CHANNELS.map((entry) => {
+                const registered = sourceList.find((s) => s.provider === entry.provider)
+                const box = inboxes[inboxKey({ provider: entry.provider, instance: DEFAULT_INSTANCE })]
+                const connected = Boolean(box?.active)
+                return (
+                  <div key={entry.provider} className="agenda-channel-hub-card">
+                    <div className="agenda-channel-hub-text">
+                      <div className="agenda-channel-hub-title">
+                        <span>{registered?.name ?? entry.name}</span>
+                        <span className="agenda-status-pill" data-connected={connected || undefined}>
+                          {connected ? t('Agenda.connected') : t('Agenda.notConnected')}
+                        </span>
+                      </div>
+                      <p className="muted">{t(entry.descKey)}</p>
+                    </div>
+                    <button
+                      type="button"
+                      className={connected ? 'button' : 'button primary'}
+                      disabled={!registered}
+                      onClick={() => onSelectChannel(entry.provider)}
+                    >
+                      {connected ? t('Agenda.openChannel') : t('Agenda.configureChannel')}
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+
+          {pluginsSupported && (
+            <section className="agenda-channel-hub-section">
+              <h3 className="agenda-section-heading">{t('Agenda.extensionPluginsTitle')}</h3>
+              <div className="agenda-channel-hub-card">
+                <div className="agenda-channel-hub-text">
+                  <p className="muted">{t('Agenda.extensionPluginsDesc')}</p>
+                </div>
+                <button
+                  type="button"
+                  className="button"
+                  onClick={() => {
+                    onClose()
+                    setSettingsOpen(true, 'plugins')
+                  }}
+                >
+                  {t('Agenda.openPluginSettings')}
+                </button>
+              </div>
+            </section>
+          )}
+        </div>
+      </div>
+    </dialog>
   )
 }
 

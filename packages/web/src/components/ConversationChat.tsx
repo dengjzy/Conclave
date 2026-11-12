@@ -14,6 +14,7 @@ import { forkConversation } from './ConversationActions'
 import { agentLabel, chatDayAndTime, dayAndTime, messageTime } from '../labels'
 import { usePreferences } from '../preferences'
 import { ChatDock } from './ChatDock'
+import { ChatTurnRail, buildTurnStops } from './ChatTurnRail'
 import { ProjectRunNotice } from './ProjectRunNotice'
 import { ChatImageStrip } from './ChatImages'
 import { ChatMarkdown, ChatRoots } from './ChatMarkdown'
@@ -751,6 +752,30 @@ export function ConversationChat({ conversation, surface, onHandoff, variant = '
     const { quotes, body } = parseQuotes(saidText(entry.item.text))
     return [{ key: block.key, text: `${quotes.length ? t('ChatComposer.quotes', { value1: quotes.length }) : ''}${body || t('ConversationChat.handoff')}` }]
   }), [blocks, getLocale()])
+  const turnStops = useMemo(() => {
+    const raw: Array<{ key: string; prompt: string; reply: string; at: number | null }> = []
+    for (const block of blocks) {
+      if (block.kind === 'entry' && isUserEntry(block.entry)) {
+        const { entry } = block
+        if (entry.kind === 'item' && entry.item.kind === 'user') {
+          const { quotes, body } = parseQuotes(saidText(entry.item.text))
+          const prompt = `${quotes.length ? t('ChatComposer.quotes', { value1: quotes.length }) : ''}${body || t('ConversationChat.handoff')}`
+          raw.push({ key: block.key, prompt, reply: '', at: entry.item.at })
+        } else {
+          raw.push({ key: block.key, prompt: '', reply: '', at: null })
+        }
+        continue
+      }
+      const current = raw.at(-1)
+      if (!current) continue
+      if (block.kind === 'entry' && block.entry.kind === 'item' && block.entry.item.kind === 'assistant' && block.entry.item.text.trim()) {
+        current.reply = block.entry.item.text
+      } else if (block.kind === 'changes' && block.reply?.text.trim()) {
+        current.reply = block.reply.text
+      }
+    }
+    return buildTurnStops(raw)
+  }, [blocks, getLocale()])
   const tools = useMemo(
     () => new Map(items.flatMap((item) => (item.kind === 'tool' ? [[item.id, item] as const] : []))),
     [items, getLocale()]
@@ -976,6 +1001,7 @@ export function ConversationChat({ conversation, surface, onHandoff, variant = '
           >{tr('ConversationChat.jumpToLatest', { value1: <ArrowDownIcon /> })}</button>
         )}
       </div>
+      {variant !== 'compact' && <ChatTurnRail turns={turnStops} container={list} onJump={jump} />}
       <ProjectRunNotice conversationId={conversation.id} />
       <ChatDock compact={variant === 'compact'} conversation={conversation} state={state} pending={pending} tools={tools} finishedCalls={finishedCalls} onPrevious={previous} sent={sent} onJump={jump} />
       {variant !== 'compact' && <SelectionComment
