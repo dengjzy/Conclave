@@ -72,4 +72,7 @@ First batch: the stuck dev watcher, and a rebuilt web bundle that an open page k
 
 ## Status
 
-Built: `EvolutionService` in `packages/core` (improvement queue, shadow worktree task + flow launch, 5-gate contract verification, fast-forward promotion to `self/evolve`, health probe & automatic rollback), `self:smoke`, and `self:tests`.
+Built end-to-end:
+- **Core (`EvolutionService`)**: reproducible improvement item backlog (`self/friction.json`), active generation persistence (`self/active.json`), automatic `self/evolve` staging branch initialization, shadow worktree task + 5-gate contract + `FlowService` observer (`observeFlow`), automatic worktree commit & fast-forward merge onto `self/evolve` when all 5 gates reach `review`, and automatic item reopen when a generation pauses or fails.
+- **Web (`EvolutionDialog`)**: accessible from the task board header (`自我迭代`), displaying staging branch & base commit, live active generation link, improvement item capture & per-item trigger, and recent generation history.
+- **Gates**: `self:smoke` (verifying `flows`, `task-contracts`, and `evolution` features over a live isolated core) and `self:tests` (monotonic test policy).

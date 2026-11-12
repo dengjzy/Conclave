@@ -55,6 +55,7 @@ export const FlowAttempt = z.object({
   agent: AgentKind.nullable().default(null),
   result: z.enum(['pass', 'fail']).nullable().default(null),
   failureKind: z.enum(['compile', 'test', 'environment', 'unknown']).nullable().default(null),
+  metricScore: z.number().nullable().optional(),
   signature: z.string().nullable().default(null),
   error: z.string().nullable(),
   startedAt: z.number(),
@@ -88,6 +89,11 @@ export const Flow = z.object({
   report: z.string().nullable().default(null),
   // Structured demand for environment/tools when blocked.
   demand: EnvironmentDemand.nullable().default(null),
+  // Runtime environment variables supplied during waiting_environment, merged into checks.
+  env: z.record(z.string(), z.string()).optional(),
+  // Best verified metric score and git commit checkpoint when contract.verification.ratchet is set.
+  bestScore: z.number().nullable().optional(),
+  bestCommit: z.string().nullable().optional(),
   createdAt: z.number(),
   updatedAt: z.number()
 })

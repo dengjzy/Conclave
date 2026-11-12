@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { Flow, FlowAttempt, FlowNode, Task } from '@conclave/protocol'
 import { localized, t } from '../i18n'
 import { perform, setInspectorOpen, setTaskInspectorTab, showInspectorFile, showView, useCore } from '../core-store'
@@ -16,7 +16,7 @@ const FLOW_STATE: Record<Flow['state'], string> = localized(() => ({
   paused: t('FlowPanel.state.paused'),
   failed: t('FlowPanel.state.failed'),
   cancelled: t('FlowPanel.state.cancelled'),
-  waiting_environment: '等待环境'
+  waiting_environment: t('FlowPanel.state.waitingEnvironment')
 }))
 
 const NODE_STATE: Record<FlowNode['state'], string> = localized(() => ({
@@ -46,6 +46,116 @@ const RESULT: Record<NonNullable<FlowAttempt['result']>, string> = localized(() 
   fail: t('FlowPanel.result.fail')
 }))
 
+function parseEnvLines(raw: string): Record<string, string> {
+  const env: Record<string, string> = {}
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    const eq = trimmed.indexOf('=')
+    if (eq <= 0) continue
+    const key = trimmed.slice(0, eq).trim()
+    const value = trimmed.slice(eq + 1)
+    if (key) env[key] = value
+  }
+  return env
+}
+
+function EnvironmentSupplyCard({ flow }: { flow: Flow }) {
+  const mcpServers = useCore((state) => state.mcpServers)
+  const demand = flow.demand
+  const [selectedMcp, setSelectedMcp] = useState<string[]>([])
+  const [envText, setEnvText] = useState('')
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    setSelectedMcp(
+      demand?.type === 'mcp' && mcpServers.some((server) => server.name === demand.target)
+        ? [demand.target]
+        : []
+    )
+    setEnvText(demand?.type === 'env_var' ? `${demand.target}=` : '')
+    setNote('')
+  }, [flow.id, demand?.id, demand?.type, demand?.target, mcpServers])
+
+  const submit = async () => {
+    setBusy(true)
+    try {
+      const env = parseEnvLines(envText)
+      await perform((rpc) => rpc.call('flows.supplyEnvironment', {
+        id: flow.id,
+        ...(selectedMcp.length > 0 ? { mcpServers: selectedMcp } : {}),
+        ...(Object.keys(env).length > 0 ? { env } : {}),
+        ...(note.trim() ? { note: note.trim() } : {})
+      }))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="flow-env-supply">
+      <div className="flow-env-header">
+        <strong>{t('FlowPanel.envTitle')}</strong>
+        {demand && <span className="task-tag mono">{`${demand.type}:${demand.target}`}</span>}
+      </div>
+      {demand && (
+        <div className="flow-env-demand">
+          <p className="flow-note">{demand.reason}</p>
+          {demand.suggestion && <p className="muted">{demand.suggestion}</p>}
+        </div>
+      )}
+      {mcpServers.length > 0 && (
+        <div className="contract-field">
+          <span>{t('FlowPanel.envMcp')}</span>
+          <div className="flow-env-mcp-list">
+            {mcpServers.map((server) => {
+              const checked = selectedMcp.includes(server.name)
+              return (
+                <label key={server.name} className="flow-env-mcp-item">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={(event) => setSelectedMcp((current) =>
+                      event.target.checked ? [...current, server.name] : current.filter((name) => name !== server.name)
+                    )}
+                  />
+                  <span>{server.name}</span>
+                </label>
+              )
+            })}
+          </div>
+        </div>
+      )}
+      <label className="contract-field">
+        <span>{t('FlowPanel.envVars')}</span>
+        <textarea
+          className="input mono"
+          rows={2}
+          placeholder="API_KEY=..."
+          value={envText}
+          onChange={(event) => setEnvText(event.target.value)}
+        />
+      </label>
+      <label className="contract-field">
+        <span>{t('FlowPanel.envNote')}</span>
+        <input
+          className="input"
+          placeholder={t('FlowPanel.envNotePlaceholder')}
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+        />
+      </label>
+      <div className="contract-actions">
+        <button type="button" className="button primary" disabled={busy} onClick={() => void submit()}>
+          {busy ? <Spinner /> : null}
+          {t('FlowPanel.envSubmit')}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function AttemptRow({ attempt }: { attempt: FlowAttempt }) {
   const [open, setOpen] = useState(false)
   const ended = attempt.state !== 'running'
@@ -60,6 +170,7 @@ function AttemptRow({ attempt }: { attempt: FlowAttempt }) {
           </span>
         </button>
         <span className="squad-work-status">
+          {attempt.metricScore != null && <span className="task-tag mono">{t('FlowPanel.metricScore', { value1: attempt.metricScore })}</span>}
           {attempt.state === 'running' ? <span className="squad-state" data-state="running"><Spinner />{NODE_STATE.running}</span>
             : <span className="squad-state" data-state={attempt.result === 'pass' ? 'done' : 'failed'}>{attempt.result ? RESULT[attempt.result] : NODE_STATE[attempt.state]}</span>}
           {attempt.failureKind && <span className="muted">{FAILURE_KIND[attempt.failureKind]}</span>}
@@ -127,7 +238,7 @@ export function FlowPanel({ task, inline = false }: { task: Task; inline?: boole
       <div className="flow-empty">
         <p className="muted">{task.status === 'pending' ? t('FlowPanel.startHint') : t('FlowPanel.noFlow')}</p>
         {task.status === 'pending' && (
-          <button type="button" className="button" disabled={busy || !task.agent} onClick={() => void act('start')}>
+          <button type="button" className="button" disabled={busy || !task.agent || task.repos.length === 0} onClick={() => void act('start')}>
             {busy ? <><Spinner />{t('FlowPanel.starting')}</> : t('FlowPanel.start')}
           </button>
         )}
@@ -141,9 +252,10 @@ export function FlowPanel({ task, inline = false }: { task: Task; inline?: boole
         <strong>{t('FlowPanel.title')}</strong>
         {flows.length > 1 && <select className="input flow-history" aria-label={t('FlowPanel.history')} value={flow.id} onChange={(event) => setSelectedId(event.target.value)}>{flows.map((each, index) => <option key={each.id} value={each.id}>{`#${flows.length - index} · ${FLOW_STATE[each.state]}`}</option>)}</select>}
         <span className="muted">{FLOW_STATE[flow.state]}</span>
+        {flow.bestScore != null && <span className="task-tag mono">{t('FlowPanel.bestScore', { value1: flow.bestScore })}</span>}
         <span className="flow-actions">
           {(flow.state === 'paused' || flow.state === 'failed') && <button type="button" className="button ghost" disabled={busy} onClick={() => void act('resume')}>{t('FlowPanel.resume')}</button>}
-          {(flow.state === 'running' || flow.state === 'paused') && <button type="button" className="button ghost" disabled={busy} onClick={() => void act('cancel')}>{t('FlowPanel.stop')}</button>}
+          {(flow.state === 'running' || flow.state === 'paused' || flow.state === 'waiting_environment') && <button type="button" className="button ghost" disabled={busy} onClick={() => void act('cancel')}>{t('FlowPanel.stop')}</button>}
         </span>
       </header>
       <FlowWorktree task={task} />
@@ -153,7 +265,8 @@ export function FlowPanel({ task, inline = false }: { task: Task; inline?: boole
         {flow.hiddenTests && <span>{t('FlowPanel.hiddenCount', { value1: flow.hiddenTests.files.length })}</span>}
         {flow.redFirst !== 'skipped' && <span>{t('FlowPanel.redFirst', { value1: flow.redFirst })}</span>}
       </div>
-      {flow.note && <p className="modal-error flow-note">{flow.note}</p>}
+      {flow.state === 'waiting_environment' && <EnvironmentSupplyCard flow={flow} />}
+      {flow.note && flow.state !== 'waiting_environment' && <p className="modal-error flow-note">{flow.note}</p>}
       {flow.replan && <details className="flow-report" open><summary>{t('FlowPanel.replan')}</summary><p className="flow-note">{flow.replan.diagnosis}</p><p className="flow-note">{flow.replan.instruction}</p>{flow.replan.steps.length > 0 && <ol className="flow-steps">{flow.replan.steps.map((step, index) => <li key={index}>{step}</li>)}</ol>}</details>}
       {flow.report && <details className="flow-report"><summary>{t('FlowPanel.report')}</summary><pre className="flow-error">{flow.report}</pre></details>}
       <ol className="flow-trajectory" aria-label={t('FlowPanel.nodes')}>

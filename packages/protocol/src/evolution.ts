@@ -41,6 +41,7 @@ export const EvolutionStatus = z.object({
   baseCommit: z.string(),
   activeGeneration: EvolutionGeneration.nullable().default(null),
   openFrictionCount: z.number().int().nonnegative(),
+  items: z.array(FrictionItem).default([]),
   recentGenerations: z.array(EvolutionGeneration).default([])
 })
 export type EvolutionStatus = z.infer<typeof EvolutionStatus>

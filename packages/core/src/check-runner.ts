@@ -13,10 +13,16 @@ export class CheckRunner {
     private readonly hidden: HiddenTestProvider
   ) {}
 
-  async run(task: Task, conversationId: string, contract: TaskContract | null, hiddenTests: HiddenTestPlan | null = null): Promise<CheckResult[] | null> {
+  async run(
+    task: Task,
+    conversationId: string,
+    contract: TaskContract | null,
+    hiddenTests: HiddenTestPlan | null = null,
+    extraEnv?: Readonly<Record<string, string>>
+  ): Promise<CheckResult[] | null> {
     const checks = contract?.verification.checks ?? []
     const base = checks.length > 0
-      ? await this.commands.run(task, conversationId, checks, contract?.verification.trustedHash)
+      ? await this.commands.run(task, conversationId, checks, contract?.verification.trustedHash, extraEnv)
       : await this.setup.checkDetailed(conversationId, task.repos.map((repo) => ({ path: repo.path, dir: repo.worktreePath ?? repo.path })))
     const hidden = await this.hidden.run(task, conversationId, hiddenTests)
     const all = [...(base ?? []), ...(hidden ? [hidden] : [])]

@@ -113,6 +113,7 @@ export function attemptHistory(flow: Pick<Flow, 'attempts'>, limit = 5): string 
   return flow.attempts.slice(-limit).map((attempt) => {
     const outcome = attempt.result ?? attempt.state
     const kind = attempt.failureKind ? ` · ${attempt.failureKind}` : ''
-    return `#${attempt.number} ${attempt.agent ?? '—'} · ${outcome}${kind}`
+    const score = attempt.metricScore !== null && attempt.metricScore !== undefined ? ` · score=${attempt.metricScore}` : ''
+    return `#${attempt.number} ${attempt.agent ?? '—'} · ${outcome}${kind}${score}`
   }).join('\n')
 }

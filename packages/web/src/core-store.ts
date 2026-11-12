@@ -33,6 +33,7 @@ import {
   type ComputerAwakeStatus,
   type ChatSettings,
   type Environment,
+  type EvolutionStatus,
   type ScheduledRun
 } from '@conclave/protocol'
 import { receiveChatDelta, receiveChatItems } from './chat-state'
@@ -88,6 +89,8 @@ export type CoreState = {
   conversationDraftKey: string
   // Bumped when a flow changes; a task inspector reads its flow again on this.
   flowsRevision: number
+  evolutionOpen: boolean
+  evolutionStatus: EvolutionStatus | null
   // The projects the new-conversation page was last asked to start with; a new object each time, so
   // asking again applies again.
   conversationDraftProjects: { paths: readonly string[] } | null
@@ -206,6 +209,8 @@ export const useCore = create<CoreState>()(() => ({
   conversationDraftIssue: null,
   conversationDraftFrom: null,
   flowsRevision: 0,
+  evolutionOpen: false,
+  evolutionStatus: null,
   selectedId: null,
   view: 'detail',
   inspectorOpen: false,
@@ -298,6 +303,11 @@ export function selectTask(id: string | null): void {
 
 export function setTaskInspectorTab(tab: InspectorTab): void {
   useCore.setState({ taskInspectorTab: tab })
+}
+
+export function setEvolutionOpen(open: boolean): void {
+  dismissError()
+  useCore.setState({ evolutionOpen: open })
 }
 
 export function showTaskChanges(): void {
@@ -1218,6 +1228,9 @@ export function startCoreConnection(): void {
         rpc.on('flows.changed', () => {
           useCore.setState((state) => ({ flowsRevision: state.flowsRevision + 1 }))
         })
+        rpc.on('evolution.changed', ({ status }) => {
+          useCore.setState({ evolutionStatus: status })
+        })
         rpc.on('git.changed', () => useCore.setState((s) => ({ gitRevision: s.gitRevision + 1 })))
         rpc.on('tasks.changed', ({ task }) => {
           if (!initialized) taskChanges.set(task.id, task)
@@ -1323,6 +1336,7 @@ export function startCoreConnection(): void {
         if (rpc.features.includes('mcp-servers')) void rpc.call('mcpServers.list', {}).then((mcpServers) => useCore.setState({ mcpServers })).catch(() => {})
         const accounts = rpc.features.includes('agent-accounts') ? await rpc.call('accounts.list', {}).catch(() => null) : null
         if (rpc.features.includes('environment')) void rpc.call('system.environment', {}).then((environment) => useCore.setState({ environment })).catch(() => {})
+        if (rpc.features.includes('evolution')) void rpc.call('evolution.status', {}).then((evolutionStatus) => useCore.setState({ evolutionStatus })).catch(() => {})
         useCore.setState((s) => ({
           rpc,
           connection: 'connected',

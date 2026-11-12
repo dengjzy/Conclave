@@ -27,7 +27,10 @@ const RETRY_LIMIT = 4000
 const failure = (error: unknown) => error instanceof Rejection ? error.reason : error instanceof Error ? error.message : String(error)
 
 type FlowChats = Pick<ConversationService, 'get' | 'send' | 'chatPage' | 'interrupt' | 'stop' | 'setMcpServers'>
-type FlowTasks = Pick<TaskService, 'get' | 'start' | 'create' | 'attachConversation' | 'check' | 'submit' | 'contract' | 'handoff' | 'assignAgent'>
+type FlowTasks = Pick<TaskService, 'get' | 'start' | 'create' | 'attachConversation' | 'check' | 'submit' | 'contract' | 'handoff' | 'assignAgent'> & {
+  checkpointWorktree?: (id: string, message: string) => string | null
+  restoreWorktreeCheckpoint?: (id: string, commit: string) => boolean
+}
 type TestAuthor = { author(task: Task, mcpServers: readonly string[] | null): Promise<HiddenTestPlan | null> }
 type RedFirst = { run(task: Task, conversationId: string, plan: HiddenTestPlan): Promise<RedFirstResult> }
 type Replanner = { propose(task: Task, history: string, failure: string, mcpServers: readonly string[] | null): Promise<Replan | null> }
@@ -87,7 +90,7 @@ export class FlowService {
       taskId,
       state: 'running',
       nodes: plan.nodes,
-      attempts: [{ id: randomUUID(), nodeId: implement.id, number: 1, state: 'running', agent: implement.agent, result: null, failureKind: null, signature: null, error: null, startedAt: now, endedAt: null }],
+      attempts: [{ id: randomUUID(), nodeId: implement.id, number: 1, state: 'running', agent: implement.agent, result: null, failureKind: null, metricScore: null, signature: null, error: null, startedAt: now, endedAt: null }],
       maxAttempts: plan.maxAttempts,
       maxWallClockMs: plan.maxWallClockMs,
       candidates: roster,
@@ -97,6 +100,9 @@ export class FlowService {
       note: null,
       report: null,
       demand: null,
+      env: {},
+      bestScore: null,
+      bestCommit: null,
       replan: null,
       replans: [],
       createdAt: now,
@@ -110,7 +116,13 @@ export class FlowService {
         implement.conversationId = existingConversationId
         this.save(flow)
       } else {
-        const started = await this.tasks.start(taskId, allowBypass, undefined, { permissionMode: 'acceptEdits' })
+        const launch = {
+          permissionMode: 'acceptEdits' as const,
+          ...(task.launch?.model ? { model: task.launch.model } : {}),
+          ...(task.launch?.effort ? { effort: task.launch.effort } : {}),
+          ...(task.launch?.modelProvider ? { modelProvider: task.launch.modelProvider } : {})
+        }
+        const started = await this.tasks.start(taskId, allowBypass, undefined, launch)
         if (!started.conversationId) throw new Rejection('flow-no-conversation')
         implement.conversationId = started.conversationId
         this.save(flow)
@@ -209,15 +221,33 @@ export class FlowService {
           this.chats.setMcpServers(implement.conversationId, merged)
         }
       }
+      if (options.env && Object.keys(options.env).length > 0) {
+        flow.env = { ...(flow.env ?? {}), ...options.env }
+      }
+      const envKeys = options.env ? Object.keys(options.env) : []
+      const suppliedParts = [
+        options.mcpServers?.length ? `MCP: ${options.mcpServers.join(', ')}` : '',
+        envKeys.length ? `环境变量: ${envKeys.join(', ')}` : '',
+        options.note ?? ''
+      ].filter(Boolean)
+      const summary = suppliedParts.join(' · ')
       flow.demand = null
       flow.state = 'running'
-      flow.note = options.note ? `环境已就绪：${options.note}` : '环境已补充，恢复运行'
+      flow.note = summary ? `环境已就绪：${summary}` : '环境已补充，恢复运行'
       const node = activeFlowNode(flow) ?? implement
       if (node?.conversationId) {
-        await this.chats.send(node.conversationId, `环境已经配置完毕${options.note ? `（${options.note}）` : ''}。请重新运行验收检查，继续完成任务。`, [], false, false, this.ref(flow, node)).catch(() => {})
+        if (node.state !== 'running') {
+          node.state = 'running'
+          node.attempts += 1
+          node.startedAt = Date.now()
+          node.endedAt = null
+          node.error = null
+          flow.attempts.push({ id: randomUUID(), nodeId: node.id, number: node.attempts, state: 'running', agent: node.agent, result: null, failureKind: null, metricScore: null, signature: null, error: null, startedAt: node.startedAt, endedAt: null })
+        }
+        await this.chats.send(node.conversationId, `环境已经配置完毕${summary ? `（${summary}）` : ''}。请重新运行验收检查，继续完成任务。`, [], false, false, this.ref(flow, node)).catch(() => {})
       }
-      this.save(flow)
-      this.announce(flow)
+      const saved = this.save(flow)
+      this.announce(saved)
       void this.advance(flow.id).catch(() => {})
       return this.store.get(flow.id)
     })
@@ -235,7 +265,7 @@ export class FlowService {
     implement.startedAt = Date.now()
     implement.endedAt = null
     implement.error = null
-    flow.attempts.push({ id: randomUUID(), nodeId: implement.id, number: implement.attempts, state: 'running', agent: implement.agent, result: null, failureKind: null, signature: null, error: null, startedAt: implement.startedAt, endedAt: null })
+    flow.attempts.push({ id: randomUUID(), nodeId: implement.id, number: implement.attempts, state: 'running', agent: implement.agent, result: null, failureKind: null, metricScore: null, signature: null, error: null, startedAt: implement.startedAt, endedAt: null })
     flow.state = 'running'
     flow.demand = null
     flow.note = null
@@ -355,8 +385,11 @@ export class FlowService {
 
   private async verify(flow: Flow, node: FlowNode): Promise<void> {
     let results: CheckResult[] | null
+    const extraEnv = flow.env && Object.keys(flow.env).length > 0 ? flow.env : undefined
     try {
-      results = await this.tasks.check(flow.taskId, flow.hiddenTests)
+      results = extraEnv
+        ? await this.tasks.check(flow.taskId, flow.hiddenTests, extraEnv)
+        : await this.tasks.check(flow.taskId, flow.hiddenTests)
     } catch (error) {
       this.pause(flow, node, `验收检查无法运行：${failure(error)}`)
       return
@@ -371,11 +404,103 @@ export class FlowService {
       await this.retryOrPause(flow, node, results ?? [], failures)
       return
     }
-    node.state = 'done'
-    node.endedAt = Date.now()
     const implement = this.implementBefore(flow, node)
     const attempt = implement ? flow.attempts.find((each) => each.nodeId === implement.id && each.state === 'running') : undefined
-    if (attempt) { attempt.state = 'done'; attempt.result = 'pass'; attempt.endedAt = Date.now() }
+    const { metricScore, goalReached } = parseRatchetMetrics(results ?? [])
+    if (attempt && metricScore !== null) attempt.metricScore = metricScore
+
+    const ratchet = contract?.verification.ratchet ?? null
+    if (ratchet) {
+      if (metricScore === null) {
+        await this.retryOrPause(flow, node, results ?? [], ['指标棘轮要求检查命令在输出中打印 METRIC_SCORE=<数值>'])
+        return
+      }
+      const currentBest = flow.bestScore ?? null
+      const improved = currentBest === null
+        || (ratchet.direction === 'maximize' ? metricScore > currentBest : metricScore < currentBest)
+      const targetMet = goalReached
+        || (ratchet.target !== null && (ratchet.direction === 'maximize' ? metricScore >= ratchet.target : metricScore <= ratchet.target))
+
+      if (improved) {
+        const previousBest = currentBest
+        const commit = this.tasks.checkpointWorktree?.(flow.taskId, `ratchet: METRIC_SCORE=${metricScore}`) ?? null
+        flow.bestScore = metricScore
+        if (commit) flow.bestCommit = commit
+        if (attempt) { attempt.state = 'done'; attempt.result = 'pass'; attempt.endedAt = Date.now() }
+
+        if (!targetMet && implement?.conversationId && implement.attempts < flow.maxAttempts) {
+          node.state = 'pending'
+          node.endedAt = null
+          implement.state = 'running'
+          implement.attempts += 1
+          implement.startedAt = Date.now()
+          implement.endedAt = null
+          implement.error = null
+          flow.attempts.push({ id: randomUUID(), nodeId: implement.id, number: implement.attempts, state: 'running', agent: implement.agent, result: null, failureKind: null, metricScore: null, signature: null, error: null, startedAt: implement.startedAt, endedAt: null })
+          flow.note = `最佳指标已提升至 METRIC_SCORE=${metricScore}`
+          flow = this.save(flow)
+          this.announce(flow)
+          const delta = previousBest !== null ? `（上一最佳 ${previousBest} → 当前 ${metricScore}）` : `（当前基线 ${metricScore}）`
+          const targetHint = ratchet.target !== null ? `，目标 ${ratchet.direction === 'maximize' ? '≥' : '≤'} ${ratchet.target}` : ''
+          try {
+            await this.chats.send(
+              implement.conversationId,
+              `本轮检查通过，评估指标已提升${delta}${targetHint}，工作树检查点已保存。\n\n历次尝试：\n${attemptHistory(flow)}\n\n请在此检查点基础上继续下一轮优化（方向：${ratchet.direction}）。`,
+              [], false, false, this.ref(flow, implement)
+            )
+          } catch (error) {
+            this.pause(flow, implement, `发送棘轮下一轮指令失败：${failure(error)}`)
+          }
+          return
+        }
+        if (!targetMet && ratchet.target !== null) {
+          this.pause(flow, node, `棘轮未达到目标 ${ratchet.target}（最佳 METRIC_SCORE=${flow.bestScore}），工作树已保留在最佳检查点`)
+          return
+        }
+      } else {
+        if (attempt) {
+          attempt.state = 'failed'
+          attempt.result = 'fail'
+          attempt.failureKind = 'test'
+          attempt.signature = `ratchet:${metricScore}`
+          attempt.error = `指标未提升：当前 METRIC_SCORE=${metricScore}，最佳 METRIC_SCORE=${currentBest}`
+          attempt.endedAt = Date.now()
+        }
+        if (flow.bestCommit) this.tasks.restoreWorktreeCheckpoint?.(flow.taskId, flow.bestCommit)
+
+        if (implement?.conversationId && implement.attempts < flow.maxAttempts) {
+          node.state = 'pending'
+          node.endedAt = null
+          implement.state = 'running'
+          implement.attempts += 1
+          implement.startedAt = Date.now()
+          implement.endedAt = null
+          implement.error = null
+          flow.attempts.push({ id: randomUUID(), nodeId: implement.id, number: implement.attempts, state: 'running', agent: implement.agent, result: null, failureKind: null, metricScore: null, signature: null, error: null, startedAt: implement.startedAt, endedAt: null })
+          flow.note = `本轮指标 ${metricScore} 未优于最佳 ${currentBest}，已回滚至最佳检查点重试`
+          flow = this.save(flow)
+          this.announce(flow)
+          try {
+            await this.chats.send(
+              implement.conversationId,
+              `上一轮检查通过但指标未提升（当前 METRIC_SCORE=${metricScore}，最佳 METRIC_SCORE=${currentBest}，方向：${ratchet.direction}）。工作树已回滚到最佳检查点。\n\n历次尝试：\n${attemptHistory(flow)}\n\n请换一个优化思路重试，避免重复刚回滚的做法。`,
+              [], false, false, this.ref(flow, implement)
+            )
+          } catch (error) {
+            this.pause(flow, implement, `发送回滚重试指令失败：${failure(error)}`)
+          }
+          return
+        }
+        if (ratchet.target !== null) {
+          this.pause(flow, node, `棘轮未达到目标 ${ratchet.target}（最佳 METRIC_SCORE=${currentBest}），工作树已回滚至最佳检查点`)
+          return
+        }
+      }
+    }
+
+    node.state = 'done'
+    node.endedAt = Date.now()
+    if (attempt && attempt.state === 'running') { attempt.state = 'done'; attempt.result = 'pass'; attempt.endedAt = Date.now() }
     const at = flow.nodes.findIndex((each) => each.id === node.id)
     const next = flow.nodes.slice(at + 1).find((each) => each.kind === 'implement' && each.state === 'pending')
     if (next) {
@@ -397,7 +522,7 @@ export class FlowService {
       next.conversationId = conversation
       next.attempts = 1
       next.startedAt = Date.now()
-      flow.attempts.push({ id: randomUUID(), nodeId: next.id, number: 1, state: 'running', agent: next.agent, result: null, failureKind: null, signature: null, error: null, startedAt: next.startedAt, endedAt: null })
+      flow.attempts.push({ id: randomUUID(), nodeId: next.id, number: 1, state: 'running', agent: next.agent, result: null, failureKind: null, metricScore: null, signature: null, error: null, startedAt: next.startedAt, endedAt: null })
       flow = this.save(flow)
       this.announce(flow)
       try {
@@ -408,7 +533,7 @@ export class FlowService {
       return
     }
     flow.state = 'review'
-    flow.note = null
+    flow.note = flow.bestScore != null ? `最佳指标：METRIC_SCORE=${flow.bestScore}` : null
     flow.report = this.report(flow)
     this.save(flow)
     try {
@@ -429,11 +554,13 @@ export class FlowService {
 
     const kind = classifyFailure(results)
     const signature = failureSignature(results)
+    const { metricScore } = parseRatchetMetrics(results)
     const attempt = flow.attempts.find((each) => each.nodeId === implement.id && each.state === 'running')
     if (attempt) {
       attempt.state = 'failed'
       attempt.result = 'fail'
       attempt.failureKind = kind
+      attempt.metricScore = metricScore
       attempt.signature = signature
       attempt.error = detail
       attempt.endedAt = Date.now()
@@ -496,7 +623,7 @@ export class FlowService {
     implement.startedAt = Date.now()
     implement.endedAt = null
     implement.error = null
-    flow.attempts.push({ id: randomUUID(), nodeId: implement.id, number: implement.attempts, state: 'running', agent: implement.agent, result: null, failureKind: null, signature: null, error: null, startedAt: implement.startedAt, endedAt: null })
+    flow.attempts.push({ id: randomUUID(), nodeId: implement.id, number: implement.attempts, state: 'running', agent: implement.agent, result: null, failureKind: null, metricScore: null, signature: null, error: null, startedAt: implement.startedAt, endedAt: null })
     flow.state = 'running'
     flow.demand = null
     flow.note = null
@@ -557,7 +684,8 @@ export class FlowService {
       `实现：${implements_.map((node) => `${node.key} ${node.agent ?? '—'} · ${node.state} · 尝试 ${node.attempts} 次`).join('；') || '—'}`,
       `验收：${verifies.map((node) => `${node.key} ${node.state}`).join('；') || '—'}`,
       `尝试：`,
-      ...flow.attempts.slice(-8).map((attempt) => `#${attempt.number} ${keyOf(attempt.nodeId)} ${attempt.agent ?? '—'} · ${attempt.result ?? attempt.state}${attempt.failureKind ? ` · ${attempt.failureKind}` : ''}`),
+      ...flow.attempts.slice(-8).map((attempt) => `#${attempt.number} ${keyOf(attempt.nodeId)} ${attempt.agent ?? '—'} · ${attempt.result ?? attempt.state}${attempt.failureKind ? ` · ${attempt.failureKind}` : ''}${attempt.metricScore != null ? ` · score=${attempt.metricScore}` : ''}`),
+      flow.bestScore != null ? `最佳指标：METRIC_SCORE=${flow.bestScore}${flow.bestCommit ? ` (${flow.bestCommit.slice(0, 8)})` : ''}` : '',
       flow.hiddenTests ? `隐藏测试：${flow.hiddenTests.files.length} 个文件 · ${flow.hiddenTests.command}` : flow.testAuthor === 'failed' ? '隐藏测试：未生成（测试作者没有给出计划，本次只有契约检查）' : '',
       flow.demand ? `等待环境：${flow.demand.type} · ${flow.demand.target} (${flow.demand.reason})` : '',
       flow.redFirst !== 'skipped' ? `Red-first：${flow.redFirst}` : '',

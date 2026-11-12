@@ -4,19 +4,24 @@ This is the current scheme. It replaces the per-phase P0–P14 notes.
 
 ## The pieces
 
-- **Task**: one unit of work with a status, repos, an optional contract and a conversation.
-- **Contract**: what "done" means. Checks, criteria, human items, unknowns, a baseline of failures
-  that predate the task, and an autonomy level.
-- **Flow**: one autonomous run of a task. It owns the implement turn, verification, retries,
-  agent switches, replans, a wall clock and a report.
+- **Task**: one unified unit of work on the board. Without a project it acts as a lightweight backlog
+  item (`pending` with a `Needs project` badge); once linked to a repo it owns its isolated git
+  worktree, specification (`details`), optional contract and conversation.
+- **Contract**: what "done" means. Executable checks (with sha256 tamper protection), an optional
+  metric ratchet (`direction: 'maximize' | 'minimize'`, optional `target`), human review checklist
+  items, a baseline of failures that predate the task, and attempt/wall-clock budgets.
+- **Flow**: the single autonomous execution engine for tasks. It owns the implement turn,
+  verification, metric-ratchet checkpoints/rollbacks, environment supply (`waiting_environment`),
+  retries, agent switches, replans, a wall clock and a report.
 - **Run from a conversation**: a flow can start from an existing chat. It reuses that chat as its
   implement turn and attaches a task record for the contract and checks; it does not open a second
   conversation.
 - **Command check**: the only verification primitive core knows. A check is a command, a repo, an
   optional cwd/env, a timeout and whether it is required.
-- **Environment provider**: anything outside core that supplies a device/browser/service. It is a
-  project script or an MCP server; core does not bundle ADB, iOS or a browser driver. A child
-  verifier inherits the implement conversation's user MCP selection, never every server.
+- **Environment supply (`flows.supplyEnvironment`)**: when a check fails because a CLI, MCP server,
+  service or environment variable is missing, the flow enters `waiting_environment` with a structured
+  `demand` and presents an interactive supply card in `FlowPanel` (attach MCP servers, inject check
+  env vars without changing the contract hash or leaking secret values into chat, and resume).
 
 ## Starting work
 
@@ -49,13 +54,19 @@ naming an agent this machine cannot write with falls back to the task's own agen
   the change; `blocked` continues with a note.
 - Verify runs the contract's checks, or the project's `.conclave/project.json` check when the
   contract names none, plus the hidden tests.
-- A failure is classified (`compile`, `test`, `environment`, `unknown`). The flow retries with the
-  attempt history, switches agents after repeated failures, and asks a planner for a new approach
-  after the second failure (at most two replans).
-- It pauses on no progress, an environment failure, exhausted attempts, a failed/interrupted
+- A failure is classified (`compile`, `test`, `environment`, `unknown`). Missing environment/tooling
+  moves the flow to `waiting_environment` until supplied; code/test failures retry with the attempt
+  history, switch agents after repeated failures, and ask a planner for a new approach after the
+  second failure (at most two replans).
+- When `contract.verification.ratchet` is configured and passing checks emit `METRIC_SCORE=<number>`,
+  the flow commits a git checkpoint in the task's isolated worktree whenever the score improves,
+  rolls the worktree back to `bestCommit` when a later attempt regresses, and hands the task in for
+  review once `target` (or `GOAL_REACHED=true`) is reached or the attempt budget finishes with at
+  least one verified checkpoint.
+- It pauses on no progress, exhausted attempts without a ratchet checkpoint, a failed/interrupted
   implement turn, a missing check, or the wall clock.
-- Every terminal state writes a report with the nodes, attempts, hidden tests, red-first result and
-  latest replan.
+- Every terminal state writes a report with the nodes, attempts, best metric score (when applicable),
+  hidden tests, red-first result and latest replan.
 
 Checks in one repo run in order; different repos may run together. `required: false` failures are
 reported but do not block a hand-in.

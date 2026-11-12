@@ -35,14 +35,15 @@ Conclave 直接驱动你在本机装好、登录好的各 Agent CLI，配置与�
 
 ## 核心能力
 
-### 1. 契约驱动的自主任务流（Flow）与环境动态补给（HITL）
-- **验收契约（Acceptance Contract）**：明确界定任务的完成定义，内置命令级 checks、脚本哈希防篡改与历史 baseline 过滤。
+### 1. 统一事项看板、契约自治流（Flow）与指标棘轮
+- **事项到任务单轨流转**：无项目的轻量想法直接记入看板待办，绑定项目后一键进入契约驱动的自主执行流（`Flow`）。
+- **验收契约与指标棘轮（Acceptance Contract & Metric Ratchet）**：明确界定完成定义，内置命令级 checks、脚本哈希防篡改、人工核对清单，以及基于 `METRIC_SCORE` 的指标棘轮（涨分自动提交检查点、退化自动回滚）。
 - **TDD 红检与隐藏盲测（Red-First & Hidden Tests）**：独立只读 Agent 提前编写盲测用例并在起点 commit 验证先红后绿，防止实现 Agent 编写假测试。
-- **环境异常动态感知与人机补给（Environment Demand）**：当检测到缺少命令工具、环境变量或 MCP 插件时，自动生成结构化需求并挂起等待，用户补给后一键接续推进。
+- **环境异常动态感知与人机补给（Environment Supply）**：当检测到缺少命令工具、环境变量或 MCP 插件时，自动挂起并在面板内提供 MCP 挂载与检查环境变量注入表单，补给后一键接续推进。
 
 ### 2. 递归自我迭代（RSI, Recursive Self-Improvement）
-- **Conclave fixing Conclave**：内置内生化自演化引擎（`EvolutionService`），从可复现改进项出发，在隔离影子 Worktree 中自动完成修复。
-- **严苛 5 重门禁拦截**：类型检查、完整单测、构建打包、独立 Headless Core 启动冒烟（`self:smoke`）及单测防删防 skip 审查（`self:tests`），全绿灯后自动推进 `self/evolve` 基线。
+- **Conclave fixing Conclave**：看板顶栏内置「自我迭代」工作台（`EvolutionService` + `EvolutionDialog`），从可复现改进项出发，在隔离影子 Worktree 中自动完成修复。
+- **严苛 5 重门禁拦截**：类型检查、完整单测、构建打包、独立 Headless Core 启动冒烟（`self:smoke`）及单测防删防 skip 审查（`self:tests`），全绿灯后自动提交并快进推进 `self/evolve` 分支。
 
 ### 3. 独立 Worktree 隔离与外部事项接入
 - 每个执行中的任务自动在 `~/.conclave/worktrees/` 下创建独立 Git 分支与工作树，支持从 GitHub、Jira、Linear、禅道插件同步外部 Issue 并一键转入任务流。

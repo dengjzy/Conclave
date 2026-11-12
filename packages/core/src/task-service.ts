@@ -1,8 +1,6 @@
-import type { AgentProfile } from '@conclave/protocol'
+import { execFileSync } from 'node:child_process'
 import { stat } from 'node:fs/promises'
-import path from 'node:path'
 import {
-  agentDescriptor,
   checkCancel,
   checkAutoRun,
   checkChatResume,
@@ -48,11 +46,11 @@ import {
   type TaskStatus,
   type UnattendedMode
 } from '@conclave/protocol'
-import { agentPrompt, chatPlanPrompt, chatStartPrompt, leaderStartPrompt, type PlanBrief, type PreviousAttempt, type PromptImages } from './agent-prompt'
+import { chatPlanPrompt, chatStartPrompt, type PreviousAttempt, type PromptImages } from './agent-prompt'
 import type { AgentRunStore } from './agent-run-store'
 import type { AttachmentStore } from './attachment-store'
 import { checkTrust } from './contract-trust'
-import type { ConversationService, HandoffChoice, ModelChoice } from './conversation-service'
+import type { ConversationService, HandoffChoice } from './conversation-service'
 import type { ProjectRegistry } from './project-registry'
 import { needsSlug } from './branch-slug'
 import { Rejection } from './rejection'
@@ -75,23 +73,17 @@ const SLUG_WAIT_MS = 10_000
 // What a task needs of its chat.
 export type TaskConversations = Pick<ConversationService, 'startForTask' | 'send' | 'markUnattended' | 'savePlan' | 'stopForTask' | 'deleteForTask' | 'get' | 'attachToTask' | 'runUsage' | 'capacityAvailable' | 'validateStartOptions'>
 
-export type TaskCheckRunner = { run(task: Task, conversationId: string, contract: TaskContract | null, hiddenTests?: HiddenTestPlan | null): Promise<CheckResult[] | null> }
-
-export type TaskSquads = {
-  preparing(id: string): boolean
-  agent(id: string): AgentKind
-  start(id: string, allowBypass?: boolean, options?: TaskLaunchOptions): Promise<Task>
-  resume(id: string, allowBypass?: boolean): Promise<Task>
-  cancel(id: string): Promise<void>
-  remove(id: string): Promise<void>
-  busy(id: string): boolean
-  awaiting(id: string): boolean
+export type TaskCheckRunner = {
+  run(
+    task: Task,
+    conversationId: string,
+    contract: TaskContract | null,
+    hiddenTests?: HiddenTestPlan | null,
+    extraEnv?: Readonly<Record<string, string>>
+  ): Promise<CheckResult[] | null>
 }
 
 export class TaskService {
-  private squads: TaskSquads | null = null
-  setSquads(squads: TaskSquads): void { this.squads = squads }
-
   private readonly launching = new Set<string>()
   private gitGuard: ((dirs: readonly string[]) => Promise<void>) | null = null
   setGitGuard(guard: (dirs: readonly string[]) => Promise<void>): void { this.gitGuard = guard }
@@ -107,7 +99,7 @@ export class TaskService {
   private namer: BranchNamer | null = null
   private readonly naming = new Map<string, Promise<void>>()
   setBranchNamer(namer: BranchNamer): void { this.namer = namer }
-  isLaunching(id: string): boolean { return this.launching.has(id) || (this.squads?.preparing(id) ?? false) }
+  isLaunching(id: string): boolean { return this.launching.has(id) }
 
   constructor(
     private readonly store: TaskStore,
@@ -165,7 +157,6 @@ export class TaskService {
     const repoPaths = repos && [...new Set(repos.map(normalizeRepoPath))]
     // Nothing depends on a task that does not exist yet, so no loop is possible.
     const dependencyIds = dependsOn && this.resolveIds(dependsOn)
-    const squadAgent = squadId ? this.requireSquads().agent(squadId) : undefined
     const task = this.store.create(title)
     if (repoPaths) {
       this.projects.remember(repoPaths)
@@ -173,7 +164,7 @@ export class TaskService {
     const patch: TaskPatch = {
       details,
       squadId,
-      agent: squadAgent ?? agent,
+      agent,
       repos: repoPaths && withKnownWorktrees([], repoPaths),
       dependsOn: dependencyIds
     }
@@ -257,13 +248,8 @@ export class TaskService {
 
   update({ id, title, details, repos, dependsOn, agent, squadId, starts, references, launch, autoRun }: RpcParsedParams<'tasks.update'>): Task {
     const task = this.get(id)
-    if (squadId !== undefined && squadId !== task.squadId) {
-      if (this.isLaunching(task.id) || task.status !== 'pending' || this.squads?.busy(task.id)) throw new Rejection('squad-busy', '开发开始后不能更换团队')
-    }
-    if (task.squadId && squadId !== null && agent !== undefined && agent !== task.agent) throw new Rejection('squad-managed')
     if ((autoRun !== undefined || dependsOn !== undefined) && this.isLaunching(task.id)) throw new Rejection('run-in-progress')
     const patch: TaskPatch = { title, details, agent, launch, squadId, autoRun }
-    if (squadId) { patch.agent = this.requireSquads().agent(squadId); patch.launch = { permissionMode: 'ask' } }
     // Words for an old title would name the branch after what the task no longer is.
     if (title !== undefined && title !== task.title) patch.slug = null
     // Another agent has models and modes of its own, so what was picked for the last one goes.
@@ -381,7 +367,7 @@ export class TaskService {
   // Tasks whose agent is at work in their worktrees.
   async inUse(): Promise<ReadonlySet<string>> {
     return new Set(this.store.list().flatMap((task) =>
-      this.isLaunching(task.id) || this.squads?.busy(task.id) || (task.conversationId !== null && this.chatTurn(task.conversationId) === 'running') ? [task.id] : []))
+      this.isLaunching(task.id) || (task.conversationId !== null && this.chatTurn(task.conversationId) === 'running') ? [task.id] : []))
   }
 
   private chatTurn(conversationId: string): string | null {
@@ -397,7 +383,6 @@ export class TaskService {
   async releaseAgent(id: string): Promise<void> {
     const task = this.get(id)
     if (this.isLaunching(task.id)) throw new Rejection('run-in-progress')
-    if (this.squads?.busy(task.id) || (task.conversationId && this.delegationBusy?.(task.conversationId))) throw new Rejection('worktree-in-use')
     if (!task.conversationId || !this.chats) return
     if (this.chats.get(task.conversationId).chat?.turn === 'running') throw new Rejection('worktree-in-use')
     await this.chats.stopForTask(task.id)
@@ -427,8 +412,6 @@ export class TaskService {
     if (blocker) {
       throw new Rejection(blocker, `cannot move task from ${task.status} to ${status}`)
     }
-    if (this.squads?.busy(task.id)) throw new Rejection('squad-busy')
-    if (task.conversationId && this.delegationBusy?.(task.conversationId)) throw new Rejection('agent-call-writing', '请先等待委派工作结束')
     return this.changed(this.save(task.id, { status }))
   }
 
@@ -442,7 +425,6 @@ export class TaskService {
       throw new Rejection(blocker)
     }
     return this.launchChat(task, async () => {
-      await this.squads?.cancel(task.id)
       await this.chats?.stopForTask(task.id)
       const attempt = task.attempts.length + 1
       const { repos, kept } = await restartBranches(task, this.dependenciesOf(task), attempt)
@@ -459,7 +441,6 @@ export class TaskService {
       throw new Rejection(blocker)
     }
     if (this.isLaunching(task.id)) throw new Rejection('run-in-progress')
-    await this.squads?.cancel(task.id)
     await this.chats?.stopForTask(task.id)
     // A planning checkout only ever served a start, which will not come.
     await removePlanningCheckouts(task.id, this.worktreesRoot)
@@ -481,13 +462,7 @@ export class TaskService {
   // are accepted, the task can only plan read-only. Resolves once the first message is on its way.
   // unattended: a scheduled run, which carries the task out in that mode without planning first.
   // What `options` leaves out comes from the task's launch, which a start by hand then keeps.
-  // coordinator: a squad leader's brief; resume, when the leader planned the task itself, goes on
-  // from that planning with what it read and settled instead of starting over.
-  async start(id: string, allowBypass?: boolean, unattended?: UnattendedMode, options: TaskLaunchOptions = {}, coordinator?: string, resume = false, profile?: AgentProfile): Promise<Task> {
-    if (this.get(id).squadId && !coordinator) {
-      if (unattended) throw new Rejection('squad-schedule-unsupported')
-      return this.requireSquads().start(id, allowBypass, options)
-    }
+  async start(id: string, allowBypass?: boolean, unattended?: UnattendedMode, options: TaskLaunchOptions = {}): Promise<Task> {
     const chats = this.requireChats()
     const task = this.get(id)
     const dependencies = this.dependenciesOf(task)
@@ -501,7 +476,7 @@ export class TaskService {
     }
     if (!chats.capacityAvailable(agent, task.conversationId)) throw new Rejection('agent-capacity')
     return this.launchChat(task, async () => {
-      const launch = { ...task.launch, ...options, ...(profile?.modelProvider ? { modelProvider: profile.modelProvider } : {}) }
+      const launch = { ...task.launch, ...options }
       const permissionMode = unattended ?? launch.permissionMode ?? 'plan'
       const modeBlocker = checkStartMode(dependencies, permissionMode)
       if (modeBlocker) throw new Rejection(modeBlocker)
@@ -532,11 +507,8 @@ export class TaskService {
       checkDependenciesNow()
       this.store.update(task.id, { repos: workspace.repos })
       const conversation = await chats.startForTask({ id: task.id, title: task.title, agent }, {
-        cwd: workspace.cwd, extraDirs: workspace.extraDirs, referenceDirs: workspace.referenceDirs, planOnly: false, session: coordinator && resume ? 'resume' : 'new', readable: images.readable,
-        allowBypass: coordinator ? false : unattended === 'bypass' || allowBypass, ...launch,
-        permissionMode: coordinator ? agentDescriptor(agent).readOnlyMode : permissionMode, workspaceReadOnly: Boolean(coordinator), profile,
-        // A leader going on from its planning reads its brief first, in a handoff if it moved.
-        ...(coordinator && resume ? { opening: { text: leaderStartPrompt(task, workspace, dependencies, this.previousAttempt(task), images.prompt, task.plan, coordinator), imageIds } } : {})
+        cwd: workspace.cwd, extraDirs: workspace.extraDirs, referenceDirs: workspace.referenceDirs, planOnly: false, session: 'new', readable: images.readable,
+        allowBypass: unattended === 'bypass' || allowBypass, ...launch, permissionMode
       })
       if (unattended) chats.markUnattended(conversation.id, unattended)
       // The planning agent stopped for the new stage, so nothing reads there any more.
@@ -551,12 +523,8 @@ export class TaskService {
       } finally {
         this.settingUp.delete(task.id)
       }
-      if (!(coordinator && resume)) {
-        const prompt = coordinator
-          ? leaderStartPrompt(task, workspace, dependencies, this.previousAttempt(task), images.prompt, task.plan, coordinator)
-          : chatStartPrompt(task, workspace, dependencies, this.previousAttempt(task), images.prompt, task.plan, unattended !== undefined, permissionMode)
-        await chats.send(conversation.id, [prompt, projectNote(setups, failures)].filter(Boolean).join('\n\n'), imageIds)
-      }
+      const prompt = chatStartPrompt(task, workspace, dependencies, this.previousAttempt(task), images.prompt, task.plan, unattended !== undefined, permissionMode)
+      await chats.send(conversation.id, [prompt, projectNote(setups, failures)].filter(Boolean).join('\n\n'), imageIds)
       return this.changed(this.get(task.id))
     })
   }
@@ -572,8 +540,6 @@ export class TaskService {
   // finished task goes back to running, as continuing it does.
   async resumeChat(id: string, allowBypass?: boolean): Promise<Task> {
     const task = this.get(id)
-    // Before its squad runs, the leader plans as any task's agent does.
-    if (task.squadId && task.status !== 'pending') return this.requireSquads().resume(id, allowBypass)
     const dependencies = this.dependenciesOf(task)
     const blocker = checkChatResume(task, dependencies)
     if (blocker) {
@@ -589,7 +555,6 @@ export class TaskService {
   async handoff(id: string, agent: AgentKind, note: string, allowBypass?: boolean, choice: HandoffChoice = {}): Promise<Task> {
     const chats = this.requireChats()
     const task = this.get(id)
-    if (task.squadId) throw new Rejection('squad-managed')
     if (agent === task.agent) throw new Rejection('conversation-same-agent')
     const turn = task.conversationId ? (chats.get(task.conversationId).chat?.turn ?? null) : null
     const dependencies = this.dependenciesOf(task)
@@ -670,30 +635,68 @@ export class TaskService {
 
   // Runs the task's checks without handing it in, for a scheduler or a UI that wants the result
   // before deciding. Null when no project has a check, or the task has no chat to run it in.
-  async check(id: string, hiddenTests: HiddenTestPlan | null = null): Promise<CheckResult[] | null> {
+  async check(
+    id: string,
+    hiddenTests: HiddenTestPlan | null = null,
+    extraEnv?: Readonly<Record<string, string>>
+  ): Promise<CheckResult[] | null> {
     const task = this.get(id)
     if (!task.conversationId) return null
-    return this.runChecks(task, task.conversationId, hiddenTests)
+    return this.runChecks(task, task.conversationId, hiddenTests, extraEnv)
   }
 
-  private async runChecks(task: Task, conversationId = task.conversationId, hiddenTests: HiddenTestPlan | null = null): Promise<CheckResult[] | null> {
+  private async runChecks(
+    task: Task,
+    conversationId = task.conversationId,
+    hiddenTests: HiddenTestPlan | null = null,
+    extraEnv?: Readonly<Record<string, string>>
+  ): Promise<CheckResult[] | null> {
     if (!conversationId) return null
     const contract = this.contracts?.get(task.id) ?? null
-    if (this.checkRunner) return this.checkRunner.run(task, conversationId, contract, hiddenTests)
+    if (this.checkRunner) return this.checkRunner.run(task, conversationId, contract, hiddenTests, extraEnv)
     if (!this.setup) return null
     return this.setup.checkDetailed(conversationId, task.repos.map((repo) => ({ path: repo.path, dir: repo.worktreePath ?? repo.path })))
   }
 
+  // Commits a verified metric improvement inside the task's isolated git worktree so a subsequent
+  // regression can reset back to this commit without ever touching the user's primary checkout.
+  checkpointWorktree(id: string, message: string): string | null {
+    const task = this.get(id)
+    const repo = task.repos.find((entry) => !entry.reference && entry.worktreePath && entry.worktreePath !== entry.path)
+    if (!repo?.worktreePath) return null
+    try {
+      const dirty = execFileSync('git', ['-C', repo.worktreePath, 'status', '--porcelain'], { encoding: 'utf8' }).trim()
+      if (dirty) {
+        execFileSync('git', ['-C', repo.worktreePath, 'add', '-A'], { encoding: 'utf8' })
+        execFileSync('git', ['-C', repo.worktreePath, 'commit', '-m', message], { encoding: 'utf8' })
+      }
+      return execFileSync('git', ['-C', repo.worktreePath, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() || null
+    } catch {
+      return null
+    }
+  }
+
+  restoreWorktreeCheckpoint(id: string, commit: string): boolean {
+    const task = this.get(id)
+    const repo = task.repos.find((entry) => !entry.reference && entry.worktreePath && entry.worktreePath !== entry.path)
+    if (!repo?.worktreePath || !/^[0-9a-f]{7,40}$/i.test(commit)) return false
+    try {
+      execFileSync('git', ['-C', repo.worktreePath, 'reset', '--hard', commit], { encoding: 'utf8' })
+      execFileSync('git', ['-C', repo.worktreePath, 'clean', '-fd'], { encoding: 'utf8' })
+      return true
+    } catch {
+      return false
+    }
+  }
+
   // Handed in by the user, the task goes for review only once each project's check passes; a check
   // that fails goes back to the agent to fix, and the task keeps running.
-  async submitChecked(id: string, options: { squad?: boolean } = {}): Promise<Task> {
+  async submitChecked(id: string): Promise<Task> {
     const task = this.get(id)
     const blocker = checkSubmit(task, this.turnOf(task))
     if (blocker) throw new Rejection(blocker)
-    if (!options.squad && this.squads?.busy(task.id)) throw new Rejection('squad-busy')
-    if (task.conversationId && this.delegationBusy?.(task.conversationId)) throw new Rejection('agent-call-writing', '请先等待委派工作结束')
     const { conversationId } = task
-    if (!conversationId || (!this.setup && !this.checkRunner)) return this.submit(id, options)
+    if (!conversationId || (!this.setup && !this.checkRunner)) return this.submit(id)
     if (this.checking.has(task.id)) throw new Rejection('check-running')
     this.checking.add(task.id)
     try {
@@ -711,7 +714,7 @@ export class TaskService {
     } finally {
       this.checking.delete(task.id)
     }
-    return this.submit(id, options)
+    return this.submit(id)
   }
 
   private turnOf(task: Task) {
@@ -733,13 +736,10 @@ export class TaskService {
     return made.length ? this.setup.setUp(conversationId, made, setups) : []
   }
 
-  // A chat task is handed in for review by the user: its agent does not end with the work. A squad
-  // hands its task in this way, without the projects' check.
-  submit(id: string, options: { squad?: boolean } = {}): Task {
+  // A chat task is handed in for review by the user: its agent does not end with the work.
+  submit(id: string): Task {
     const task = this.get(id)
     const turn = task.conversationId ? (this.requireChats().get(task.conversationId).chat?.turn ?? null) : null
-    if (!options.squad && this.squads?.busy(task.id)) throw new Rejection('squad-busy')
-    if (task.conversationId && this.delegationBusy?.(task.conversationId)) throw new Rejection('agent-call-writing', '请先等待委派工作结束')
     const blocker = checkSubmit(task, turn)
     if (blocker) {
       throw new Rejection(blocker)
@@ -770,90 +770,16 @@ export class TaskService {
 
   // Flags a task whose agent waits on the user: a running task whose agent is not working (it may
   // be gone), a planning one whose agent is up and not working.
-  private delegationBusy: ((id: string) => boolean) | null = null
-  setDelegationBusy(busy: (id: string) => boolean): void { this.delegationBusy = busy }
   chatChanged(conversation: Conversation): void {
     const task = conversation.taskId ? this.store.get(conversation.taskId) : null
     if (!task) {
       return
     }
     const turn = conversation.chat?.turn ?? null
-    const waiting = this.settingUp.has(task.id) || this.delegationBusy?.(conversation.id) ? false : task.squadId && task.status !== 'pending' ? (this.squads?.awaiting(task.id) ?? false) : task.status === 'running' ? turn !== 'running' : task.status === 'pending' && (turn === 'idle' || turn === 'awaiting')
+    const waiting = this.settingUp.has(task.id) ? false : task.status === 'running' ? turn !== 'running' : task.status === 'pending' && (turn === 'idle' || turn === 'awaiting')
     if (task.awaitingInput !== waiting) {
       this.changed(this.store.update(task.id, { awaitingInput: waiting }))
     }
-  }
-
-  async squadContext(id: string): Promise<{ text: string; readable: string[] }> {
-    const task = this.get(id)
-    const entries = task.repos.map((repo) => ({ name: path.basename(repo.path), source: repo.path, dir: repo.worktreePath ?? repo.path, branch: repo.branch, base: null, startRef: repo.startRef, start: repo.start, topLevel: null, created: false, reference: Boolean(repo.reference) }))
-    const cwd = entries[0]?.dir
-    if (!cwd) throw new Rejection('missing-repo')
-    const images = await this.images(task)
-    return { readable: images.readable, text: `${agentPrompt(task, { cwd, extraDirs: entries.slice(1).flatMap((entry) => entry.reference ? [] : [entry.dir]), referenceDirs: entries.slice(1).flatMap((entry) => entry.reference ? [entry.dir] : []), multi: entries.length > 1, entries, repos: task.repos }, this.dependenciesOf(task), this.previousAttempt(task), images.prompt)}${task.plan ? `\n\n已确认规划：\n${task.plan.markdown}` : ''}` }
-  }
-
-  // launch: the mode the squad will develop in, kept while its leader plans.
-  assignSquad(id: string, squadId: string, agent: AgentKind, launch?: TaskLaunchOptions): Task {
-    return this.changed(this.store.update(id, { squadId, agent, status: 'pending', ...(launch ? { launch } : {}) }))
-  }
-
-  // A squad's leader plans the task with the user first, read-only, on its own model; the plan it
-  // settles on is carried out when the squad starts (SquadService.start), by the same leader.
-  async planForSquad(id: string, choice: ModelChoice, brief: PlanBrief, profile?: AgentProfile): Promise<Task> {
-    const chats = this.requireChats()
-    const task = this.get(id)
-    if (task.status !== 'pending') throw new Rejection('not-pending')
-    if (!task.repos.length) throw new Rejection('missing-repo')
-    const { agent } = task
-    if (!agent) throw new Rejection('invalid-task')
-    if (!chats.capacityAvailable(agent, task.conversationId)) throw new Rejection('agent-capacity')
-    return this.launchChat(task, async () => {
-      const dependencies = this.dependenciesOf(task)
-      const images = await this.images(task)
-      const workspace = await prepareRefineWorkspace(task, dependencies, this.worktreesRoot)
-      const conversation = await chats.startForTask({ id: task.id, title: task.title, agent }, {
-        cwd: workspace.cwd, extraDirs: workspace.dirs.filter((dir) => dir !== workspace.cwd && !workspace.references.has(dir)), referenceDirs: [...workspace.references], planOnly: true, session: 'new',
-        readable: images.readable, allowBypass: false, permissionMode: 'plan', ...choice, profile, ...(profile?.modelProvider ? { modelProvider: profile.modelProvider } : {})
-      })
-      await chats.send(conversation.id, chatPlanPrompt(task, workspace, dependencies, this.previousAttempt(task), images.prompt, brief), this.chatImageIds(task, images.prompt))
-      return this.changed(this.get(task.id))
-    })
-  }
-
-  keepSquadPlan(id: string, plan: NonNullable<Task['plan']>): void {
-    this.changed(this.store.update(id, { plan }))
-  }
-
-  async resumeSquadLeader(id: string, allowBypass?: boolean): Promise<Task> {
-    const task = this.get(id)
-    if (task.status === 'abandoned' || task.status === 'pending') throw new Rejection('not-running')
-    const dependencies = this.dependenciesOf(task)
-    if (dependencies.some((dependency) => dependency.status !== 'done')) throw new Rejection('dependencies-unfinished')
-    const conversation = task.conversationId ? this.requireChats().get(task.conversationId) : null
-    if (!conversation) throw new Rejection('no-chat')
-    return this.launchChat(task, async () => {
-      const setups = await this.trustedSetups(task)
-      const workspace = await prepareWorkspace(task, dependencies, this.worktreesRoot)
-      this.store.update(task.id, { repos: workspace.repos })
-      const images = await this.images(task)
-      await this.requireChats().startForTask({ id: task.id, title: task.title, agent: conversation.agent }, {
-        cwd: workspace.cwd, extraDirs: workspace.extraDirs, referenceDirs: workspace.referenceDirs, planOnly: false, readable: images.readable,
-        workspaceReadOnly: true, session: 'resume', allowBypass: false
-      })
-      await this.setUp(conversation.id, workspace, setups)
-      return task.status === 'running' ? this.get(id) : this.changed(this.save(task.id, { status: 'running', awaitingInput: false }))
-    })
-  }
-
-  setSquadWaiting(id: string, waiting: boolean): void {
-    const task = this.store.get(id)
-    if (task && task.awaitingInput !== waiting) this.changed(this.store.update(id, { awaitingInput: waiting }))
-  }
-
-  private requireSquads(): TaskSquads {
-    if (!this.squads) throw new Rejection('squad-unavailable')
-    return this.squads
   }
 
   private requireChats(): TaskConversations {
@@ -886,7 +812,6 @@ export class TaskService {
     const task = this.get(id)
     if (this.isLaunching(task.id)) throw new Rejection('run-in-progress')
     const dependents = this.store.dependents(task.id)
-    await this.squads?.remove(task.id)
     await this.chats?.deleteForTask(task.id)
     // Worktrees are left on disk: they may hold the only copy of the agent's work. Planning
     // checkouts hold none, so they go, unless one holds changes after all.

@@ -253,28 +253,8 @@ export function chatStartPrompt(
   return sections.filter((section) => section !== null).join('\n\n')
 }
 
-// A squad's leader starting on the task: the task and its folders as any agent gets them, the plan
-// the user approved as what it hands out, then its brief (squadLeaderPrompt). It implements nothing.
-export function leaderStartPrompt(
-  task: Pick<Task, 'title' | 'details' | 'source' | 'sourceSnapshot'>,
-  workspace: Workspace,
-  dependencies: readonly Pick<Task, 'id' | 'title' | 'repos'>[],
-  previous: PreviousAttempt | null,
-  images: PromptImages,
-  plan: Pick<TaskPlan, 'markdown'> | null,
-  brief: string
-): string {
-  return [
-    agentPrompt(task, workspace, dependencies, previous, images),
-    plan ? `这是用户已经确认的计划，照它分工派活，不要再提交计划：\n<approved-plan>\n${plan.markdown.trim()}\n</approved-plan>` : null,
-    brief
-  ].filter((section) => section !== null).join('\n\n')
-}
-
 // Planning a task whose dependencies are unfinished: read-only in the projects as they are, the plan
 // kept on the task for when it can run. The dependencies' plans go inline.
-// Why the task is planned before it runs, and what the plan settles on, where that is not the
-// unfinished dependencies: a squad's leader plans the work it then hands out.
 export type PlanBrief = { opening: string; settle: string }
 
 export function chatPlanPrompt(

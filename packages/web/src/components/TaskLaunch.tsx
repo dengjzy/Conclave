@@ -15,15 +15,24 @@ export type TaskLaunch = ResolvedModel & {
   planOnly: boolean
 }
 
+export function defaultTaskMode(offered: readonly ChatPermissionMode[], flowsSupported: boolean): ChatPermissionMode {
+  if (flowsSupported) {
+    if (offered.includes('acceptEdits')) return 'acceptEdits'
+    if (offered.includes('ask')) return 'ask'
+  }
+  return 'plan'
+}
+
 // How the task starts from its details: as its launch says, within what its agent and model offer
 // now. null when not `enabled`, when core does not keep a launch, or when there is no agent to start.
 export function useTaskLaunch(task: Task, dependencies: readonly Task[], enabled = true): TaskLaunch | null {
   const supported = useTaskLaunchSupported() && enabled
+  const flowsSupported = useCore((s) => s.rpc?.features.includes('flows') ?? false)
   const catalog = useAgentCatalog(task.agent, supported && task.status === 'pending')
   if (!supported || !task.agent) return null
   const resolved = resolveModel(catalog, { model: task.launch.model ?? undefined, effort: task.launch.effort ?? undefined })
   const offered = startModes(task.agent, resolved.model)
-  const wanted = task.launch.permissionMode ?? 'plan'
+  const wanted = task.launch.permissionMode ?? defaultTaskMode(offered, flowsSupported)
   // Auto depends on the model, so the task's mode stands until the catalog says otherwise.
   const takes = offered.includes(wanted) || catalog === undefined
   const mode = takes && !checkStartMode(dependencies, wanted) ? wanted : 'plan'

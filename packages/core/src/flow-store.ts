@@ -57,7 +57,7 @@ export class FlowStore {
 
   // The run still holding a task, if one is: a finished or cancelled one does not block a new flow.
   active(taskId: string): Flow | null {
-    return this.list(taskId).find((flow) => flow.state === 'running' || flow.state === 'paused') ?? null
+    return this.list(taskId).find((flow) => flow.state === 'running' || flow.state === 'paused' || flow.state === 'waiting_environment') ?? null
   }
 
   remove(taskId: string): void {

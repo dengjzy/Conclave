@@ -18,6 +18,9 @@ describe('FlowService', () => {
   let checkResults: CheckResult[] | null
   let checkThrows: string | null
   let checkedHidden: HiddenTestPlan | null
+  let checkedEnv: Readonly<Record<string, string>> | undefined
+  let checkpoints: string[]
+  let rollbacks: string[]
   const conversationId = '00000000-0000-4000-8000-000000000001'
   let conversation: { id: string; chat: { turn: 'idle' | 'running' | 'awaiting' } }
   let items: ChatItem[]
@@ -60,19 +63,36 @@ describe('FlowService', () => {
     checkResults = []
     checkThrows = null
     checkedHidden = null
+    checkedEnv = undefined
+    checkpoints = []
+    rollbacks = []
     conversation = { id: conversationId, chat: { turn: 'idle' } }
     items = []
     contract = { ...TaskContractFields.parse({}), updatedAt: 0 }
     taskService = {
       get: () => task,
       start: async () => ({ ...task, status: 'running', conversationId }),
-      check: async (_id: string, hidden?: HiddenTestPlan | null) => { checkedHidden = hidden ?? null; if (checkThrows) throw new Error(checkThrows); return checkResults },
+      check: async (_id: string, hidden?: HiddenTestPlan | null, extraEnv?: Readonly<Record<string, string>>) => {
+        checkedHidden = hidden ?? null
+        checkedEnv = extraEnv
+        if (checkThrows) throw new Error(checkThrows)
+        return checkResults
+      },
       submit: () => { submitted = true; return { ...task, status: 'review' } },
       contract: () => contract,
       handoff: async (_id: string, agent: string) => { handoffs.push(agent); return { ...task, agent } },
       assignAgent: (_id: string, agent: string) => ({ ...task, agent }),
       create: (fields: { title: string }) => ({ ...task, ...fields }),
-      attachConversation: () => ({ ...task, status: 'running', conversationId })
+      attachConversation: () => ({ ...task, status: 'running', conversationId }),
+      checkpointWorktree: (_id: string, message: string) => {
+        const sha = `commit-${checkpoints.length + 1}`
+        checkpoints.push(`${sha}:${message}`)
+        return sha
+      },
+      restoreWorktreeCheckpoint: (_id: string, commit: string) => {
+        rollbacks.push(commit)
+        return true
+      }
     } as unknown as Pick<TaskService, 'get' | 'start' | 'create' | 'attachConversation' | 'check' | 'submit' | 'contract' | 'handoff' | 'assignAgent'>
     chatsService = {
       get: () => conversation as unknown as Conversation,
@@ -450,5 +470,90 @@ describe('FlowService', () => {
     const cancelled = await flows.control(flow.id, 'cancel')
     expect(cancelled.state).toBe('cancelled')
     expect(submitted).toBe(false)
+  })
+
+  it('checkpoints improvements, rolls back regressions, and stops at target under metric ratchet', async () => {
+    contract = {
+      ...TaskContractFields.parse({
+        verification: { ratchet: { direction: 'maximize', target: 90 } },
+        constraints: { maxAttempts: 4 }
+      }),
+      updatedAt: 0
+    }
+    const scoreResult = (score: number): CheckResult => ({
+      repo: '/repo',
+      command: 'pnpm bench',
+      status: 'pass',
+      exitCode: 0,
+      durationMs: 5,
+      tail: `METRIC_SCORE=${score}`,
+      signature: 'ok',
+      failures: [],
+      flaky: false
+    })
+
+    checkResults = [scoreResult(70)]
+    const first = await start()
+    expect(first.state).toBe('running')
+    expect(first.bestScore).toBe(70)
+    expect(first.bestCommit).toBe('commit-1')
+    expect(first.attempts[0]?.metricScore).toBe(70)
+    expect(rollbacks).toEqual([])
+    expect(submitted).toBe(false)
+
+    // Attempt 2 regresses to 60 -> rolled back to commit-1
+    items = [turn()]
+    checkResults = [scoreResult(60)]
+    await flows.reconcile()
+    const second = store.get(first.id)
+    expect(second.state).toBe('running')
+    expect(second.bestScore).toBe(70)
+    expect(second.bestCommit).toBe('commit-1')
+    expect(rollbacks).toEqual(['commit-1'])
+    expect(sends.at(-1)).toContain('工作树已回滚到最佳检查点')
+
+    // Attempt 3 reaches 92 >= target 90 -> checkpoints and submits to review
+    items = [turn()]
+    checkResults = [scoreResult(92)]
+    await flows.reconcile()
+    const third = store.get(first.id)
+    expect(third.state).toBe('review')
+    expect(third.bestScore).toBe(92)
+    expect(third.bestCommit).toBe('commit-2')
+    expect(third.report).toContain('最佳指标：METRIC_SCORE=92')
+    expect(submitted).toBe(true)
+  })
+
+  it('injects supplied environment variables into checks without leaking secret values', async () => {
+    const envBlocked: CheckResult = {
+      repo: '/repo',
+      command: 'pnpm test:integration',
+      status: 'blocked',
+      exitCode: 1,
+      durationMs: 1,
+      tail: 'Error: OPENAI_API_KEY is not set',
+      signature: 'missing-key',
+      failures: ['OPENAI_API_KEY is not set'],
+      flaky: false
+    }
+    const waiting = await startWithFailure([envBlocked])
+    expect(waiting.state).toBe('waiting_environment')
+
+    const resumed = await flows.supplyEnvironment(waiting.id, {
+      env: { OPENAI_API_KEY: 'sk-super-secret-value' },
+      note: 'supplied key'
+    })
+    expect(resumed.state).toBe('running')
+    expect(resumed.env).toEqual({ OPENAI_API_KEY: 'sk-super-secret-value' })
+    expect(resumed.note).not.toContain('sk-super-secret-value')
+    expect(sends.at(-1)).toContain('OPENAI_API_KEY')
+    expect(sends.at(-1)).not.toContain('sk-super-secret-value')
+
+    items = [turn()]
+    checkResults = [pass()]
+    await flows.reconcile()
+    const finished = store.get(waiting.id)
+    expect(finished.state).toBe('review')
+    expect(checkedEnv).toEqual({ OPENAI_API_KEY: 'sk-super-secret-value' })
   })
 })

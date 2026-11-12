@@ -30,7 +30,7 @@ const RUN_LABEL = {
   paused: 'FlowPanel.state.paused',
   failed: 'FlowPanel.state.failed',
   cancelled: 'FlowPanel.state.cancelled',
-  waiting_environment: 'FlowPanel.state.paused'
+  waiting_environment: 'FlowPanel.state.waitingEnvironment'
 } as const
 
 // Where a fork came from: a way back while the source is still here.
@@ -59,7 +59,7 @@ function RunBar({ run, onRun }: { run: Flow; onRun: (flow: Flow) => void }) {
     if (next) onRun(next)
   }
   const running = run.state === 'running'
-  const paused = run.state === 'paused'
+  const paused = run.state === 'paused' || run.state === 'waiting_environment'
   return <div className="conversation-run" data-state={run.state}>
     <span className="conversation-run-state">{t(RUN_LABEL[run.state])}</span>
     <span className="conversation-run-detail">

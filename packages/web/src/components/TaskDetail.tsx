@@ -158,15 +158,16 @@ function TaskDetailBody({ task }: { task: Task }) {
         <div className="task-detail-main">
           <SourceSnapshotCard task={task} />
           <FlowPanel task={task} inline />
-          <TaskContractPanel task={task} />
 
           <MarkdownEditor
             className="task-detail-details"
             value={unsavedTaskText(task.id, 'details') ?? task.details}
             onSave={(next) => saveTaskText(task.id, 'details', next)}
-            label={t('NewTaskDialog.taskDetails')}
-            hint={t('TaskDetail.goalContextAcceptanceCriteriaImportantFilesMarkdownSupported')}
+            label={t('TaskDetail.specification')}
+            hint={t('TaskDetail.specificationHint')}
           />
+
+          <TaskContractPanel task={task} />
         </div>
       </div>
     </section>

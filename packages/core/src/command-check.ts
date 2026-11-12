@@ -15,7 +15,13 @@ export class CommandCheckProvider {
   // A repo's checks run in contract order: a build and a test on the same worktree must not race.
   // Different repos have their own worktrees and may run together. A stored trust hash is checked
   // first: a check file that changed since the user saved the contract cannot produce a pass.
-  async run(task: Task, conversationId: string, checks: readonly CheckSpec[], trustedHash?: string): Promise<CheckResult[]> {
+  async run(
+    task: Task,
+    conversationId: string,
+    checks: readonly CheckSpec[],
+    trustedHash?: string,
+    extraEnv?: Readonly<Record<string, string>>
+  ): Promise<CheckResult[]> {
     const roots = new Map(task.repos.map((repo) => [repo.path, repo.worktreePath ?? repo.path]))
     if (trustedHash && checks.length > 0) {
       const trust = checkTrust(checks, (repo) => ({ root: roots.get(repo) ?? repo, repo }))
@@ -29,23 +35,29 @@ export class CommandCheckProvider {
     for (const check of checks) groups.set(check.repo, [...(groups.get(check.repo) ?? []), check])
     const results = await Promise.all([...groups.values()].map(async (group) => {
       const out: CheckResult[] = []
-      for (const check of group) out.push(await this.runOne(roots, conversationId, check))
+      for (const check of group) out.push(await this.runOne(roots, conversationId, check, extraEnv))
       return out
     }))
     return results.flat()
   }
 
-  private async runOne(roots: ReadonlyMap<string, string>, conversationId: string, check: CheckSpec): Promise<CheckResult> {
+  private async runOne(
+    roots: ReadonlyMap<string, string>,
+    conversationId: string,
+    check: CheckSpec,
+    extraEnv?: Readonly<Record<string, string>>
+  ): Promise<CheckResult> {
     const started = Date.now()
     const root = roots.get(check.repo)
     if (!root) return this.blocked(check, '契约里的项目不在这个任务中', started)
     const cwd = check.cwd ? path.resolve(root, check.cwd) : root
     const relative = path.relative(root, cwd)
     if (relative.startsWith('..') || path.isAbsolute(relative)) return this.blocked(check, '检查的工作目录越界', started)
+    const mergedEnv = extraEnv && Object.keys(extraEnv).length > 0 ? { ...extraEnv, ...check.env } : check.env
     let exitCode: number | null = null
     let tail = ''
     try {
-      const terminal = await this.terminals.run(conversationId, cwd, check.command, { purpose: 'check', env: check.env, title: check.command.slice(0, 80) })
+      const terminal = await this.terminals.run(conversationId, cwd, check.command, { purpose: 'check', env: mergedEnv, title: check.command.slice(0, 80) })
       exitCode = await this.terminals.waitForExit(terminal.id, check.timeoutMs)
       tail = (await this.terminals.read(conversationId, terminal.id, TAIL).catch(() => null))?.output ?? ''
       if (exitCode === 0) await this.terminals.kill(terminal.id).catch(() => {})

@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url'
 import { PROTOCOL_VERSION } from '../packages/protocol/src/index.ts'
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
-const REQUIRED_FEATURES = ['flows', 'task-contracts']
+const REQUIRED_FEATURES = ['flows', 'task-contracts', 'evolution']
 const START_TIMEOUT_MS = 90_000
 
 const args = process.argv.slice(2)

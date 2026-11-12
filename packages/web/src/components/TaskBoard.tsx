@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { create } from 'zustand'
 import { AGENT_KINDS, type AgentKind, type Task } from '@conclave/protocol'
 import { timeAgo } from '../conversation-state'
-import { selectTask, setNewTaskOpen, useCore } from '../core-store'
+import { selectTask, setEvolutionOpen, setNewTaskOpen, useCore } from '../core-store'
 import { agentLabel, STATUS_LABEL } from '../labels'
 import { setPreference, TASK_SORTS, usePreferences } from '../preferences'
 import { TASK_SHORTCUT_LABEL } from '../shortcut-keys'
@@ -14,6 +14,7 @@ import { ChatPicker } from './ChatPicker'
 import { menuPoint, type MenuPoint } from './ContextMenu'
 import { AgentIcon } from './icons'
 import { projectName, projectNames } from './ProjectPicker'
+import { Spinner } from './Spinner'
 import { StatusIcon } from './StatusIcon'
 import { cardAction, TaskContextMenu, useChatTurn } from './TaskActions'
 import { TaskAlerts } from './TaskAlerts'
@@ -42,6 +43,8 @@ const useBoardFilter = create<BoardFilter & { allDone: boolean }>(() => ({ query
 // in the task itself, which a click opens.
 export function TaskBoard() {
   const tasks = useCore((s) => s.tasks)
+  const evolutionSupported = useCore((s) => s.rpc?.features.includes('evolution') ?? false)
+  const evolutionStatus = useCore((s) => s.evolutionStatus)
   const filter = useBoardFilter()
   const sort = usePreferences((p) => p.taskSort)
   const abandoned = usePreferences((p) => p.showAbandonedTasks)
@@ -87,6 +90,19 @@ export function TaskBoard() {
         <ProjectFilter tasks={list} value={filter.project} />
         <AgentFilter tasks={list} value={filter.agent} />
         <span className="task-board-spacer" />
+        {evolutionSupported && (
+          <button
+            type="button"
+            className="task-board-chip"
+            onClick={() => setEvolutionOpen(true)}
+          >
+            {evolutionStatus?.activeGeneration?.state === 'running' && <Spinner />}
+            <span>{t('EvolutionDialog.entry')}</span>
+            {(evolutionStatus?.openFrictionCount ?? 0) > 0 && (
+              <span className="inbox-entry-count">{evolutionStatus?.openFrictionCount}</span>
+            )}
+          </button>
+        )}
         <button
           type="button"
           className="task-board-chip"
@@ -182,9 +198,10 @@ function TaskCard({ task, tasks, now, fresh, renaming, menuOpen, onRenamed, onMe
           {dependencies.length > 0 && <span className="visually-hidden">{t('TaskBoard.dependencies', { titles: dependencies.map((dependency) => dependency.title).join(getLocale() === 'en' ? ', ' : '、') })}</span>}
         </button>
       )}
-      {(planning || task.source || waitingOn(task, tasks) > 0) && (
+      {(planning || task.source || waitingOn(task, tasks) > 0 || (task.status === 'pending' && task.repos.length === 0)) && (
         <span className="task-card-tags">
           {task.source && <span className="task-tag mono">{task.source.key}</span>}
+          {task.status === 'pending' && task.repos.length === 0 && <span className="task-tag">{t('TaskBoard.needsProject')}</span>}
           {planning && <span className="task-tag task-tag-refining">{task.plan && !task.plan.approved ? t('TaskBoard.planSaved') : t('TaskBoard.planning')}</span>}
           {waitingOn(task, tasks) > 0 && <span className="task-tag">{t('TaskBoard.waitingForDependencies')}</span>}
         </span>

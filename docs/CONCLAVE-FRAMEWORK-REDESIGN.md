@@ -71,28 +71,31 @@ flowchart TD
 
 ### 2.1 核心概念职责边界
 
-1. **`Task`（唯一交付单元）**
-   - 绑定仓库、独立 Git Worktree、分支与生命周期状态（`pending → running → review → done`）。
-   - 不再维护第二套 `Idea` 看板或第二套手工运行面板。
-2. **`TaskContract`（唯一验收规格）**
+1. **`Task`（统一的事项与交付单元）**
+   - 统一承载待办事项（零仓库时作为轻量 Backlog 记入看板，显示 `待关联项目` 标识）与绑定仓库后的正式交付任务（独立 Git Worktree、分支与生命周期状态 `pending → running → review → done`）。
+   - `Task.details` 专注编写**任务说明**（背景上下文、实现思路、参考文件），不再与验收字段重复。
+2. **`TaskContract`（唯一验收规格与指标棘轮）**
    - 定义在 [`contract.ts`](file:///home/swrd/workspace/conclave/packages/protocol/src/contract.ts) 与 [`TaskContractPanel.tsx`](file:///home/swrd/workspace/conclave/packages/web/src/components/TaskContractPanel.tsx)。
-   - 包含客观验证命令（`checks` + SHA-256 防篡改校验）、独立只读 Agent 编写的 `RedFirst` 隐藏测试，以及上线前的人工核对项（`human`）。
+   - 包含客观验证命令（`checks` + SHA-256 防篡改校验，首次打开自动读取 `.conclave/project.json` 默认检查命令）、独立只读 Agent 编写的 `RedFirst` 隐藏测试、可选的**指标棘轮（`ratchet`：`maximize` / `minimize` + 目标阈值）**，以及上线前的人工核对清单（`human`）。
 3. **`Flow`（唯一自治执行引擎）**
    - 定义在 [`flow-service.ts`](file:///home/swrd/workspace/conclave/packages/core/src/flow-service.ts) 与 [`FlowPanel.tsx`](file:///home/swrd/workspace/conclave/packages/web/src/components/FlowPanel.tsx)。
-   - 驱动 `规划 → RedFirst 隐藏测试 → 分步实现 → 门禁验证 → 失败自动重试 / 切换可用 Agent / Replan`，支持在缺少环境凭证（退出码 `78`）时进入 `waiting_environment` 等待注入后恢复。
-4. **`Evolution`（自我迭代流水线）**
-   - 定义在 [`evolution-service.ts`](file:///home/swrd/workspace/conclave/packages/core/src/evolution-service.ts)。
-   - 将针对 Conclave 自身的待改进项转化为标准自治 `Task` + `Flow`，通过 [`self-smoke.mjs`](file:///home/swrd/workspace/conclave/scripts/self-smoke.mjs)（真启临时 Core 探测 RPC）与 [`self-test-policy.mjs`](file:///home/swrd/workspace/conclave/scripts/self-test-policy.mjs)（防删减测试门禁）验证后推进至 `self/evolve` 分支。
+   - 驱动 `规划 → RedFirst 隐藏测试 → 分步实现 → 门禁验证 → 失败自动重试 / 切换可用 Agent / Replan`。
+   - **环境补给总线（`waiting_environment`）**：缺少工具、MCP 服务或环境变量时挂起任务，在 [`FlowPanel.tsx`](file:///home/swrd/workspace/conclave/packages/web/src/components/FlowPanel.tsx) 直接提供 MCP 挂载与检查环境变量（`KEY=VALUE`）注入表单，不破坏契约 `trustedHash` 且不向提示词泄露密钥明文。
+   - **指标棘轮（Metric Ratchet）**：检查输出 `METRIC_SCORE=<数值>`（及可选 `GOAL_REACHED=true`）时，自动在任务独立 Worktree 上创建最佳检查点提交；后续轮次若指标退化则自动回滚至最佳检查点，直至达到目标阈值或跑满预算后带着最优提交进入 `review`。
+4. **`Evolution`（端到端自我迭代流水线）**
+   - 定义在 [`evolution-service.ts`](file:///home/swrd/workspace/conclave/packages/core/src/evolution-service.ts) 与 [`EvolutionDialog.tsx`](file:///home/swrd/workspace/conclave/packages/web/src/components/EvolutionDialog.tsx)（看板顶栏 `自我迭代` 入口）。
+   - 将针对 Conclave 自身的可复现改进项转化为标准自治 `Task` + `Flow`，强制绑定五道门禁（`typecheck` · `test` · `build` · [`self-smoke.mjs`](file:///home/swrd/workspace/conclave/scripts/self-smoke.mjs) · [`self-test-policy.mjs`](file:///home/swrd/workspace/conclave/scripts/self-test-policy.mjs)）。Flow 进入 `review` 时自动提交影子 Worktree 并快进推进 `self/evolve` 分支；若暂停或失败则自动将改进项恢复为 `open` 待重试。
 5. **`Conversation`（纯净单会话容器）**
    - 用于日常自由探索、外部 Issue 只读调查，或承载 `Task` / `Flow` 的执行对话。
    - 右侧 Inspector（[`TaskInspector.tsx`](file:///home/swrd/workspace/conclave/packages/web/src/components/TaskInspector.tsx)、[`ConversationInspector.tsx`](file:///home/swrd/workspace/conclave/packages/web/src/components/ConversationInspector.tsx)）精简聚焦于：`flow`（自治轨迹）、`changes`（代码变更 Diff）、`branch`（Git 分支提交）、`plan`（方案审阅）及调试开关下的 `wire`。
 
 ---
 
-## 3. 后续演进方向
+## 3. 已落地的统一闭环能力一览
 
-在当前已彻底净化的代码基座上，后续增量演进只需聚焦核心闭环：
-
-1. **指标棘轮（Metric Ratchet）内化至 `FlowService`**：复用 [`output-buffer.ts`](file:///home/swrd/workspace/conclave/packages/daemon/src/output-buffer.ts) 中的 `extractDigest()`（解析 `METRIC_SCORE` 与 `GOAL_REACHED`），在 `FlowService` 内支持连续数值优化任务的自动 checkpoint 提交与回退。
-2. **前端补齐环境供给与自我迭代轻量面板**：在 [`FlowPanel.tsx`](file:///home/swrd/workspace/conclave/packages/web/src/components/FlowPanel.tsx) 对接 `flows.supplyEnvironment` 输入表单，并为 [`evolution-service.ts`](file:///home/swrd/workspace/conclave/packages/core/src/evolution-service.ts) 提供待改进项录入与迭代状态展示。
-3. **契约前置对齐（Brief Alignment）与额度接力**：支持启动前只读扫描消解未决问题（`unresolved`），并在 `FlowService` 重试链路中联动多账号额度切换，保障长时无人值守稳定收敛。
+| 层级 | 核心能力 | 协议与后端实现 | 前端交互入口 |
+| :--- | :--- | :--- | :--- |
+| **L1 事项层** | 零仓库轻量记事与外部收件箱同池流转 | [`task.ts`](file:///home/swrd/workspace/conclave/packages/protocol/src/task.ts)、[`task-service.ts`](file:///home/swrd/workspace/conclave/packages/core/src/task-service.ts) | [`NewTaskDialog.tsx`](file:///home/swrd/workspace/conclave/packages/web/src/components/NewTaskDialog.tsx)、[`TaskBoard.tsx`](file:///home/swrd/workspace/conclave/packages/web/src/components/TaskBoard.tsx) |
+| **L2 契约层** | 任务说明与契约职责解耦、指标棘轮与人工核对项 | [`contract.ts`](file:///home/swrd/workspace/conclave/packages/protocol/src/contract.ts)、[`command-check.ts`](file:///home/swrd/workspace/conclave/packages/core/src/command-check.ts) | [`TaskDetail.tsx`](file:///home/swrd/workspace/conclave/packages/web/src/components/TaskDetail.tsx)、[`TaskContractPanel.tsx`](file:///home/swrd/workspace/conclave/packages/web/src/components/TaskContractPanel.tsx) |
+| **L3 自治层** | 默认自治启动、环境补给恢复、棘轮涨分存档与跌分回滚 | [`flow-service.ts`](file:///home/swrd/workspace/conclave/packages/core/src/flow-service.ts)、[`flow-policy.ts`](file:///home/swrd/workspace/conclave/packages/core/src/flow-policy.ts) | [`TaskLaunchDialog.tsx`](file:///home/swrd/workspace/conclave/packages/web/src/components/TaskLaunchDialog.tsx)、[`FlowPanel.tsx`](file:///home/swrd/workspace/conclave/packages/web/src/components/FlowPanel.tsx) |
+| **L3 自演进** | 可复现改进项管理、五道门禁验证、自动快进 `self/evolve` | [`evolution-service.ts`](file:///home/swrd/workspace/conclave/packages/core/src/evolution-service.ts) | [`EvolutionDialog.tsx`](file:///home/swrd/workspace/conclave/packages/web/src/components/EvolutionDialog.tsx) |

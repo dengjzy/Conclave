@@ -38,6 +38,15 @@ export const CheckResult = z.object({
 })
 export type CheckResult = z.infer<typeof CheckResult>
 
+export const RatchetDirection = z.enum(['maximize', 'minimize'])
+export type RatchetDirection = z.infer<typeof RatchetDirection>
+
+export const RatchetPlan = z.object({
+  direction: RatchetDirection.default('maximize'),
+  target: z.number().nullable().default(null)
+})
+export type RatchetPlan = z.infer<typeof RatchetPlan>
+
 // The task-specific part of a contract: which checks run, which criteria a person keeps, what the
 // plan still does not know, and which failures were there before the task started.
 export const VerificationPlan = z.object({
@@ -48,6 +57,7 @@ export const VerificationPlan = z.object({
   unknowns: z.array(z.string().trim().min(1).max(2000)).default([]),
   baseline: z.array(z.string()).default([]),
   autonomy: z.enum(['auto', 'confirm', 'human-only']).default('confirm'),
+  ratchet: RatchetPlan.nullable().optional(),
   // sha256 of the checks and the files they run, taken when the user saves the contract. Absent on
   // contracts saved before this existed, which keeps running as they did.
   trustedHash: z.string().trim().min(1).optional()

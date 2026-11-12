@@ -101,6 +101,7 @@ smallModels.recoverQuick()
 const attachments = new AttachmentStore(paths.attachments)
 let server: RpcServer | null = null
 let flows: FlowService | null = null
+let evolution: EvolutionService | null = null
 let awake: ComputerAwakeService | null = null
 const refreshAwake = () => awake?.refresh(conversations.workingCount(), schedules.openCount())
 
@@ -310,10 +311,13 @@ const terminals = new TerminalService(paths.database, daemon, (list) => server?.
 
 const hiddenTests = new HiddenTestProvider(terminals)
 flows = new FlowService(new FlowStore(paths.database), service, conversations, {
-  changed: (flow) => server?.broadcast('flows.changed', { flow })
+  changed: (flow) => {
+    server?.broadcast('flows.changed', { flow })
+    evolution?.observeFlow(flow)
+  }
 }, new TestAuthorService(conversations), new RedFirstProvider(hiddenTests), new ReplannerService(conversations), new PlannerService(conversations))
 
-const evolution = new EvolutionService(paths.home, process.cwd(), service, flows, {
+evolution = new EvolutionService(paths.home, process.cwd(), service, flows, {
   changed: (status) => server?.broadcast('evolution.changed', { status })
 })
 

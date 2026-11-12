@@ -34,6 +34,7 @@ import { useFirstRunSetup } from './setup-controller'
 import { WindowBrand } from './components/WindowBrand'
 import { ErrorToast } from './components/ErrorToast'
 import { TaskLaunchDialog } from './components/TaskLaunchDialog'
+import { EvolutionDialog } from './components/EvolutionDialog'
 import { usePreferences } from './preferences'
 import { usePortPolling } from './port-state'
 import type { UtilityPanelKind } from './utility-panel-order'
@@ -43,7 +44,7 @@ import type { UtilityPanelKind } from './utility-panel-order'
 function leavesTask(event: KeyboardEvent): boolean {
   const s = useCore.getState()
   if (event.defaultPrevented || s.section !== 'tasks' || s.selectedId === null) return false
-  if (s.settingsOpen || s.newTaskOpen || s.taskLaunchId || s.worktreesOpen || s.routinesOpen || s.overviewOpen || s.inboxOpen) return false
+  if (s.settingsOpen || s.newTaskOpen || s.evolutionOpen || s.taskLaunchId || s.worktreesOpen || s.routinesOpen || s.overviewOpen || s.inboxOpen) return false
   const typing = event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable="true"], .xterm, [role="menu"], dialog')
   return !typing && !document.querySelector('dialog[open]')
 }
@@ -64,6 +65,7 @@ export function App() {
   const view = useCore((s) => s.view)
   const error = useCore((s) => s.error)
   const newTaskOpen = useCore((s) => s.newTaskOpen)
+  const evolutionOpen = useCore((s) => s.evolutionOpen)
   const taskLaunchId = useCore((s) => s.taskLaunchId)
   const settingsOpen = useCore((s) => s.settingsOpen)
   const worktreesOpen = useCore((s) => s.worktreesOpen)
@@ -305,11 +307,12 @@ export function App() {
       <StatusBar />
       {fileQuickOpen && <FileQuickOpen />}
       {newTaskOpen && <NewTaskDialog />}
+      {evolutionOpen && <EvolutionDialog />}
       {taskLaunchId && <TaskLaunchDialog key={taskLaunchId} taskId={taskLaunchId} />}
       {loginOpen && <SourceLoginDialog />}
       <ProjectTrustDialog />
       <ConfirmDialog />
-      {error && !newTaskOpen && !taskLaunchId && <ErrorToast message={error} />}
+      {error && !newTaskOpen && !evolutionOpen && !taskLaunchId && <ErrorToast message={error} />}
     </div>
   )
 }

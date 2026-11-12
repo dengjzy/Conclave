@@ -10,7 +10,7 @@ import { AgentModelPicker } from './AgentModelPicker'
 import { modeOptions, startModes } from './ChatOptionsBar'
 import { ChatPicker } from './ChatPicker'
 import { AgentIcon, CloseIcon } from './icons'
-import { useEditsInPlace } from './TaskLaunch'
+import { defaultTaskMode, useEditsInPlace } from './TaskLaunch'
 import { OtherProjectsHint } from './OtherProjectsHint'
 import { providerFor, servingProviders } from '../model-provider-choice'
 import { ProviderPicker } from './ProviderPicker'
@@ -71,7 +71,8 @@ function LaunchForm({ task }: { task: Task }) {
   const choice = agent ? choices[agent] ?? {} : {}
   const { model, modelId, effort } = resolveModel(catalog, choice)
   const offered = agent ? startModes(agent, model) : []
-  const requestedMode = (agent ? modes[agent] : undefined) ?? 'plan'
+  const flowsSupported = rpc?.features.includes('flows') ?? false
+  const requestedMode = (agent ? modes[agent] : undefined) ?? defaultTaskMode(offered, flowsSupported)
   const mode = supported && offered.includes(requestedMode) && !checkStartMode(dependencies, requestedMode) ? requestedMode : 'plan'
   const options = agent ? modeOptions(agent, ['plan', ...offered.filter((each) => each !== 'plan')]) : []
   const blocker = checkStart({ ...task, agent }, dependencies)
@@ -86,7 +87,16 @@ function LaunchForm({ task }: { task: Task }) {
     if (!agent || busy || blocker || (!provider && !confirmQuota(agent, modelText(model)))) return
     setBusy(true)
     dismissError()
-    if ((agent !== task.agent || task.squadId) && !await updateTask(task.id, { agent, ...(task.squadId ? { squadId: null } : {}) })) {
+    const nextLaunch = {
+      ...task.launch,
+      ...(supported ? { permissionMode: mode, model: modelId ?? null, effort: effort ?? null } : {}),
+      ...(providersSupported && !providerFixed ? { modelProvider: provider?.id ?? null } : {})
+    }
+    const needsUpdate = agent !== task.agent
+      || Boolean(task.squadId)
+      || (supported && (nextLaunch.permissionMode !== task.launch.permissionMode || nextLaunch.model !== task.launch.model || nextLaunch.effort !== task.launch.effort))
+      || (providersSupported && !providerFixed && nextLaunch.modelProvider !== task.launch.modelProvider)
+    if (needsUpdate && !await updateTask(task.id, { agent, launch: nextLaunch, ...(task.squadId ? { squadId: null } : {}) })) {
       setBusy(false)
       return
     }
@@ -97,8 +107,8 @@ function LaunchForm({ task }: { task: Task }) {
       ...(providersSupported && !providerFixed ? { modelProvider: provider?.id ?? null } : {})
     }
     closeTaskLaunch()
-    if (mode !== 'plan' && mode !== 'readOnly' && rpc?.features.includes('flows')) {
-      await openChatWhileStarting(task.id, () => perform((connection) => connection.call('flows.start', { id: task.id, ...(rpc.features.includes('chat-options') ? { allowBypass: true } : {}) })))
+    if (mode !== 'plan' && mode !== 'readOnly' && flowsSupported) {
+      await openChatWhileStarting(task.id, () => perform((connection) => connection.call('flows.start', { id: task.id, ...(rpc?.features.includes('chat-options') ? { allowBypass: true } : {}) })))
       return
     }
     await openChatWhileStarting(task.id, () => perform((connection) => connection.call('tasks.start', params)))

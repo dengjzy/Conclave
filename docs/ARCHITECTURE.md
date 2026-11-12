@@ -44,7 +44,7 @@
 | `packages/protocol` | 唯一的类型来源：Task / Contract / Flow / Evolution / Conversation 模型、状态流转规则、RPC 方法与通知的 zod schema、客户端。`/node` 子入口放路径、端点发现、daemon 协议 |
 | `packages/core` | 独立的任务、契约自治流（Flow）、自演化（Evolution）与会话存储及业务逻辑；任务创建 git worktree；通过 daemon 启动 Agent CLI；另有给 Agent 用的极简 MCP 服务（`mcp-main.ts`，文件预览、终端与可选历史读取工具），由 Agent 作为独立进程启动 |
 | `packages/daemon` | 进程宿主，独立进程：Agent 跑在 stdio 管道上，终端面板的 shell 跑在 PTY 里；缓存最近输出，供重新连接时回放 |
-| `packages/web` | Web 前端：看板、详情与契约编辑、自治轨迹、聊天界面、终端面板；纯 Vite + React SPA 直连 core |
+| `packages/web` | Web 前端：统一事项看板、任务说明与契约编辑（含指标棘轮）、自治轨迹与环境补给、自我迭代工作台、聊天界面、终端面板；纯 Vite + React SPA 直连 core |
 
 运行时数据在 `~/.conclave/`（可用 `CONCLAVE_HOME` 覆盖）：`conclave.db`、`core.json`（端口与 token，权限 0600）、`worktrees/`、`sessions/`、`skills/`（技能库：`skills.json` 锁文件、`repos/` 里的 git 克隆、`bundles/` 里交给 Agent 的目录）、`mcp-servers.json`（用户的 MCP 服务器，不含密钥）、`credentials.json`（任务来源和 MCP 服务器的密钥，权限 0600）。
 
@@ -106,15 +106,15 @@ core 启动时通过 `system-proxy.ts` 安装全局 undici dispatcher，让自�
 
 ### 验收契约、自治执行（Flow）与自我迭代（Evolution）
 
-- **验收契约（`TaskContract`）**：每个任务可定义显式的完成标准（`goal`、命令级 `checks`、人工确认项 `human`、未知风险 `unknowns`、基线失败 `baseline` 与自治级别 `autonomy`）。保存契约时，core 对命令与引用的脚本计算受信哈希，验证阶段在 worktree 中重算并拦截被篡改的测试脚本。
-- **契约自治流（`FlowService`）**：围绕任务的验收契约自动驱动 `规划（plan）→ 分步实现（implement）→ 盲测红检（Red-First）与命令校验（verify）→ 失败分类与重规划（replan）`。遇到缺失外部环境、密钥或 MCP 依赖时进入 `waiting_environment` 挂起态，经 `flows.supplyEnvironment` 补给后无缝恢复执行。详细机制见 [AUTONOMY.md](AUTONOMY.md)。
-- **递归自我迭代（`EvolutionService`）**：从可复现改进项出发，自动创建基于影子 worktree 的 `Task` 与 `Flow`，通过 `typecheck`、`test`、`build`、`self:smoke` 与 `self:tests` 五重硬门禁后，自动快进更新 `self/evolve` 分支并探测宿主机可用性，异常时自动回滚。详细机制见 [SELF-EVOLUTION.md](SELF-EVOLUTION.md)。
+- **验收契约（`TaskContract`）**：任务详情中的 `details` 负责任务说明（背景与方案上下文），契约面板统一负责完成标准（`goal`、命令级 `checks`、可选的 `METRIC_SCORE` 指标棘轮 `ratchet`、人工核对清单 `human`、基线失败 `baseline` 与尝试预算）。保存契约时，core 对命令与引用的脚本计算受信哈希，验证阶段在 worktree 中重算并拦截被篡改的测试脚本。
+- **契约自治流（`FlowService`）**：围绕任务的验收契约自动驱动 `规划（plan）→ 分步实现（implement）→ 盲测红检（Red-First）与命令校验（verify）→ 失败分类与重规划（replan）`。开启指标棘轮时，指标提升自动在任务独立 worktree 创建检查点提交、退化自动回滚。遇到缺失外部环境、密钥或 MCP 依赖时进入 `waiting_environment` 挂起态，可在前端 `FlowPanel` 直接挂载 MCP 或注入检查环境变量恢复执行。详细机制见 [AUTONOMY.md](AUTONOMY.md)。
+- **递归自我迭代（`EvolutionService` / `EvolutionDialog`）**：从任务看板顶栏「自我迭代」录入或选择可复现改进项，自动创建基于影子 worktree 的 `Task` 与 `Flow`，通过 `typecheck`、`test`、`build`、`self:smoke` 与 `self:tests` 五重硬门禁进入 `review` 后，自动提交改动并快进更新 `self/evolve` 分支；失败或暂停时自动将改进项恢复为待处理。详细机制见 [SELF-EVOLUTION.md](SELF-EVOLUTION.md)。
 
 ### 多项目与依赖
 
 
 - **主项目与附加项目**：第一项为主项目，项目选择器里用高亮颜色标出；右键其他项目选「设为主项目」可以把它移到首位，其余项目顺序不变；移除主项目后下一项自动成为主项目。任务执行中、启动准备期间及已废弃时不能调整项目。主项目就是 Agent 会话的工作目录，会话途中不能换：任务的对话开始后主项目就固定了，附加项目仍可增删，下一条消息时 Agent 带上新的目录。
-- **多个仓库隔离执行**：每个 Git 仓库各建一个 worktree，放在 `~/.conclave/worktrees/<任务id>/<项目名>/`，分支名相同。Agent 在主项目的 worktree 中运行，通过 `--add-dir` 访问其他 worktree。Conclave 在 prompt 中列出各项目目录和分支，提醒 Agent 先读取附加项目适用的指令，并在对应仓库执行 Git、构建和测试。更换主项目保留已有 worktree 和分支。普通文件夹（非 Git）只能作为任务唯一的项目目录，原地执行。附加项目可以在任务详情的「起点」里勾选「只读参考」（`TaskRepo.reference`）：Agent 在原目录读它，不建 worktree 和分支，也不作为可写目录交给 Agent（不加 `--add-dir`，不进 Codex 的可写目录或 ACP 的 `additionalDirectories`），prompt 里标明只读。各 Agent 的文件编辑工具都改不了它：Claude Code 加读取放行和编辑禁止规则；Pi 和 DeepSeek 把它列为不可编辑；OpenCode 的 Conclave 模式和它自带的 Build 都加上「可读参考目录、禁止编辑」的规则（Build 默认什么都不问，只有这样才拦得住）；Cursor、Codex、Antigravity 和 ZCode 要编辑参考目录时发来的审批由 Conclave 直接拒绝，不交给用户（`reference-paths.ts`）；Antigravity 的文件工具本来就只能访问主项目（见 [ANTIGRAVITY.md](ANTIGRAVITY.md)）。shell 命令写文件拦不住，只靠 prompt 约束。参考项目可以不是 Git 仓库，多项目任务里非 Git 文件夹只能这样用。会话把这些目录记在 `referencePaths`，团队成员同样只读。主项目不能设为参考；已经建了 worktree 的项目不能再改成参考，以免丢下 worktree 里的改动，参考项目随时可以改回可写。
+- **多个仓库隔离执行**：每个 Git 仓库各建一个 worktree，放在 `~/.conclave/worktrees/<任务id>/<项目名>/`，分支名相同。Agent 在主项目的 worktree 中运行，通过 `--add-dir` 访问其他 worktree。Conclave 在 prompt 中列出各项目目录和分支，提醒 Agent 先读取附加项目适用的指令，并在对应仓库执行 Git、构建和测试。更换主项目保留已有 worktree 和分支。普通文件夹（非 Git）只能作为任务唯一的项目目录，原地执行。附加项目可以在任务详情的「起点」里勾选「只读参考」（`TaskRepo.reference`）：Agent 在原目录读它，不建 worktree 和分支，也不作为可写目录交给 Agent（不加 `--add-dir`，不进 Codex 的可写目录或 ACP 的 `additionalDirectories`），prompt 里标明只读。各 Agent 的文件编辑工具都改不了它：Claude Code 加读取放行和编辑禁止规则；Pi 和 DeepSeek 把它列为不可编辑；OpenCode 的 Conclave 模式和它自带的 Build 都加上「可读参考目录、禁止编辑」的规则（Build 默认什么都不问，只有这样才拦得住）；Cursor、Codex、Antigravity 和 ZCode 要编辑参考目录时发来的审批由 Conclave 直接拒绝，不交给用户（`reference-paths.ts`）；Antigravity 的文件工具本来就只能访问主项目（见 [ANTIGRAVITY.md](ANTIGRAVITY.md)）。shell 命令写文件拦不住，只靠 prompt 约束。参考项目可以不是 Git 仓库，多项目任务里非 Git 文件夹只能这样用。会话把这些目录记在 `referencePaths`，保持只读。主项目不能设为参考；已经建了 worktree 的项目不能再改成参考，以免丢下 worktree 里的改动，参考项目随时可以改回可写。
 - **分支名**：`conclave/[<issue key>-]<任务id前8位>-<标题 slug>`，slug 取标题里的英文和数字。标题含中文等非 ASCII 字母时，任务创建、改标题或换 Agent 后，由任务 Agent 的便宜小模型概括出几个英文单词作 slug，存在任务上；开始执行时还没生成好就最多等 10 秒，仍没有就只用任务 id。分支只在第一次建出时命名，之后改标题不改名。
 - **规划与历史任务**：只读规划以主项目起点的只读副本为 cwd（起点是项目当前的分支时用原目录），只读访问其他项目，不建任务分支。开始执行后这些副本会被移除；副本里若有改动或只有它才有的提交，就留着不动。历史数据沿用原列表第一项作为主项目，无需数据库迁移。
 - **依赖**：依赖的任务全部「已完成」（验收通过）后才能执行，「待验收」的不算，不能形成循环。同一个 Git 仓库里恰好有一个依赖留下了分支时，新 worktree 从那个分支拉出，直接用上前置任务的改动；prompt 里也会列出依赖任务和它们的分支。

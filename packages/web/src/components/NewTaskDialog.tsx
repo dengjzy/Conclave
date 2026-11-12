@@ -53,6 +53,7 @@ export function NewTaskDialog() {
   const [busy, setBusy] = useState(false)
   const rpc = useCore((state) => state.rpc)
   const canAutoRun = rpc?.features.includes('flows') ?? false
+  const hasProject = repos.length > 0
   const [autoRun, setAutoRun] = useState(true)
   // State lags a render behind; the ref stops a double press from creating twice.
   const submitting = useRef(false)
@@ -102,7 +103,7 @@ export function NewTaskDialog() {
     if (!task) {
       return
     }
-    if (autoRun && canAutoRun) {
+    if (hasProject && autoRun && canAutoRun) {
       await perform((rpc) => rpc.call('flows.start', { id: task.id }))
     }
     if (createMore) {
@@ -289,10 +290,11 @@ export function NewTaskDialog() {
             }}
           />
           <span className="new-task-footer-spacer" />
-          {canAutoRun && <label className="switch new-task-auto-run"><input type="checkbox" role="switch" checked={autoRun} onChange={(e) => setAutoRun(e.target.checked)} /><span className="switch-track" aria-hidden="true" /><span>{t('NewTaskDialog.autoRun')}</span></label>}
+          {!hasProject && <span className="muted modal-created">{t('NewTaskDialog.backlogHint')}</span>}
+          {hasProject && canAutoRun && <label className="switch new-task-auto-run"><input type="checkbox" role="switch" checked={autoRun} onChange={(e) => setAutoRun(e.target.checked)} /><span className="switch-track" aria-hidden="true" /><span>{t('NewTaskDialog.autoRun')}</span></label>}
           <label className="switch">{tr('NewTaskDialog.createMore', { value1: <input type="checkbox" role="switch" checked={createMore} onChange={(e) => setCreateMore(e.target.checked)} />, value2: <span className="switch-track" aria-hidden="true" /> })}</label>
           {createMore && lastCreated && <span className="muted modal-created">{tr('NewTaskDialog.created', { lastCreated: lastCreated })}</span>}
-          <button type="button" className="button primary modal-submit" disabled={!canSubmit} onClick={() => void submit()}>{autoRun && canAutoRun ? t('NewTaskDialog.createAndRun') : tr('NewTaskDialog.createTask', { value1: <kbd>{PRIMARY_KEY_LABEL}↵</kbd> })}</button>
+          <button type="button" className="button primary modal-submit" disabled={!canSubmit} onClick={() => void submit()}>{!hasProject ? tr('NewTaskDialog.saveToBacklog', { value1: <kbd>{PRIMARY_KEY_LABEL}↵</kbd> }) : autoRun && canAutoRun ? t('NewTaskDialog.createAndRun') : tr('NewTaskDialog.createTask', { value1: <kbd>{PRIMARY_KEY_LABEL}↵</kbd> })}</button>
         </footer>
       </div>
     </dialog>
