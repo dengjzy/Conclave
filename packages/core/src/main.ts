@@ -50,6 +50,7 @@ import { SourceConfigStore } from './source-config'
 import { LoginFlows } from './source-login-flow'
 import { migrateLegacyJira } from './source-migration'
 import { SourceService } from './source-service'
+import { builtinSourceProviders } from './sources'
 import { ConversationStore } from './conversation-store'
 import { ConversationService } from './conversation-service'
 import { NativeSessionRunner } from './native-session-runner'
@@ -196,13 +197,14 @@ await credentials.load()
 await migrateLegacyJira(paths.legacyJiraConfig, sourceConfig, credentials).catch((error: unknown) =>
   console.error('[conclave-core] migrating jira.json failed; it stays in place:', error)
 )
-const sources = new SourceService([], sourceConfig, credentials, new LoginFlows(), service, store, attachments, {
+const builtinSources = builtinSourceProviders({ config: sourceConfig, credentials })
+const sources = new SourceService(builtinSources, sourceConfig, credentials, new LoginFlows(), service, store, attachments, {
   inboxChanged: (inbox) => server?.broadcast('sources.inboxChanged', { inbox }),
   listChanged: (list) => server?.broadcast('sources.listChanged', { sources: list })
 })
 sources.setConversations(conversations)
 
-const plugins = new PluginService(path.join(paths.home, 'plugins'), packageJson.version, sources, sourceConfig, [],
+const plugins = new PluginService(path.join(paths.home, 'plugins'), packageJson.version, sources, sourceConfig, builtinSources,
   (plugins) => server?.broadcast('plugins.changed', { plugins }))
 await plugins.load()
 

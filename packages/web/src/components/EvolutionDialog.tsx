@@ -21,36 +21,27 @@ const ITEM_STATUS: Record<FrictionItem['status'], string> = localized(() => ({
   dropped: t('EvolutionDialog.status.dropped')
 }))
 
-export function EvolutionDialog() {
+export function EvolutionPanel({ onOpenTask }: { onOpenTask?: (taskId: string) => void }) {
   const status = useCore((state) => state.evolutionStatus)
   const error = useCore((state) => state.error)
   const installed = useInstalledAgents()
-  const dialog = useRef<HTMLDialogElement>(null)
-  const ids = useId()
   const [agent, setAgent] = useState<AgentKind | null>(null)
   const [adding, setAdding] = useState(false)
   const [summary, setSummary] = useState('')
   const [repro, setRepro] = useState('')
-  const [expect, setExpect] = useState('')
+  const [expectText, setExpectText] = useState('')
   const [pathsText, setPathsText] = useState('')
   const [busy, setBusy] = useState(false)
 
-  const close = () => setEvolutionOpen(false)
-
   useEffect(() => {
-    const element = dialog.current
-    if (element && !element.open) {
-      element.showModal()
-    }
-    dismissError()
     void perform((rpc) => rpc.call('evolution.status', {})).then((fresh) => {
       if (fresh) useCore.setState({ evolutionStatus: fresh })
     })
-    return () => element?.close()
   }, [])
 
-  const onBackdrop = (event: MouseEvent) => {
-    if (event.target === dialog.current) close()
+  const openTask = (taskId: string) => {
+    selectTask(taskId)
+    onOpenTask?.(taskId)
   }
 
   const refresh = async () => {
@@ -74,7 +65,7 @@ export function EvolutionDialog() {
 
   const submitFriction = async (event: FormEvent) => {
     event.preventDefault()
-    if (!summary.trim() || !repro.trim() || !expect.trim()) return
+    if (!summary.trim() || !repro.trim() || !expectText.trim()) return
     setBusy(true)
     dismissError()
     try {
@@ -82,13 +73,13 @@ export function EvolutionDialog() {
       const created = await perform((rpc) => rpc.call('evolution.addFriction', {
         summary: summary.trim(),
         repro: repro.trim(),
-        expect: expect.trim(),
+        expect: expectText.trim(),
         ...(paths.length > 0 ? { paths } : {})
       }))
       if (created) {
         setSummary('')
         setRepro('')
-        setExpect('')
+        setExpectText('')
         setPathsText('')
         setAdding(false)
         await refresh()
@@ -101,6 +92,209 @@ export function EvolutionDialog() {
   const active = status?.activeGeneration ?? null
   const items = status?.items ?? []
   const recent = status?.recentGenerations ?? []
+
+  return (
+    <div className="evolution-workbench">
+      <div className="evolution-meta">
+        {status && (
+          <span className="mono">
+            {t('EvolutionDialog.staging', {
+              value1: status.stagingBranch,
+              value2: status.baseCommit ? status.baseCommit.slice(0, 8) : 'HEAD'
+            })}
+          </span>
+        )}
+        <p className="muted">{t('EvolutionDialog.gates')}</p>
+      </div>
+
+      {active && (
+        <div className="evolution-active">
+          <Spinner />
+          <AgentIcon agent={active.agent} />
+          <span>{t('EvolutionDialog.active', { value1: agentLabel(active.agent) })}</span>
+          <button
+            type="button"
+            className="button ghost"
+            onClick={() => openTask(active.taskId)}
+          >
+            {t('EvolutionDialog.openTask')}
+          </button>
+        </div>
+      )}
+
+      <div className="evolution-toolbar">
+        <select
+          className="input"
+          aria-label={t('NewTaskDialog.assignee')}
+          value={agent ?? ''}
+          onChange={(event) => {
+            const parsed = AgentKind.safeParse(event.target.value)
+            setAgent(parsed.success ? parsed.data : null)
+          }}
+        >
+          <option value="">{t('NewTaskDialog.autoAgent')}</option>
+          {installed.map((kind) => (
+            <option key={kind} value={kind}>{agentLabel(kind)}</option>
+          ))}
+        </select>
+        <button
+          type="button"
+          className="button primary"
+          disabled={busy || Boolean(active) || (status?.openFrictionCount ?? 0) === 0}
+          onClick={() => void trigger()}
+        >
+          {busy && !adding ? <Spinner /> : null}
+          {t('EvolutionDialog.trigger')}
+        </button>
+        <button
+          type="button"
+          className="button ghost"
+          onClick={() => setAdding((current) => !current)}
+        >
+          {t('EvolutionDialog.addToggle')}
+        </button>
+      </div>
+
+      {adding && (
+        <form className="evolution-form" onSubmit={(event) => void submitFriction(event)}>
+          <label className="contract-field">
+            <span>{t('EvolutionDialog.summary')}</span>
+            <input
+              className="input"
+              required
+              placeholder={t('EvolutionDialog.summaryPlaceholder')}
+              value={summary}
+              onChange={(event) => setSummary(event.target.value)}
+            />
+          </label>
+          <label className="contract-field">
+            <span>{t('EvolutionDialog.repro')}</span>
+            <textarea
+              className="input"
+              rows={2}
+              required
+              placeholder={t('EvolutionDialog.reproPlaceholder')}
+              value={repro}
+              onChange={(event) => setRepro(event.target.value)}
+            />
+          </label>
+          <label className="contract-field">
+            <span>{t('EvolutionDialog.expect')}</span>
+            <input
+              className="input"
+              required
+              placeholder={t('EvolutionDialog.expectPlaceholder')}
+              value={expectText}
+              onChange={(event) => setExpectText(event.target.value)}
+            />
+          </label>
+          <label className="contract-field">
+            <span>{t('EvolutionDialog.paths')}</span>
+            <input
+              className="input mono"
+              placeholder="packages/core/src, packages/web/src"
+              value={pathsText}
+              onChange={(event) => setPathsText(event.target.value)}
+            />
+          </label>
+          <div className="contract-actions">
+            <button
+              type="submit"
+              className="button primary"
+              disabled={busy || !summary.trim() || !repro.trim() || !expectText.trim()}
+            >
+              {busy ? <Spinner /> : null}
+              {t('EvolutionDialog.addSubmit')}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {error && (
+        <p className="modal-error" role="alert">
+          {error}
+        </p>
+      )}
+
+      <section className="evolution-section">
+        <h3>{t('EvolutionDialog.backlogTitle')}</h3>
+        {items.length === 0 ? (
+          <p className="muted">{t('EvolutionDialog.backlogEmpty')}</p>
+        ) : (
+          <ul className="evolution-list">
+            {items.map((item) => (
+              <li key={item.id} className="evolution-item" data-status={item.status}>
+                <div className="evolution-item-row">
+                  <span className="task-tag">{ITEM_STATUS[item.status]}</span>
+                  <strong>{item.summary}</strong>
+                  {item.status === 'open' && (
+                    <button
+                      type="button"
+                      className="button ghost"
+                      disabled={busy || Boolean(active)}
+                      onClick={() => void trigger(item.id)}
+                    >
+                      {t('EvolutionDialog.triggerItem')}
+                    </button>
+                  )}
+                </div>
+                <p className="muted">{item.expect}</p>
+                {item.paths.length > 0 && (
+                  <span className="mono muted">{item.paths.join(', ')}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="evolution-section">
+        <h3>{t('EvolutionDialog.historyTitle')}</h3>
+        {recent.length === 0 ? (
+          <p className="muted">{t('EvolutionDialog.historyEmpty')}</p>
+        ) : (
+          <ul className="evolution-list">
+            {recent.map((gen) => (
+              <li key={gen.id} className="evolution-item" data-state={gen.state}>
+                <div className="evolution-item-row">
+                  <AgentIcon agent={gen.agent} />
+                  <span className="task-tag">{GEN_STATE[gen.state]}</span>
+                  <span className="mono muted">{(gen.tip ?? gen.base).slice(0, 8)}</span>
+                  <button
+                    type="button"
+                    className="button ghost"
+                    onClick={() => openTask(gen.taskId)}
+                  >
+                    {t('EvolutionDialog.openTask')}
+                  </button>
+                </div>
+                {gen.note && <p className="muted">{gen.note}</p>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </div>
+  )
+}
+
+export function EvolutionDialog() {
+  const dialog = useRef<HTMLDialogElement>(null)
+  const ids = useId()
+  const close = () => setEvolutionOpen(false)
+
+  useEffect(() => {
+    const element = dialog.current
+    if (element && !element.open) {
+      element.showModal()
+    }
+    dismissError()
+    return () => element?.close()
+  }, [])
+
+  const onBackdrop = (event: MouseEvent) => {
+    if (event.target === dialog.current) close()
+  }
 
   return (
     <dialog
@@ -126,192 +320,7 @@ export function EvolutionDialog() {
             </button>
           </div>
         </header>
-
-        <div className="evolution-meta">
-          {status && (
-            <span className="mono">
-              {t('EvolutionDialog.staging', {
-                value1: status.stagingBranch,
-                value2: status.baseCommit ? status.baseCommit.slice(0, 8) : 'HEAD'
-              })}
-            </span>
-          )}
-          <p className="muted">{t('EvolutionDialog.gates')}</p>
-        </div>
-
-        {active && (
-          <div className="evolution-active">
-            <Spinner />
-            <AgentIcon agent={active.agent} />
-            <span>{t('EvolutionDialog.active', { value1: agentLabel(active.agent) })}</span>
-            <button
-              type="button"
-              className="button ghost"
-              onClick={() => {
-                selectTask(active.taskId)
-                close()
-              }}
-            >
-              {t('EvolutionDialog.openTask')}
-            </button>
-          </div>
-        )}
-
-        <div className="evolution-toolbar">
-          <select
-            className="input"
-            aria-label={t('NewTaskDialog.assignee')}
-            value={agent ?? ''}
-            onChange={(event) => {
-              const parsed = AgentKind.safeParse(event.target.value)
-              setAgent(parsed.success ? parsed.data : null)
-            }}
-          >
-            <option value="">{t('NewTaskDialog.autoAgent')}</option>
-            {installed.map((kind) => (
-              <option key={kind} value={kind}>{agentLabel(kind)}</option>
-            ))}
-          </select>
-          <button
-            type="button"
-            className="button primary"
-            disabled={busy || Boolean(active) || (status?.openFrictionCount ?? 0) === 0}
-            onClick={() => void trigger()}
-          >
-            {busy && !adding ? <Spinner /> : null}
-            {t('EvolutionDialog.trigger')}
-          </button>
-          <button
-            type="button"
-            className="button ghost"
-            onClick={() => setAdding((current) => !current)}
-          >
-            {t('EvolutionDialog.addToggle')}
-          </button>
-        </div>
-
-        {adding && (
-          <form className="evolution-form" onSubmit={(event) => void submitFriction(event)}>
-            <label className="contract-field">
-              <span>{t('EvolutionDialog.summary')}</span>
-              <input
-                className="input"
-                required
-                placeholder={t('EvolutionDialog.summaryPlaceholder')}
-                value={summary}
-                onChange={(event) => setSummary(event.target.value)}
-              />
-            </label>
-            <label className="contract-field">
-              <span>{t('EvolutionDialog.repro')}</span>
-              <textarea
-                className="input"
-                rows={2}
-                required
-                placeholder={t('EvolutionDialog.reproPlaceholder')}
-                value={repro}
-                onChange={(event) => setRepro(event.target.value)}
-              />
-            </label>
-            <label className="contract-field">
-              <span>{t('EvolutionDialog.expect')}</span>
-              <input
-                className="input"
-                required
-                placeholder={t('EvolutionDialog.expectPlaceholder')}
-                value={expect}
-                onChange={(event) => setExpect(event.target.value)}
-              />
-            </label>
-            <label className="contract-field">
-              <span>{t('EvolutionDialog.paths')}</span>
-              <input
-                className="input mono"
-                placeholder="packages/core/src, packages/web/src"
-                value={pathsText}
-                onChange={(event) => setPathsText(event.target.value)}
-              />
-            </label>
-            <div className="contract-actions">
-              <button
-                type="submit"
-                className="button primary"
-                disabled={busy || !summary.trim() || !repro.trim() || !expect.trim()}
-              >
-                {busy ? <Spinner /> : null}
-                {t('EvolutionDialog.addSubmit')}
-              </button>
-            </div>
-          </form>
-        )}
-
-        {error && (
-          <p className="modal-error" role="alert">
-            {error}
-          </p>
-        )}
-
-        <section className="evolution-section">
-          <h3>{t('EvolutionDialog.backlogTitle')}</h3>
-          {items.length === 0 ? (
-            <p className="muted">{t('EvolutionDialog.backlogEmpty')}</p>
-          ) : (
-            <ul className="evolution-list">
-              {items.map((item) => (
-                <li key={item.id} className="evolution-item" data-status={item.status}>
-                  <div className="evolution-item-row">
-                    <span className="task-tag">{ITEM_STATUS[item.status]}</span>
-                    <strong>{item.summary}</strong>
-                    {item.status === 'open' && (
-                      <button
-                        type="button"
-                        className="button ghost"
-                        disabled={busy || Boolean(active)}
-                        onClick={() => void trigger(item.id)}
-                      >
-                        {t('EvolutionDialog.triggerItem')}
-                      </button>
-                    )}
-                  </div>
-                  <p className="muted">{item.expect}</p>
-                  {item.paths.length > 0 && (
-                    <span className="mono muted">{item.paths.join(', ')}</span>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        <section className="evolution-section">
-          <h3>{t('EvolutionDialog.historyTitle')}</h3>
-          {recent.length === 0 ? (
-            <p className="muted">{t('EvolutionDialog.historyEmpty')}</p>
-          ) : (
-            <ul className="evolution-list">
-              {recent.map((gen) => (
-                <li key={gen.id} className="evolution-item" data-state={gen.state}>
-                  <div className="evolution-item-row">
-                    <AgentIcon agent={gen.agent} />
-                    <span className="task-tag">{GEN_STATE[gen.state]}</span>
-                    <span className="mono muted">{(gen.tip ?? gen.base).slice(0, 8)}</span>
-                    <button
-                      type="button"
-                      className="button ghost"
-                      onClick={() => {
-                        selectTask(gen.taskId)
-                        close()
-                      }}
-                    >
-                      {t('EvolutionDialog.openTask')}
-                    </button>
-                  </div>
-                  {gen.note && <p className="muted">{gen.note}</p>}
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
+        <EvolutionPanel onOpenTask={() => close()} />
       </div>
     </dialog>
   )

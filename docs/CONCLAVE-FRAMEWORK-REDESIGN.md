@@ -38,10 +38,10 @@
 
 ```mermaid
 flowchart TD
-    subgraph L1["第一层：事项来源池 (Inbox / Backlog)"]
-        S1["待办事项 / 轻量任务"]
-        S2["外部来源同步 (GitHub / GitLab / Issue 收件箱)"]
-        S3["自身待改进项 (可复现问题 / 优化项)"]
+    subgraph L1["第一层：统一「事项」工作台 (Agenda Workbench)"]
+        S1["本地事项 (无项目轻量待办 / 手动立项)"]
+        S2["内置外部渠道 (GitHub Issues & PRs / GitLab Issues & MRs / Jira + 插件扩展槽)"]
+        S3["自我迭代改进项 (可复现问题队列)"]
     end
 
     subgraph L2["第二层：任务与统一契约 (Task + Contract)"]
@@ -95,7 +95,7 @@ flowchart TD
 
 | 层级 | 核心能力 | 协议与后端实现 | 前端交互入口 |
 | :--- | :--- | :--- | :--- |
-| **L1 事项层** | 零仓库轻量记事与外部收件箱同池流转 | [`task.ts`](file:///home/swrd/workspace/conclave/packages/protocol/src/task.ts)、[`task-service.ts`](file:///home/swrd/workspace/conclave/packages/core/src/task-service.ts) | [`NewTaskDialog.tsx`](file:///home/swrd/workspace/conclave/packages/web/src/components/NewTaskDialog.tsx)、[`TaskBoard.tsx`](file:///home/swrd/workspace/conclave/packages/web/src/components/TaskBoard.tsx) |
+| **L1 事项层** | 单一「事项」导航入口（看板/列表双视图）、内置 GitHub / GitLab / Jira（自动复用 `gh` / `glab` 凭据，同步 Issue 与 PR/MR）及可扩展插件槽 | [`task.ts`](file:///home/swrd/workspace/conclave/packages/protocol/src/task.ts)、[`sources/`](file:///home/swrd/workspace/conclave/packages/core/src/sources/index.ts)、[`source-service.ts`](file:///home/swrd/workspace/conclave/packages/core/src/source-service.ts) | [`SidebarTasks.tsx`](file:///home/swrd/workspace/conclave/packages/web/src/components/SidebarTasks.tsx)、[`TaskBoard.tsx`](file:///home/swrd/workspace/conclave/packages/web/src/components/TaskBoard.tsx)、[`AgendaSourceChannel.tsx`](file:///home/swrd/workspace/conclave/packages/web/src/components/AgendaSourceChannel.tsx) |
 | **L2 契约层** | 任务说明与契约职责解耦、指标棘轮与人工核对项 | [`contract.ts`](file:///home/swrd/workspace/conclave/packages/protocol/src/contract.ts)、[`command-check.ts`](file:///home/swrd/workspace/conclave/packages/core/src/command-check.ts) | [`TaskDetail.tsx`](file:///home/swrd/workspace/conclave/packages/web/src/components/TaskDetail.tsx)、[`TaskContractPanel.tsx`](file:///home/swrd/workspace/conclave/packages/web/src/components/TaskContractPanel.tsx) |
 | **L3 自治层** | 默认自治启动、环境补给恢复、棘轮涨分存档与跌分回滚 | [`flow-service.ts`](file:///home/swrd/workspace/conclave/packages/core/src/flow-service.ts)、[`flow-policy.ts`](file:///home/swrd/workspace/conclave/packages/core/src/flow-policy.ts) | [`TaskLaunchDialog.tsx`](file:///home/swrd/workspace/conclave/packages/web/src/components/TaskLaunchDialog.tsx)、[`FlowPanel.tsx`](file:///home/swrd/workspace/conclave/packages/web/src/components/FlowPanel.tsx) |
 | **L3 自演进** | 可复现改进项管理、五道门禁验证、自动快进 `self/evolve` | [`evolution-service.ts`](file:///home/swrd/workspace/conclave/packages/core/src/evolution-service.ts) | [`EvolutionDialog.tsx`](file:///home/swrd/workspace/conclave/packages/web/src/components/EvolutionDialog.tsx) |

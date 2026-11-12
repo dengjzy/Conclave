@@ -152,11 +152,9 @@ export function SourceSettingsSection({ source }: { source: SourceDescriptor }) 
         {credential.source === 'store' && (
           <button type="button" className="button ghost" onClick={disconnect}>{t('SourceSettingsSection.signOut')}</button>
         )}
-        {credential.source !== 'env' && (
-          <button type="button" className="button" disabled={busy} onClick={() => void connect()}>
-            {credential.configured ? t('SourceSettingsSection.signInAgain') : t('SettingsPage.signIn')}
-          </button>
-        )}
+        <button type="button" className="button" disabled={busy} onClick={() => void connect()}>
+          {credential.configured ? t('SourceSettingsSection.signInAgain') : t('SettingsPage.signIn')}
+        </button>
       </div>
 
       <div className="settings-form-footer">

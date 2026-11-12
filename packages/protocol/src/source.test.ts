@@ -6,6 +6,7 @@ describe('SourceKey', () => {
   it('accepts tracker keys and GitHub owner/repository keys', () => {
     expect(SourceKey.parse('PROJ-7')).toBe('PROJ-7')
     expect(SourceKey.parse('acme/widgets#123')).toBe('acme/widgets#123')
+    expect(SourceKey.parse('acme/widgets!42')).toBe('acme/widgets!42')
     expect(
       rpcSchemas['sources.import'].params.parse({
         provider: 'github',

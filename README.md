@@ -45,8 +45,9 @@ Conclave 直接驱动你在本机装好、登录好的各 Agent CLI，配置与�
 - **Conclave fixing Conclave**：看板顶栏内置「自我迭代」工作台（`EvolutionService` + `EvolutionDialog`），从可复现改进项出发，在隔离影子 Worktree 中自动完成修复。
 - **严苛 5 重门禁拦截**：类型检查、完整单测、构建打包、独立 Headless Core 启动冒烟（`self:smoke`）及单测防删防 skip 审查（`self:tests`），全绿灯后自动提交并快进推进 `self/evolve` 分支。
 
-### 3. 独立 Worktree 隔离与外部事项接入
-- 每个执行中的任务自动在 `~/.conclave/worktrees/` 下创建独立 Git 分支与工作树，支持从 GitHub、Jira、Linear、禅道插件同步外部 Issue 并一键转入任务流。
+### 3. 多渠道统一「事项」工作台与独立 Worktree 隔离
+- **开箱即用的多渠道事项汇聚**：侧边栏统一收敛为单一「事项」入口，在同一工作台顶栏无缝切换 `全部`、`本地事项`、`GitHub`、`GitLab`、`Jira`、`自我迭代` 以及可扩展插件渠道（`Linear`、`禅道` 等）。
+- **本机 CLI 零配置接入与 PR/MR 同步**：内置 `GitHub` 与 `GitLab` 渠道自动检测并复用本机 `gh` / `glab` CLI 登录凭据（同时支持手动配置 PAT 与企业自建域名），支持同步开放的 Issues 与 Pull Requests / Merge Requests（含分支、评审结论与行级代码评论上下文），一键立项并在 `~/.conclave/worktrees/` 隔离工作树中启动自治推进。
 
 ### 4. 会话上下文无缝移交
 - 在当前会话或任务中随时切换执行的 Agent，聊天记录与上下文自动传递给新 Agent 继续执行，无需手动复制粘贴。

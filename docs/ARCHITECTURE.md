@@ -42,9 +42,9 @@
 | 包 | 职责 |
 |---|---|
 | `packages/protocol` | 唯一的类型来源：Task / Contract / Flow / Evolution / Conversation 模型、状态流转规则、RPC 方法与通知的 zod schema、客户端。`/node` 子入口放路径、端点发现、daemon 协议 |
-| `packages/core` | 独立的任务、契约自治流（Flow）、自演化（Evolution）与会话存储及业务逻辑；任务创建 git worktree；通过 daemon 启动 Agent CLI；另有给 Agent 用的极简 MCP 服务（`mcp-main.ts`，文件预览、终端与可选历史读取工具），由 Agent 作为独立进程启动 |
+| `packages/core` | 独立的事项与契约自治流（Flow）、自演化（Evolution）、内置多渠道事项源（GitHub / GitLab / Jira，支持复用本机 `gh` / `glab` 凭据并兼容外部插件覆盖）与会话存储及业务逻辑；事项创建 git worktree；通过 daemon 启动 Agent CLI；另有给 Agent 用的极简 MCP 服务（`mcp-main.ts`，文件预览、终端与可选历史读取工具），由 Agent 作为独立进程启动 |
 | `packages/daemon` | 进程宿主，独立进程：Agent 跑在 stdio 管道上，终端面板的 shell 跑在 PTY 里；缓存最近输出，供重新连接时回放 |
-| `packages/web` | Web 前端：统一事项看板、任务说明与契约编辑（含指标棘轮）、自治轨迹与环境补给、自我迭代工作台、聊天界面、终端面板；纯 Vite + React SPA 直连 core |
+| `packages/web` | Web 前端：多渠道统一「事项」工作台（看板/列表双视图、内联外部事项接入与同步、自我迭代面板）、事项说明与契约编辑（含指标棘轮）、自治轨迹与环境补给、聊天界面、终端面板；纯 Vite + React SPA 直连 core |
 
 运行时数据在 `~/.conclave/`（可用 `CONCLAVE_HOME` 覆盖）：`conclave.db`、`core.json`（端口与 token，权限 0600）、`worktrees/`、`sessions/`、`skills/`（技能库：`skills.json` 锁文件、`repos/` 里的 git 克隆、`bundles/` 里交给 Agent 的目录）、`mcp-servers.json`（用户的 MCP 服务器，不含密钥）、`credentials.json`（任务来源和 MCP 服务器的密钥，权限 0600）。
 

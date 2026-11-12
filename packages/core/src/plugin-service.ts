@@ -203,7 +203,15 @@ export class PluginService {
     for (const source of manifest.contributes.sources) {
       const owner = this.registry.owners[source.id]
       const migratingJira = source.id === 'jira' && owner === 'builtin' && manifest.id === 'conclave.jira'
-      if ((owner && owner !== manifest.id && !migratingJira) || this.builtins.some((provider) => provider.id === source.id)) throw new Error(`来源 ${source.id} 已被占用`)
+      const designatedBuiltin =
+        this.builtins.some((provider) => provider.id === source.id) &&
+        (manifest.id === `conclave.${source.id}` || owner === manifest.id)
+      if (
+        (owner && owner !== manifest.id && !migratingJira) ||
+        (this.builtins.some((provider) => provider.id === source.id) && !designatedBuiltin)
+      ) {
+        throw new Error(`来源 ${source.id} 已被占用`)
+      }
     }
     const old = this.registry.plugins.find((record) => record.manifest.id === manifest.id)
     if (old && !isDeepStrictEqual(old.manifest.contributes.sources.map((source) => source.id).sort(), manifest.contributes.sources.map((source) => source.id).sort())) throw new Error('首版不支持更新时增删来源 ID')
@@ -242,7 +250,12 @@ export class PluginService {
   }
 
   private publish(ids: readonly string[]): void {
-    this.sources.replaceProviders([...this.builtins, ...[...this.loaded.values()].flatMap((plugin) => plugin.providers)], ids)
+    const loadedProviders = [...this.loaded.values()].flatMap((plugin) => plugin.providers)
+    const loadedIds = new Set(loadedProviders.map((provider) => provider.id))
+    this.sources.replaceProviders(
+      [...this.builtins.filter((provider) => !loadedIds.has(provider.id)), ...loadedProviders],
+      ids
+    )
     this.changed(this.list())
   }
 

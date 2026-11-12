@@ -4,8 +4,6 @@ import { closeMobileDetail, conversationDraftVisible, focusSplitPane, selectTask
 import { ArrowLeftIcon, SidebarIcon } from './components/icons'
 import { NewTaskDialog } from './components/NewTaskDialog'
 import { SettingsPage } from './components/SettingsPage'
-import { SourceInboxView } from './components/SourceInboxView'
-import { InboxEntry } from './components/InboxEntry'
 import { SourceLoginDialog } from './components/SourceLoginDialog'
 import { ProjectTrustDialog } from './components/ProjectTrustDialog'
 import { ConfirmDialog } from './components/ConfirmDialog'
@@ -263,7 +261,6 @@ export function App() {
               onItemSelect={onMobileSelect}
             >
               <OverviewEntry />
-              <InboxEntry />
               <RoutinesEntry />
               <EnvironmentNotice />
               <SidebarTasks />
@@ -272,7 +269,7 @@ export function App() {
             {overviewOpen ? (
               guideOpen ? <GuideView /> : <OverviewView />
             ) : inboxOpen ? (
-              <SourceInboxView />
+              <TaskBoard />
             ) : worktreesOpen ? (
               <WorktreeManager />
             ) : routinesOpen ? (

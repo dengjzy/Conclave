@@ -428,7 +428,7 @@ export const MESSAGES = {
   "agentCli.failedHint": {"zh": "命令未成功完成，请查看终端输出检查网络、权限或文件占用后重试。", "en": "The command did not complete successfully. Review terminal output for connection, permission, or file-lock errors before retrying."},
 
   "sidebar.toggleSection": { "zh": "{action}{label}", "en": "{action} {label}" },
-  "sidebar.tasks": { "zh": "任务", "en": "Tasks" },
+  "sidebar.tasks": { "zh": "事项", "en": "Agenda" },
   "sidebar.conversations": { "zh": "会话", "en": "Conversations" },
   "squad.leaderReadOnly": { "zh": "队长必须是只读成员", "en": "The team lead must be a read-only member" },
   "squad.developerRequired": { "zh": "至少需要一名开发成员", "en": "At least one developer is required" },
@@ -4781,8 +4781,8 @@ export const MESSAGES = {
     "en": "\nTask-bound branch"
   },
   "GitInspector.task": {
-    "zh": "任务",
-    "en": "Task"
+    "zh": "事项",
+    "en": "Agenda"
   },
   "GitInspector.checkedOut": {
     "zh": "检出",
@@ -5661,8 +5661,8 @@ export const MESSAGES = {
     "en": "Unknown model"
   },
   "NewTaskDialog.createdManually": {
-    "zh": "手动创建",
-    "en": "Created manually"
+    "zh": "新建事项",
+    "en": "New item"
   },
   "NewTaskDialog.restoreWindow": {
     "zh": "还原窗口",
@@ -5673,12 +5673,12 @@ export const MESSAGES = {
     "en": "Expand window"
   },
   "NewTaskDialog.taskTitle": {
-    "zh": "任务标题",
-    "en": "Task title"
+    "zh": "事项标题",
+    "en": "Item title"
   },
   "NewTaskDialog.taskDetails": {
-    "zh": "任务详情",
-    "en": "Task details"
+    "zh": "事项说明",
+    "en": "Item specification"
   },
   "NewTaskDialog.addDetailsMarkdownSupported": {
     "zh": "添加详情...（支持 Markdown）",
@@ -5725,8 +5725,8 @@ export const MESSAGES = {
   "NewTaskDialog.autoRun": {"zh": "创建后自主执行", "en": "Run autonomously after creating"},
   "NewTaskDialog.createAndRun": {"zh": "创建并自主执行", "en": "Create and run"},
   "NewTaskDialog.createTask": {
-    "zh": "创建任务{value1}",
-    "en": "Create task{value1}"
+    "zh": "创建事项{value1}",
+    "en": "Create item{value1}"
   },
   "OpenWithButton.openWith": {
     "zh": "用 {value1} 打开",
@@ -7161,8 +7161,8 @@ export const MESSAGES = {
     "en": "Each task runs in its own worktree, which requires Git."
   },
   "SettingsPage.newTask": {
-    "zh": "新建任务",
-    "en": "New task"
+    "zh": "新建事项",
+    "en": "New item"
   },
   "SettingsPage.projectWebsite": {
     "zh": "项目地址",
@@ -7621,20 +7621,20 @@ export const MESSAGES = {
     "en": "Clear"
   },
   "SidebarTasks.tasks": {
-    "zh": "任务{value1}",
-    "en": "Tasks{value1}"
+    "zh": "事项{value1}",
+    "en": "Agenda{value1}"
   },
   "SidebarTasks.needYourResponse": {
     "zh": "，{waiting} 个等你处理",
     "en": ", {waiting} need your response"
   },
   "SidebarTasks.tasksNeedYourResponse": {
-    "zh": "{waiting} 个任务等你处理",
-    "en": "{waiting} {waiting, plural, one {task} other {tasks}} need your response"
+    "zh": "{waiting} 个事项等你处理",
+    "en": "{waiting} {waiting, plural, one {item} other {items}} need your response"
   },
   "SidebarTasks.newTaskN": {
-    "zh": "新建任务 {PRIMARY_KEY_LABEL}N",
-    "en": "New task {PRIMARY_KEY_LABEL}N"
+    "zh": "新建事项 {PRIMARY_KEY_LABEL}N",
+    "en": "New item {PRIMARY_KEY_LABEL}N"
   },
   "SkillsSettingsSection.noReadme": {
     "zh": "（没有 README）",
@@ -7897,8 +7897,8 @@ export const MESSAGES = {
     "en": "Connecting…"
   },
   "SourceSettingsSection.signedInFromEnvironmentVariables": {
-    "zh": "已登录（来自环境变量）",
-    "en": "Signed in (from environment variables)"
+    "zh": "已自动接入（本机 CLI 或环境变量）",
+    "en": "Connected automatically (local CLI or environment)"
   },
   "SourceSettingsSection.unknownAccount": {
     "zh": "未知账号",
@@ -8701,10 +8701,10 @@ export const MESSAGES = {
     "zh": "Agent 这一轮做完了，等你回复或确认",
     "en": "Agent finished this turn and awaits your reply or approval"
   },
-  "TaskBoard.runs": {"zh": "运行", "en": "Runs"},
+  "TaskBoard.runs": {"zh": "事项", "en": "Agenda"},
   "TaskBoard.backToTaskBoardEsc": {
-    "zh": "回到任务看板 Esc",
-    "en": "Back to task board Esc"
+    "zh": "回到事项工作台 Esc",
+    "en": "Back to Agenda Esc"
   },
   "TaskBoard.byRecentActivity": {
     "zh": "按最近活动",
@@ -8719,12 +8719,12 @@ export const MESSAGES = {
     "en": "By title"
   },
   "TaskBoard.titleSourceKeyOrTaskId": {
-    "zh": "标题、来源编号或任务 id",
-    "en": "Title, source key, or task ID"
+    "zh": "标题、外部单号或事项 ID",
+    "en": "Title, source key, or item ID"
   },
   "TaskBoard.newTask": {
-    "zh": "新建任务 {value1}",
-    "en": "New task {value1}"
+    "zh": "新建事项 {value1}",
+    "en": "New item {value1}"
   },
   "TaskBoard.empty": {
     "zh": "空",
@@ -8971,12 +8971,12 @@ export const MESSAGES = {
     "en": "Choose team"
   },
   "TaskQuickAdd.writeATask": {
-    "zh": "＋ 写下一个任务{value1}",
-    "en": "＋ Write a task{value1}"
+    "zh": "＋ 写下一个事项{value1}",
+    "en": "＋ Write an item{value1}"
   },
   "TaskQuickAdd.newTaskTitle": {
-    "zh": "新任务的标题",
-    "en": "New task title"
+    "zh": "新事项标题",
+    "en": "New item title"
   },
   "TaskQuickAdd.whatNeedsDoingOneSentenceIsEnough": {
     "zh": "要做什么？一句话就够",
@@ -12055,7 +12055,7 @@ export const MESSAGES = {
   "ConversationView.runOpen": {"zh": "查看轨迹", "en": "Open trajectory"},
   "ConversationView.runDetails": {"zh": "运行详情", "en": "Run details"},
   "TaskBoard.needsProject": {"zh": "待关联项目", "en": "Needs project"},
-  "TaskDetail.specification": {"zh": "任务说明", "en": "Specification"},
+  "TaskDetail.specification": {"zh": "事项说明", "en": "Specification"},
   "TaskDetail.specificationHint": {"zh": "背景上下文、实现思路、参考文件……（支持 Markdown；验收检查与门禁在下方契约中配置）", "en": "Context, approach, and reference files (Markdown supported; configure checks and gates in the contract below)"},
   "NewTaskDialog.backlogHint": {"zh": "未选项目：先记入待办看板，后续补充项目即可执行", "en": "No project yet: saved to the board first, ready to run once a project is linked"},
   "NewTaskDialog.saveToBacklog": {"zh": "记入待办 {value1}", "en": "Save to backlog {value1}"},
@@ -12107,4 +12107,28 @@ export const MESSAGES = {
   "EvolutionDialog.status.doing": {"zh": "演化中", "en": "Running"},
   "EvolutionDialog.status.done": {"zh": "已完成", "en": "Done"},
   "EvolutionDialog.status.dropped": {"zh": "已忽略", "en": "Dropped"},
+  "Agenda.channels": {"zh": "事项渠道", "en": "Agenda channels"},
+  "Agenda.all": {"zh": "全部", "en": "All"},
+  "Agenda.local": {"zh": "本地事项", "en": "Local"},
+  "Agenda.addChannel": {"zh": "＋ 接入更多渠道", "en": "＋ More channels"},
+  "Agenda.addChannelHint": {"zh": "安装 Linear、禅道或自定义事项源插件", "en": "Install Linear, ZenTao, or custom source plugins"},
+  "Agenda.viewBoard": {"zh": "看板", "en": "Board"},
+  "Agenda.viewList": {"zh": "列表", "en": "List"},
+  "Agenda.viewMode": {"zh": "视图模式", "en": "View mode"},
+  "Agenda.connectTitle": {"zh": "接入 {value1} 事项流", "en": "Connect {value1} items"},
+  "Agenda.connectGithubHint": {"zh": "自动检测并复用本机 gh CLI 登录态，或使用 Personal Access Token 同步开放的 Issues 与 Pull Requests。", "en": "Automatically reuses local gh CLI credentials or a Personal Access Token to sync open Issues and Pull Requests."},
+  "Agenda.connectGitlabHint": {"zh": "自动检测并复用本机 glab CLI 登录态，支持 gitlab.com 与自建 GitLab，同步开放的 Issues 与 Merge Requests。", "en": "Automatically reuses local glab CLI credentials on gitlab.com or self-hosted GitLab to sync open Issues and Merge Requests."},
+  "Agenda.connectJiraHint": {"zh": "支持 Jira Cloud（邮箱 + API Token）与自建 Jira Server / DC（PAT），按 JQL 筛选待处理事项。", "en": "Supports Jira Cloud (email + API token) and self-hosted Jira Server / DC (PAT) with custom JQL filtering."},
+  "Agenda.connectGenericHint": {"zh": "完成账号与筛选条件配置后，远端事项会自动同步到此处并可一键立项执行。", "en": "Configure credentials and filters below to sync remote items directly into this Agenda."},
+  "Agenda.remoteQueue": {"zh": "远程待立项 ({value1})", "en": "Remote backlog ({value1})"},
+  "Agenda.importedBoard": {"zh": "已立项推进 ({value1})", "en": "Tracked items ({value1})"},
+  "Agenda.importedEmpty": {"zh": "该渠道还没有立项中的事项；从上方远程列表点击「立项执行」即可创建并自动推进。", "en": "No tracked items from this channel yet. Click Start item on a remote entry above to launch execution."},
+  "Agenda.importAndOpen": {"zh": "立项执行", "en": "Start item"},
+  "Agenda.importToBacklog": {"zh": "收入待办", "en": "Add to backlog"},
+  "Agenda.configureFilter": {"zh": "筛选与账号", "en": "Filter & account"},
+  "Agenda.remoteBanner": {"zh": "远程渠道有 {value1} 项待立项：", "en": "{value1} remote items waiting to be imported:"},
+  "Agenda.quickConnectHint": {"zh": "外部事项源：", "en": "External sources:"},
+  "Agenda.quickConnectAction": {"zh": "配置 {value1}", "en": "Connect {value1}"},
+  "Agenda.connected": {"zh": "已连接", "en": "Connected"},
+  "Agenda.notConnected": {"zh": "未连接", "en": "Not connected"},
 } as const
