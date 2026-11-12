@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx src/main.ts",
+    "dev": "tsx src/main.ts --reuse-existing",
     "start": "tsx src/main.ts",
     "typecheck": "tsc -p ."
   },

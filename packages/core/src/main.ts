@@ -5,7 +5,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { AGENT_KINDS, agentDescriptor, PROTOCOL_VERSION, quotaVerdict, usageAccount, usageReadable, type AgentKind, type AgentUsage, type ChatItem } from '@conclave/protocol'
 import packageJson from '../package.json' with { type: 'json' }
-import { removeCoreEndpoint, conclavePaths, writeCoreEndpoint } from '@conclave/protocol/node'
+import { readCoreEndpoint, removeCoreEndpoint, conclavePaths, writeCoreEndpoint } from '@conclave/protocol/node'
 import { adapterOf } from './agents'
 import { EnvironmentService } from './environment-check'
 import { AgentRunStore } from './agent-run-store'
@@ -497,15 +497,33 @@ if (process.env.CONCLAVE_PORT) {
 const sessionImports = new SessionImports(conversationsStore, conversations, paths.home)
 conversations.setSessionImports(sessionImports)
 
-server = await startRpcServer({
-  host: targetHost,
-  port: targetPort,
-  token,
-  handlers: createRpcHandlers(service, conversations, projects, gitFavorites, daemon, usage, sources, {
-    store: attachments,
-    uploads: new AttachmentUploads(attachments)
-  }, terminals, worktrees, awake, terminalCommands, limits, runs, turns, chatSettings, environment, schedules, chatCommands, routines, wire, () => server?.broadcast('git.changed', {}), plugins, skills, mcpServers, smallModels, projectConfigs, modelProviders, sessionImports, accounts, cliMaintenance, analytics, automation, new ProjectStar(sources), flows ?? undefined, evolution)
-})
+try {
+  server = await startRpcServer({
+    host: targetHost,
+    port: targetPort,
+    token,
+    handlers: createRpcHandlers(service, conversations, projects, gitFavorites, daemon, usage, sources, {
+      store: attachments,
+      uploads: new AttachmentUploads(attachments)
+    }, terminals, worktrees, awake, terminalCommands, limits, runs, turns, chatSettings, environment, schedules, chatCommands, routines, wire, () => server?.broadcast('git.changed', {}), plugins, skills, mcpServers, smallModels, projectConfigs, modelProviders, sessionImports, accounts, cliMaintenance, analytics, automation, new ProjectStar(sources), flows ?? undefined, evolution)
+  })
+} catch (error) {
+  if (error instanceof Error && 'code' in error && error.code === 'EADDRINUSE') {
+    const existing = await readCoreEndpoint(paths.home).catch(() => null)
+    const owner = existing?.pid ? ` (existing Core PID ${existing.pid} in ${paths.home})` : ''
+    console.error(`[conclave-core] port ${targetPort} is already in use${owner}. Run \`pnpm stop\` first, or set CONCLAVE_PORT / CONCLAVE_HOME.`)
+    taskContracts.close()
+    store.close()
+    conversationsStore.close()
+    runs.close()
+    turns.close()
+    smallModels.close()
+    projects.close()
+    gitFavorites.close()
+    process.exit(1)
+  }
+  throw error
+}
 await writeCoreEndpoint({ port: server.port, token, pid: process.pid, protocolVersion: PROTOCOL_VERSION, version: packageJson.version })
 daemon.start()
 await awake.start()

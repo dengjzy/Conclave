@@ -22,12 +22,18 @@ function probe(socketPath: string): Promise<ProbeResult> {
 
 // Only a refused connection proves the old daemon is gone; a timeout proves nothing,
 // and deleting a live socket would orphan every terminal it still serves.
-export async function claimEndpoint(socketPath: string): Promise<void> {
+export async function claimEndpoint(
+  socketPath: string,
+  options: { reuseExisting?: boolean } = {}
+): Promise<'claimed' | 'reused'> {
   if (process.platform === 'win32') {
-    return
+    return 'claimed'
   }
   const state = await probe(socketPath)
   if (state === 'live') {
+    if (options.reuseExisting) {
+      return 'reused'
+    }
     throw new Error(`another Conclave daemon is already serving ${socketPath}`)
   }
   if (state === 'unknown') {
@@ -36,4 +42,5 @@ export async function claimEndpoint(socketPath: string): Promise<void> {
   if (state === 'stale') {
     await rm(socketPath, { force: true })
   }
+  return 'claimed'
 }

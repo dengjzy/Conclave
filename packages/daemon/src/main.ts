@@ -21,7 +21,11 @@ delete process.env.ELECTRON_RUN_AS_NODE
 
 const paths = conclavePaths()
 await mkdir(paths.home, { recursive: true, mode: 0o700 })
-await claimEndpoint(paths.daemonSocket)
+const claimed = await claimEndpoint(paths.daemonSocket, { reuseExisting: process.argv.includes('--reuse-existing') })
+if (claimed === 'reused') {
+  console.log(`[conclave-daemon] reusing existing daemon at ${paths.daemonSocket}`)
+  process.exit(0)
+}
 
 const clients = new Set<net.Socket>()
 const awake = new AwakeService()
