@@ -61,13 +61,31 @@ export function readGhCliToken(host: string, env: NodeJS.ProcessEnv = process.en
 }
 
 const GlabHostConfig = z.object({
-  token: z.string().optional(),
-  job_token: z.string().optional()
+  token: z.string().nullish(),
+  job_token: z.string().nullish(),
+  user: z.string().nullish(),
+  use_keyring: z.union([z.boolean(), z.string()]).nullish(),
+  api_protocol: z.string().nullish(),
+  git_protocol: z.string().nullish(),
+  api_host: z.string().nullish(),
+  skip_tls_verify: z.union([z.boolean(), z.string()]).nullish()
 }).passthrough()
 
 const GlabConfig = z.object({
-  hosts: z.record(z.string(), GlabHostConfig).optional()
+  hosts: z.record(z.string(), GlabHostConfig.nullish()).nullish()
 }).passthrough()
+
+export type GlabEndpoint = {
+  protocol: 'http' | 'https'
+  apiHost: string
+  skipTlsVerify: boolean
+}
+
+type GlabHostEntry = {
+  token: string | null
+  authenticated: boolean
+  endpoint: GlabEndpoint
+}
 
 function glabConfigCandidates(env: NodeJS.ProcessEnv): string[] {
   const home = os.homedir()
@@ -84,17 +102,38 @@ function glabConfigCandidates(env: NodeJS.ProcessEnv): string[] {
   return dirs.map((dir) => path.join(dir, 'config.yml'))
 }
 
-function readGlabConfigHosts(env: NodeJS.ProcessEnv): Map<string, string> {
-  const found = new Map<string, string>()
+function readGlabConfigEntries(env: NodeJS.ProcessEnv): Map<string, GlabHostEntry> {
+  const found = new Map<string, GlabHostEntry>()
   for (const file of glabConfigCandidates(env)) {
     try {
       const parsed = GlabConfig.safeParse(parseYaml(readFileSync(file, 'utf8')))
       if (!parsed.success || !parsed.data.hosts) continue
       for (const [hostKey, entry] of Object.entries(parsed.data.hosts)) {
-        const token = cleanToken(entry.token) ?? cleanToken(entry.job_token)
+        if (!entry) continue
         const normalized = normalizeHost(hostKey, '')
-        if (normalized && token && !found.has(normalized)) {
-          found.set(normalized, token)
+        if (!normalized) continue
+        const apiHost = normalizeHost(entry.api_host ?? undefined, normalized)
+        const rawProtocol = (entry.api_protocol ?? entry.git_protocol ?? '').trim().toLowerCase()
+        const protocol: 'http' | 'https' = rawProtocol === 'http' ? 'http' : 'https'
+        const skipTlsVerify =
+          entry.skip_tls_verify === true ||
+          String(entry.skip_tls_verify ?? '').trim().toLowerCase() === 'true'
+        const useKeyring =
+          entry.use_keyring === true ||
+          String(entry.use_keyring ?? '').trim().toLowerCase() === 'true'
+        const token = cleanToken(entry.token) ?? cleanToken(entry.job_token)
+        const authenticated = Boolean(token || useKeyring || entry.user?.trim())
+        const record: GlabHostEntry = {
+          token,
+          authenticated,
+          endpoint: { protocol, apiHost, skipTlsVerify }
+        }
+        const existing = found.get(normalized)
+        if (!existing || (!existing.authenticated && authenticated) || (!existing.token && token)) {
+          found.set(normalized, record)
+        }
+        if (apiHost !== normalized && !found.has(apiHost)) {
+          found.set(apiHost, record)
         }
       }
     } catch {
@@ -105,12 +144,44 @@ function readGlabConfigHosts(env: NodeJS.ProcessEnv): Map<string, string> {
 }
 
 export function listGlabCliHosts(env: NodeJS.ProcessEnv = process.env): string[] {
-  return [...readGlabConfigHosts(env).keys()]
+  const hosts: string[] = []
+  for (const [host, entry] of readGlabConfigEntries(env)) {
+    if (entry.authenticated) hosts.push(host)
+  }
+  return hosts
+}
+
+export function readGlabCliEndpoint(host: string, env: NodeJS.ProcessEnv = process.env): GlabEndpoint | null {
+  const normalized = normalizeHost(host, 'gitlab.com')
+  const fromFile = readGlabConfigEntries(env).get(normalized)?.endpoint
+  if (fromFile) return fromFile
+  const cliProto = readCached(`glab-proto:${normalized}`, () => {
+    try {
+      const safeEnv = { ...env, GIT_TERMINAL_PROMPT: '0', NO_PROMPT: '1' }
+      const launch = planLaunch('glab', ['config', 'get', 'api_protocol', '--host', normalized], os.homedir(), safeEnv)
+      const stdout = execFileSync(launch.file, launch.args, {
+        env: launch.env,
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 3_000,
+        maxBuffer: 16 * 1024,
+        stdio: ['ignore', 'pipe', 'ignore']
+      })
+      const proto = stdout.trim().toLowerCase()
+      return proto === 'http' || proto === 'https' ? proto : null
+    } catch {
+      return null
+    }
+  })
+  if (cliProto === 'http' || cliProto === 'https') {
+    return { protocol: cliProto, apiHost: normalized, skipTlsVerify: false }
+  }
+  return null
 }
 
 export function readGlabCliToken(host: string, env: NodeJS.ProcessEnv = process.env): string | null {
   const normalized = normalizeHost(host, 'gitlab.com')
-  const fromFile = readGlabConfigHosts(env).get(normalized)
+  const fromFile = readGlabConfigEntries(env).get(normalized)?.token
   if (fromFile) return fromFile
   return readCached(`glab:${normalized}`, () => {
     try {

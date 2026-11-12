@@ -1,8 +1,9 @@
+import { Agent, fetch as undiciFetch } from 'undici'
 import { z } from 'zod'
 import type { SettingField, SourceIssue } from '@conclave/protocol'
 import { SourceError } from '../source-error'
 import type { LoginSession, SourceCredential, SourceIssueDetail, SourceProvider, SourceSettings } from '../source-provider'
-import { listGlabCliHosts, normalizeHost, readGlabCliToken } from './cli-credential'
+import { listGlabCliHosts, normalizeHost, readGlabCliEndpoint, readGlabCliToken, type GlabEndpoint } from './cli-credential'
 
 const FALLBACK_HOST = 'gitlab.com'
 const KEY_PATTERN = /^([A-Za-z0-9_./-]+)([#!])(\d+)$/
@@ -40,17 +41,11 @@ const GitlabNote = z.object({
 
 const TokenPayload = z.object({ token: z.string().min(1) })
 
-function baseOrigin(rawHost: string | undefined, defaultHost: string): string {
-  const trimmed = (rawHost ?? '').trim()
-  if (/^https?:\/\//i.test(trimmed)) {
-    try {
-      const parsed = new URL(trimmed)
-      return `${parsed.protocol}//${parsed.host}`
-    } catch {
-      throw new SourceError('invalid-settings', `无效的 GitLab 地址：${trimmed}`)
-    }
-  }
-  return `https://${normalizeHost(trimmed, defaultHost)}`
+type GitlabTarget = {
+  origin: string
+  host: string
+  skipTlsVerify: boolean
+  explicitScheme: boolean
 }
 
 function projectPathFromWebUrl(webUrl: string): string | null {
@@ -71,9 +66,20 @@ function extractPriority(labels: readonly string[]): string | null {
   return match ? match.slice(0, 40) : null
 }
 
+function describeFetchError(error: unknown, target: GitlabTarget): string {
+  const base = error instanceof Error ? error.message : String(error)
+  const cause = error instanceof Error && error.cause instanceof Error ? error.cause.message : ''
+  const detail = cause && cause !== base ? `${base} (${cause})` : base
+  if (!target.explicitScheme && target.origin.startsWith('https://')) {
+    return `${detail}；若该自建实例使用 HTTP，请填写 http://${target.host}`
+  }
+  return detail
+}
+
 export type GitlabSourceDependencies = {
   fetch?: typeof fetch
   glabToken?: (host: string, env: NodeJS.ProcessEnv) => string | null
+  glabEndpoint?: (host: string, env: NodeJS.ProcessEnv) => GlabEndpoint | null
   glabHosts?: (env: NodeJS.ProcessEnv) => string[]
   configuredHost?: () => string | undefined
   hasStoredCredential?: () => boolean
@@ -82,10 +88,40 @@ export type GitlabSourceDependencies = {
 export function createGitlabSource(dependencies: GitlabSourceDependencies = {}): SourceProvider {
   const http = dependencies.fetch ?? fetch
   const readGlab = dependencies.glabToken ?? readGlabCliToken
+  const readEndpoint = dependencies.glabEndpoint ?? readGlabCliEndpoint
   const detectHosts = dependencies.glabHosts ?? listGlabCliHosts
   const configuredHost = dependencies.configuredHost ?? (() => undefined)
   const hasStoredCredential = dependencies.hasStoredCredential ?? (() => false)
   const defaultHost = detectHosts(process.env)[0] ?? FALLBACK_HOST
+  let insecureAgent: Agent | null = null
+
+  function resolveTarget(rawHost: string | undefined): GitlabTarget {
+    const trimmed = (rawHost ?? '').trim()
+    if (/^https?:\/\//i.test(trimmed)) {
+      let parsed: URL
+      try {
+        parsed = new URL(trimmed)
+      } catch {
+        throw new SourceError('invalid-settings', `无效的 GitLab 地址：${trimmed}`)
+      }
+      const host = parsed.host.toLowerCase()
+      const endpoint = readEndpoint(host, process.env)
+      return {
+        origin: `${parsed.protocol}//${parsed.host}`,
+        host,
+        skipTlsVerify: Boolean(endpoint?.skipTlsVerify),
+        explicitScheme: true
+      }
+    }
+    const host = normalizeHost(trimmed, defaultHost)
+    const endpoint = readEndpoint(host, process.env)
+    return {
+      origin: endpoint ? `${endpoint.protocol}://${endpoint.apiHost}` : `https://${host}`,
+      host,
+      skipTlsVerify: Boolean(endpoint?.skipTlsVerify),
+      explicitScheme: Boolean(endpoint)
+    }
+  }
 
   const settings: readonly SettingField[] = [
     {
@@ -95,11 +131,11 @@ export function createGitlabSource(dependencies: GitlabSourceDependencies = {}):
       translations: {
         en: {
           label: 'GitLab host or URL',
-          hint: 'Defaults to gitlab.com or your logged-in glab CLI host; supports self-hosted GitLab URLs.'
+          hint: 'Defaults to gitlab.com or your logged-in glab CLI host & protocol; supports http:// or https:// self-hosted URLs.'
         }
       },
       placeholder: defaultHost,
-      hint: '默认复用本机 glab 登录域名或 gitlab.com；支持填写自建 GitLab 域名',
+      hint: '默认复用本机 glab 登录域名与协议（HTTP/HTTPS）或 gitlab.com；支持填写自建地址（如 http://10.x.x.x）',
       required: false,
       default: defaultHost,
       mono: true,
@@ -147,19 +183,23 @@ export function createGitlabSource(dependencies: GitlabSourceDependencies = {}):
     }
   ]
 
-  async function requestJson(origin: string, endpoint: string, token: string, signal: AbortSignal): Promise<unknown> {
-    let response: Response
+  async function requestJson(target: GitlabTarget, endpoint: string, token: string, signal: AbortSignal): Promise<unknown> {
+    const url = `${target.origin}/api/v4${endpoint}`
+    const headers = {
+      Accept: 'application/json',
+      Authorization: `Bearer ${token}`,
+      'PRIVATE-TOKEN': token
+    }
+    let response: { status: number; ok: boolean; json(): Promise<unknown> }
     try {
-      response = await http(`${origin}/api/v4${endpoint}`, {
-        headers: {
-          Accept: 'application/json',
-          Authorization: `Bearer ${token}`,
-          'PRIVATE-TOKEN': token
-        },
-        signal
-      })
+      if (!dependencies.fetch && target.skipTlsVerify && target.origin.startsWith('https://')) {
+        insecureAgent ??= new Agent({ connect: { rejectUnauthorized: false } })
+        response = await undiciFetch(url, { headers, signal, dispatcher: insecureAgent })
+      } else {
+        response = await http(url, { headers, signal })
+      }
     } catch (error) {
-      throw new SourceError('request-failed', error instanceof Error ? error.message : String(error))
+      throw new SourceError('request-failed', describeFetchError(error, target))
     }
     if (response.status === 401) throw new SourceError('auth-failed', 'GitLab 登录凭证无效或已过期')
     if (response.status === 403) throw new SourceError('forbidden', 'GitLab Token 权限不足（需要 read_api 权限）')
@@ -210,8 +250,8 @@ export function createGitlabSource(dependencies: GitlabSourceDependencies = {}):
 
     normalizeSettings(values: SourceSettings): Record<string, string> {
       const rawHost = (values.host ?? defaultHost).trim() || defaultHost
-      const origin = baseOrigin(rawHost, defaultHost)
-      const normalizedHost = /^https?:\/\//i.test(rawHost) ? origin : normalizeHost(rawHost, defaultHost)
+      const target = resolveTarget(rawHost)
+      const normalizedHost = /^https?:\/\//i.test(rawHost) ? target.origin : normalizeHost(rawHost, defaultHost)
       const scope = values.scope === 'created_by_me' || values.scope === 'all' ? values.scope : 'assigned_to_me'
       const project = (values.project ?? '').trim().replace(/^\/+|\/+$/g, '')
       return { host: normalizedHost, scope, ...(project ? { project } : {}) }
@@ -236,8 +276,8 @@ export function createGitlabSource(dependencies: GitlabSourceDependencies = {}):
     },
 
     async login(session: LoginSession, currentSettings: SourceSettings, signal: AbortSignal) {
-      const origin = baseOrigin(currentSettings.host, defaultHost)
-      const hostName = normalizeHost(currentSettings.host, defaultHost)
+      const target = resolveTarget(currentSettings.host)
+      const hostName = target.host
       const cliToken = readGlab(hostName, process.env)
       let mode = cliToken ? 'glab' : 'token'
       if (cliToken) {
@@ -269,7 +309,7 @@ export function createGitlabSource(dependencies: GitlabSourceDependencies = {}):
               },
               placeholder: 'glpat-...',
               link: {
-                url: `${origin}/-/user_settings/personal_access_tokens`,
+                url: `${target.origin}/-/user_settings/personal_access_tokens`,
                 label: '打开 GitLab Token 页面',
                 translations: { en: { label: 'Open GitLab access tokens' } }
               },
@@ -283,7 +323,7 @@ export function createGitlabSource(dependencies: GitlabSourceDependencies = {}):
         }
 
         try {
-          const user = GitlabUser.parse(await requestJson(origin, '/user', candidate, signal))
+          const user = GitlabUser.parse(await requestJson(target, '/user', candidate, signal))
           return { credential: { kind: 'token', payload: { token: candidate } }, account: user.username }
         } catch (error) {
           lastError = error instanceof Error ? error.message : String(error)
@@ -293,7 +333,7 @@ export function createGitlabSource(dependencies: GitlabSourceDependencies = {}):
     },
 
     async list(currentSettings: SourceSettings, credential: SourceCredential, signal: AbortSignal): Promise<SourceIssue[]> {
-      const origin = baseOrigin(currentSettings.host, defaultHost)
+      const target = resolveTarget(currentSettings.host)
       const token = tokenOf(credential)
       const scope = currentSettings.scope === 'created_by_me' || currentSettings.scope === 'all' ? currentSettings.scope : 'assigned_to_me'
       const project = (currentSettings.project ?? '').trim()
@@ -301,17 +341,17 @@ export function createGitlabSource(dependencies: GitlabSourceDependencies = {}):
       const query = `state=opened&scope=${encodeURIComponent(scope)}&order_by=updated_at&sort=desc&per_page=40`
 
       const requests: Promise<{ kind: 'Issue' | 'MR'; data: unknown }>[] = [
-        requestJson(origin, `${prefix}/issues?${query}`, token, signal).then((data) => ({ kind: 'Issue' as const, data })),
-        requestJson(origin, `${prefix}/merge_requests?${query}`, token, signal).then((data) => ({ kind: 'MR' as const, data }))
+        requestJson(target, `${prefix}/issues?${query}`, token, signal).then((data) => ({ kind: 'Issue' as const, data })),
+        requestJson(target, `${prefix}/merge_requests?${query}`, token, signal).then((data) => ({ kind: 'MR' as const, data }))
       ]
 
       if (scope === 'assigned_to_me') {
         requests.push(
-          requestJson(origin, '/user', token, signal)
+          requestJson(target, '/user', token, signal)
             .then((rawUser) => {
               const user = GitlabUser.parse(rawUser)
               return requestJson(
-                origin,
+                target,
                 `${prefix}/merge_requests?state=opened&scope=all&reviewer_id=${user.id}&order_by=updated_at&sort=desc&per_page=30`,
                 token,
                 signal
@@ -342,14 +382,14 @@ export function createGitlabSource(dependencies: GitlabSourceDependencies = {}):
       const iid = match?.[3]
       if (!project || !sep || !iid) throw new SourceError('not-found', `无效的 GitLab 事项编号：${key}`)
       const isMr = sep === '!'
-      const origin = baseOrigin(currentSettings.host, defaultHost)
+      const target = resolveTarget(currentSettings.host)
       const token = tokenOf(credential)
       const encodedProject = encodeURIComponent(project)
       const collection = isMr ? 'merge_requests' : 'issues'
 
       const [itemRaw, notesRaw] = await Promise.all([
-        requestJson(origin, `/projects/${encodedProject}/${collection}/${iid}`, token, signal),
-        requestJson(origin, `/projects/${encodedProject}/${collection}/${iid}/notes?sort=asc&per_page=30`, token, signal).catch(() => [])
+        requestJson(target, `/projects/${encodedProject}/${collection}/${iid}`, token, signal),
+        requestJson(target, `/projects/${encodedProject}/${collection}/${iid}/notes?sort=asc&per_page=30`, token, signal).catch(() => [])
       ])
 
       const item = GitlabItem.parse(itemRaw)

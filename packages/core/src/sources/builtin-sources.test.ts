@@ -1,4 +1,8 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { listGlabCliHosts, readGlabCliEndpoint, readGlabCliToken } from './cli-credential'
 import { createGithubSource } from './github-source'
 import { createGitlabSource } from './gitlab-source'
 import { createJiraSource } from './jira-source'
@@ -278,5 +282,103 @@ describe('built-in source providers', () => {
     expect(detail.markdown).toContain('Verify acceptance criteria automatically.')
     expect(detail.markdown).toContain('QA Bot')
     expect(detail.markdown).toContain('All checks green.')
+  })
+
+  it('honors glab api_protocol: http, api_host, and surfaces clear HTTP fallback hints on connection errors', async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), 'conclave-glab-test-'))
+    try {
+      writeFileSync(
+        path.join(tempDir, 'config.yml'),
+        [
+          'hosts:',
+          '  gitlab.com:',
+          '    api_protocol: https',
+          '    api_host: gitlab.com',
+          '    token:',
+          '  10.196.46.18:',
+          '    token: glpat_http_intranet',
+          '    api_host: 10.196.46.18',
+          '    git_protocol: http',
+          '    api_protocol: http',
+          '    user: intranet_dev',
+          '  gitlab.tls.local:',
+          '    token: glpat_self_signed',
+          '    api_protocol: https',
+          '    skip_tls_verify: true'
+        ].join('\n'),
+        'utf8'
+      )
+
+      const fakeEnv = { GLAB_CONFIG_DIR: tempDir, HOME: tempDir }
+      expect(listGlabCliHosts(fakeEnv)).toEqual(['10.196.46.18', 'gitlab.tls.local'])
+      expect(readGlabCliToken('10.196.46.18', fakeEnv)).toBe('glpat_http_intranet')
+      expect(readGlabCliEndpoint('10.196.46.18', fakeEnv)).toEqual({
+        protocol: 'http',
+        apiHost: '10.196.46.18',
+        skipTlsVerify: false
+      })
+      expect(readGlabCliEndpoint('gitlab.tls.local', fakeEnv)).toEqual({
+        protocol: 'https',
+        apiHost: 'gitlab.tls.local',
+        skipTlsVerify: true
+      })
+
+      const requestedUrls: string[] = []
+      const gitlab = createGitlabSource({
+        glabHosts: () => ['10.196.46.18'],
+        glabToken: (host) => readGlabCliToken(host, fakeEnv),
+        glabEndpoint: (host) => readGlabCliEndpoint(host, fakeEnv),
+        fetch: async (input) => {
+          const url = String(input)
+          requestedUrls.push(url)
+          if (url === 'http://10.196.46.18/api/v4/user') {
+            return jsonResponse({ id: 3, username: 'intranet_dev' })
+          }
+          if (url.startsWith('http://10.196.46.18/api/v4/issues?')) {
+            return jsonResponse([
+              {
+                iid: 5,
+                title: 'Sync over HTTP intranet',
+                web_url: 'http://10.196.46.18/firmware/bsp/-/issues/5',
+                state: 'opened',
+                updated_at: '2026-11-12T12:00:00Z',
+                labels: []
+              }
+            ])
+          }
+          if (url.startsWith('http://10.196.46.18/api/v4/merge_requests?')) {
+            return jsonResponse([])
+          }
+          throw new Error(`unexpected URL: ${url}`)
+        }
+      })
+
+      const settings = await gitlab.normalizeSettings({ host: '10.196.46.18' })
+      expect(settings.host).toBe('10.196.46.18')
+      const items = await gitlab.list(
+        settings,
+        { kind: 'token', payload: { token: 'glpat_http_intranet' } },
+        new AbortController().signal
+      )
+      expect(items).toMatchObject([{ key: 'firmware/bsp#5', type: 'Issue', status: 'Open' }])
+      expect(requestedUrls.every((u) => u.startsWith('http://10.196.46.18/api/v4/'))).toBe(true)
+
+      const unconfiguredGitlab = createGitlabSource({
+        glabHosts: () => [],
+        glabEndpoint: () => null,
+        fetch: async () => {
+          throw new TypeError('fetch failed', { cause: new Error('connect ECONNREFUSED 10.0.0.9:443') })
+        }
+      })
+      await expect(
+        unconfiguredGitlab.list(
+          { host: '10.0.0.9' },
+          { kind: 'token', payload: { token: 'glpat_any' } },
+          new AbortController().signal
+        )
+      ).rejects.toThrow(/connect ECONNREFUSED 10\.0\.0\.9:443.*http:\/\/10\.0\.0\.9/)
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true })
+    }
   })
 })
