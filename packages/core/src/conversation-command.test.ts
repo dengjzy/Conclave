@@ -2,12 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { chatCommand } from './conversation-command'
 
 describe('chatCommand', () => {
-  it('gives Codex Conclave\'s tools and hides the ChatGPT app\'s browser beside them', () => {
+  it('gives Codex Conclave\'s tools without overriding native browser settings', () => {
     const mcp = { command: 'node', args: ['mcp.mjs', '--home', '/k'] }
     const args = chatCommand('codex', null, false, null, [], { mcp }).args
-    expect(args.slice(0, 5)).toEqual(['app-server', '-c', 'mcp_servers.conclave.command="node"', '-c', 'mcp_servers.conclave.args=["mcp.mjs","--home","/k"]'])
-    expect(args).toEqual(expect.arrayContaining(['-c', 'mcp_servers.cua_repl={command="/usr/bin/true",enabled=false}']))
-    // Without Conclave's tools there is nothing to choose between, and nothing is hidden.
+    expect(args).toEqual(['app-server', '-c', 'mcp_servers.conclave.command="node"', '-c', 'mcp_servers.conclave.args=["mcp.mjs","--home","/k"]'])
     expect(chatCommand('codex', null, false, null, []).args).toEqual(['app-server'])
   })
 
@@ -63,19 +61,12 @@ describe('chatCommand', () => {
     const allowed = args[args.indexOf('--allowedTools') + 1]?.split(',') ?? []
     expect(allowed).toEqual(expect.arrayContaining(['mcp__conclave__show_preview', 'mcp__conclave__terminal_read', 'mcp__conclave__history_list', 'mcp__conclave__history_read']))
     expect(allowed).not.toContain('mcp__conclave__terminal_run')
+    expect(allowed).not.toContain('mcp__conclave__conclave_schedule_list')
   })
 
   it('gives Cursor each extra project as a workspace root before its ACP server', () => {
     expect(chatCommand('cursor', null, false, null, ['/code/web', '/code/api']).args).toEqual(['--add-dir', '/code/web', '--add-dir', '/code/api', 'acp'])
     expect(chatCommand('cursor', null, false, null).args).toEqual(['acp'])
-  })
-
-  it('lets Claude drive the user\'s Chrome as the setting says, either way, and leaves Codex as it is', () => {
-    expect(chatCommand('claude', 's', false, null, [], { userBrowser: true }).args).toContain('--chrome')
-    expect(chatCommand('claude', 's', false, null, [], { userBrowser: false }).args).toContain('--no-chrome')
-    // Unset (a catalog probe) leaves Claude Code's own default.
-    expect(chatCommand('claude', 's', false, null, []).args.filter((arg) => arg.endsWith('chrome'))).toEqual([])
-    expect(chatCommand('codex', null, false, null, [], { userBrowser: true }).args).toEqual(['app-server'])
   })
 
   it('gives each agent the user\'s vault as its own folder, writable where the stage may write, and says where it is', () => {
@@ -96,27 +87,16 @@ describe('chatCommand', () => {
     expect(chatCommand('claude', 's', false, null, []).args).not.toContain('--append-system-prompt')
   })
 
-  it('tells each agent with Conclave\'s tools when to note down what is left for the user, beside its vault', () => {
+  it('does not inject a system prompt for Conclave MCP tools alone, only when vault or instructions are present', () => {
     const mcp = { command: 'node', args: ['mcp.mjs'] }
+    expect(chatCommand('claude', 's', false, null, [], { mcp }).args).not.toContain('--append-system-prompt')
+    expect(chatCommand('claude', 's', false, null, [], { mcp }).args[chatCommand('claude', 's', false, null, [], { mcp }).args.indexOf('--allowedTools') + 1]).not.toContain('user_todo')
+    expect(chatCommand('codex', null, false, null, [], { mcp }).args.join(' ')).not.toContain('developer_instructions')
     const vault = { path: '/notes/vault', write: true }
     const claude = chatCommand('claude', 's', false, null, [], { mcp, knowledgeBase: vault }).args
-    // One system prompt carries both notes.
     expect(claude.filter((arg) => arg === '--append-system-prompt')).toHaveLength(1)
-    const note = claude[claude.indexOf('--append-system-prompt') + 1]
-    expect(note).toContain('/notes/vault')
-    expect(note).toContain('user_todo_add')
-    expect(claude[claude.indexOf('--allowedTools') + 1]).toContain('mcp__conclave__user_todo_add')
-    expect(chatCommand('codex', null, false, null, [], { mcp }).args).toContainEqual(expect.stringMatching(/^developer_instructions=".*user_todo_add.*"$/))
-    // Without Conclave's tools there is nothing to note them down with.
-    expect(chatCommand('claude', 's', false, null, []).args).not.toContain('--append-system-prompt')
-  })
-
-  it('leaves the to-dos out when the user turned them off', () => {
-    const mcp = { command: 'node', args: ['mcp.mjs'] }
-    const claude = chatCommand('claude', 's', false, null, [], { mcp, todos: false }).args
-    expect(claude).not.toContain('--append-system-prompt')
-    expect(claude[claude.indexOf('--allowedTools') + 1]).not.toContain('user_todo')
-    expect(chatCommand('codex', null, false, null, [], { mcp, todos: false }).args.join(' ')).not.toContain('user_todo')
+    expect(claude[claude.indexOf('--append-system-prompt') + 1]).toContain('/notes/vault')
+    expect(claude[claude.indexOf('--append-system-prompt') + 1]).not.toContain('user_todo')
   })
 
   it('hands Conclave\'s skills to the agents that load a folder of them, each its own way', () => {

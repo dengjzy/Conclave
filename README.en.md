@@ -2,11 +2,11 @@
 
 # Conclave
 
-**Lightweight, Pure-Web Multi-Agent Collaborative Workbench**
+**Autonomous Task Execution & Recursive Self-Improvement Multi-Agent Workbench**
 
 Claude Code · Codex · Antigravity · Pi · OpenCode · Cursor · DeepSeek Harness · ZCode · Kimi · Gemini · Grok · omp
 
-Quota Telemetry · Concurrent Fan-out · Multi-turn Debates · Agent Squads · Automations & Scheduled Runs · Isolated Worktrees
+Contract-Driven Flows · Recursive Self-Improvement · Isolated Worktrees · Quota Telemetry & Auto-Rotation · Automations & Schedules
 
 ![Version](https://img.shields.io/badge/version-0.0.1--web-blue)
 ![Platform](https://img.shields.io/badge/platform-Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-green)
@@ -23,11 +23,11 @@ Quota Telemetry · Concurrent Fan-out · Multi-turn Debates · Agent Squads · A
 
 Conclave directly drives your locally installed and authenticated Agent CLIs. Configuration and credentials remain seamlessly intact without re-authenticating API keys.
 
-* **No More Copy-Pasting**: Seamlessly hand off conversations across agents, delegate subtasks from a lead agent, and aggregate conclusions automatically.
-* **Concurrent Questioning & Comparison**: Broadcast the same prompt to multiple agents simultaneously and inspect real-time streaming answers side-by-side.
-* **Multi-Turn Discussions**: Coordinate multiple agents in a structured topic discussion, cross-reviewing proposals and synthesizing consensus.
-* **Isolated Git Worktrees**: Every task operates within its own Git worktree, preventing agents from causing branch conflicts.
-* **Real-time Quota Telemetry**: The status bar visualizes agent token usage, reset schedules, and rate warnings.
+* **Contract-Driven Autonomy**: Execute tasks end-to-end against explicit Acceptance Contracts with planning, blind red-first tests, replanning, and structured environment pauses.
+* **Recursive Self-Improvement (RSI)**: Native `EvolutionService` claims reproducible improvement items and evolves Conclave inside isolated shadow worktrees behind 5 hard verification gates.
+* **Seamless Agent Handoff**: Switch execution agents mid-conversation or mid-task with full visible history and workspace continuity—no manual copy-pasting.
+* **Isolated Git Worktrees**: Every task operates within its own Git worktree, preventing parallel runs from causing branch conflicts.
+* **Real-time Quota Telemetry**: The status bar visualizes agent token usage, reset windows, pace warnings, and multi-account rotation.
 * **Automations & Scheduled Tasks**: Schedule recurring routines (Cron syntax) or one-off reservations with automated queuing and telemetry.
 * **Pure Web & Cross-Platform**: Stripped of heavy Electron desktop wrappers, Conclave runs efficiently via a lightweight Node daemon and pure Web UI on Linux, macOS, and Windows.
 
@@ -35,28 +35,27 @@ Conclave directly drives your locally installed and authenticated Agent CLIs. Co
 
 ## Core Capabilities
 
-### 1. Concurrent Questioning & Multi-Turn Debates
-- **Concurrent Fan-out**: Select multiple agents and broadcast prompts simultaneously for side-by-side comparative review.
-- **Multi-Turn Discussions**: Coordinate agents in multi-round structured topic debates, cross-reviewing arguments with an assigned host synthesizing consensus.
-
-### 2. Contract-Driven Autonomous Flows & HITL Environment Bus
+### 1. Contract-Driven Autonomous Flows & HITL Environment Bus
 - **Acceptance Contracts**: Explicit definition of "done" with command checks, trusted script hashing, and historical baseline filtering.
 - **TDD Red-First & Hidden Tests**: Read-only test authors author blind test suites and verify failing red tests on start commits before implementation.
 - **Dynamic Environment Demand & Supply**: Suspends with structured demands when blocked by missing tools, env vars, or MCP plugins, resuming immediately upon human supply.
 
-### 3. Contextual Conversation Handoff
-- Switch between execution agents within any ongoing conversation; full context and message history transfer smoothly without copy-pasting.
+### 2. Recursive Self-Improvement (RSI)
+- **Conclave fixing Conclave**: Built-in native `EvolutionService` claiming reproducible improvement items and mutating Conclave code in shadow worktrees.
+- **5-Gate Hard Gating**: Verified against typecheck, full unit test suite, production build, headless isolated core boot (`self:smoke`), and anti-cheat test policy (`self:tests`), fast-forwarding to `self/evolve`.
 
-### 4. Quota Telemetry & Rate Pacing
-- Real-time status bar monitoring token usage and reset windows for all agent CLIs, offering proactive warnings before hitting rate limits.
+### 3. Isolated Git Worktrees & External Issue Sources
+- Each task gets an isolated branch and worktree under `~/.conclave/worktrees/`, with optional inbox sync from GitHub, Jira, Linear, and ZenTao plugins.
 
-### 5. Automations & Scheduled Runs
+### 4. Contextual Conversation Handoff
+- Switch between execution agents within any ongoing conversation or task; full context and message history transfer smoothly without copy-pasting.
+
+### 5. Quota Telemetry & Multi-Account Continuity
+- Real-time status bar monitoring token usage and reset windows for all agent CLIs, with automatic account switching when rate limits hit.
+
+### 6. Automations & Scheduled Runs
 - **Recurring & One-Off Schedules**: Set up recurring routines (hourly/daily/custom Cron expressions) or one-shot reservations to trigger agents for routine inspections or maintenance tasks.
 - **Queue & History Telemetry**: Track real-time execution queues, historical statuses, and execution logs with full traceability.
-
-### 6. Recursive Self-Improvement (RSI)
-- **Conclave fixing Conclave**: Built-in native `EvolutionService` claiming open friction items and mutating Conclave code in shadow worktrees.
-- **5-Gate Hard Gating**: Verified against typecheck, full unit test suite, production build, headless isolated core boot (`self:smoke`), and anti-cheat test policy (`self:tests`), fast-forwarding to `self/evolve`.
 
 ---
 
@@ -90,7 +89,7 @@ Conclave adopts a modern decoupled multi-process architecture:
 * **`packages/protocol`**: Shared protocol definitions, Zod schemas, and TypeScript interfaces (Tasks, Conversations, JSON-RPC, Quota pacing).
 * **`packages/daemon`**: Robust Node.js process supervisor managing agent stdio pipes and node-pty terminal sessions across restarts.
 * **`packages/core`**: SQLite storage, Git worktree orchestration, task pipelines, static asset delivery, and WebSocket JSON-RPC endpoints.
-* **`packages/web`**: Responsive browser application with rich terminal, diff views, and multi-agent debate stages.
+* **`packages/web`**: Responsive browser application with rich terminal, diff views, task contracts, and flow trajectory inspection.
 
 ### Autonomous Flow & RSI Engine Architecture
 
@@ -148,7 +147,7 @@ Following the **"Thin Harness"** philosophy, Conclave focuses on isolated sandbo
 
 Conclave deeply adapts to popular local coding agent CLIs:
 
-| Agent | Connection | Permissions & Modes | Squads | Handoff |
+| Agent | Connection | Permissions & Modes | Tasks & Flows | Handoff |
 |---|---|---|:---:|:---:|
 | **Claude Code** | `claude -p` (stream-json) | Accept Edits · Plan Mode · Ask Before Edit | ✓ | ✓ |
 | **Codex** | `codex app-server` | Auto · Plan · Read Only | ✓ | ✓ |

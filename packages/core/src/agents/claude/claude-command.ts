@@ -35,7 +35,7 @@ export const GIT_READ_TOOLS = ['Bash(git log:*)', 'Bash(git diff:*)', 'Bash(git 
 
 // Claude Code in print mode, speaking stream-json both ways.
 export function claudeCommand(launch: AgentLaunch): AgentCommand {
-  const { providerSessionId, resume, handoffPath, extraProjects, preferred = {}, planOnly, readOnly, readable = [], references = [], mcp, userMcp = [], forkAt, userBrowser, knowledgeBase, skills, todos = true, provider } = launch
+  const { providerSessionId, resume, handoffPath, extraProjects, preferred = {}, planOnly, readOnly, readable = [], references = [], mcp, userMcp = [], forkAt, knowledgeBase, skills, provider } = launch
   // Folders it may read but never edit: a plan-only stage's, or a read-only worker's.
   const fenced = planOnly ?? readOnly
   const allowBypass = (launch.allowBypass ?? false) && !fenced
@@ -58,10 +58,10 @@ export function claudeCommand(launch: AgentLaunch): AgentCommand {
     // own confirmation, and running a terminal command is the agent's to ask about, under the mode
     // the user set. (Codex asks nothing for Conclave's MCP tools, so for it the site gate in core is
     // the only check.)
-    ...(mcp ? conclaveReadTools(todos).map((tool) => `mcp__${RESERVED_MCP_SERVER_NAME}__${tool}`) : [])
+    ...(mcp ? conclaveReadTools().map((tool) => `mcp__${RESERVED_MCP_SERVER_NAME}__${tool}`) : [])
   ]
   const denials = claudeEditDenials([...(fenced?.dirs ?? []), ...references])
-  const note = startNote({ knowledgeBase, instructions: launch.instructions, todos: Boolean(mcp) && todos })
+  const note = startNote({ knowledgeBase, instructions: launch.instructions })
   const servers = {
     ...(mcp ? { [RESERVED_MCP_SERVER_NAME]: { type: 'stdio', command: mcp.command, args: mcp.args, ...(mcp.env ? { env: mcp.env } : {}) } } : {}),
     ...Object.fromEntries(userMcp.map((server) => [server.name, server.type === 'stdio' ? { type: 'stdio', command: server.command, args: server.args, ...(server.env ? { env: server.env } : {}) } : { type: 'http', url: server.url }]))
@@ -89,8 +89,6 @@ export function claudeCommand(launch: AgentLaunch): AgentCommand {
     ...(denials.length ? ['--disallowedTools', denials.join(',')] : []),
     ...(reads.length ? ['--allowedTools', reads.join(',')] : []),
     // Beside the user's own MCP configuration, which Claude still loads: not --strict-mcp-config.
-    ...(Object.keys(servers).length ? ['--mcp-config', JSON.stringify({ mcpServers: servers })] : []),
-    // Claude in Chrome, either way, so Conclave's setting wins over Claude Code's own default.
-    ...(userBrowser === undefined ? [] : [userBrowser ? '--chrome' : '--no-chrome'])
+    ...(Object.keys(servers).length ? ['--mcp-config', JSON.stringify({ mcpServers: servers })] : [])
   ] }
 }

@@ -1,0 +1,12 @@
+.agents-hub { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
+.agents-hub > .worktrees-page { flex: 1; min-height: 0; }
+.agents-tabs { padding: 12px 24px; border-bottom: 1px solid var(--border); }
+.agents-tabs-inner { display: flex; gap: 4px; width: 100%; max-width: var(--page-wide); margin-inline: auto; }
+.agents-tabs .button[aria-pressed="true"], .agents-tabs .button[aria-pressed="true"]:hover:not(:disabled) { background: var(--accent-bg); color: var(--accent); }
+.agents-page > * { width: 100%; max-width: var(--page-wide); margin-inline: auto; }
+.agents-page > .squad-page-body { max-width: var(--page-form); margin-left: max(0px, calc((100% - var(--page-wide)) / 2)); margin-right: auto; }
+.agents-page-header { align-items: center; }
+.agents-page-header > .tool-button:first-child { margin-left: -4px; }
+.agents-page-header-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.agents-page-header-actions .button { height: 32px; padding: 0 14px; font-size: 13px; font-weight: 500; gap: 6px; }
+.agents-page-header-actions .button svg { width: 14px; height: 14px; stroke-width: 2.2; }

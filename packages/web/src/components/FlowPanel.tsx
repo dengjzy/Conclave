@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { Flow, FlowAttempt, FlowNode, Task } from '@conclave/protocol'
 import { localized, t } from '../i18n'
-import { perform, setTaskInspectorTab, showInspectorFile, useCore } from '../core-store'
+import { perform, setInspectorOpen, setTaskInspectorTab, showInspectorFile, showView, useCore } from '../core-store'
 import { AgentIcon, ChevronRightIcon } from './icons'
 import { Spinner } from './Spinner'
 import { durationText } from '../stat-format'
@@ -90,7 +90,7 @@ function FlowWorktree({ task }: { task: Task }) {
           <span className="chat-diff-removed">−{summary.removed}</span>
         </button>
       )}
-      <button type="button" className="flow-worktree-action" onClick={() => setTaskInspectorTab('changes')}>{t('FlowPanel.viewChanges')}</button>
+      <button type="button" className="flow-worktree-action" onClick={() => { setInspectorOpen(true); setTaskInspectorTab('changes'); showView('chat') }}>{t('FlowPanel.viewChanges')}</button>
     </div>
     {open && summary !== null && summary.files > 0 && (
       <div className="flow-worktree-files">
@@ -103,7 +103,7 @@ function FlowWorktree({ task }: { task: Task }) {
 }
 
 // A task's autonomous run: what it is doing, which agent did which attempt, and why it stopped.
-export function FlowPanel({ task }: { task: Task }) {
+export function FlowPanel({ task, inline = false }: { task: Task; inline?: boolean }) {
   const { flows, loading } = useTaskFlows(task.id)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const flow = flows.find((each) => each.id === selectedId) ?? flows[0] ?? null
@@ -119,9 +119,10 @@ export function FlowPanel({ task }: { task: Task }) {
     }
   }
 
-  if (loading) return <p className="inspector-empty muted">{t('FlowPanel.loading')}</p>
+  if (loading) return inline ? null : <p className="inspector-empty muted">{t('FlowPanel.loading')}</p>
 
   if (!flow) {
+    if (inline) return null
     return (
       <div className="flow-empty">
         <p className="muted">{task.status === 'pending' ? t('FlowPanel.startHint') : t('FlowPanel.noFlow')}</p>

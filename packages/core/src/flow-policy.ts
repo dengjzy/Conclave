@@ -3,6 +3,25 @@ import type { CheckResult, EnvironmentDemand, Flow } from '@conclave/protocol'
 
 export type FailureKind = 'compile' | 'test' | 'environment' | 'unknown'
 
+export type RatchetMetrics = {
+  metricScore: number | null
+  goalReached: boolean
+}
+
+export function parseRatchetMetrics(results: readonly CheckResult[]): RatchetMetrics {
+  let metricScore: number | null = null
+  let goalReached = false
+  for (const result of results) {
+    const lines = `${result.failures.join('\n')}\n${result.tail}`.split(/\r?\n/)
+    for (const line of lines) {
+      const scoreMatch = /^METRIC_SCORE=([+-]?\d+(?:\.\d+)?)$/.exec(line.trim())
+      if (scoreMatch) metricScore = Number.parseFloat(scoreMatch[1]!)
+      if (line.includes('GOAL_REACHED=true')) goalReached = true
+    }
+  }
+  return { metricScore, goalReached }
+}
+
 // A check's text is the only thing the engine has to go on. The classes are deliberately coarse:
 // they decide whether to retry the same agent, switch, or stop, not what the bug is.
 export function classifyFailure(results: readonly CheckResult[]): FailureKind {
@@ -83,7 +102,9 @@ export function detectEnvironmentDemand(results: readonly CheckResult[]): Enviro
 
 // A failure that repeats with the same output is not progress; retrying it again is just spending.
 export function failureSignature(results: readonly CheckResult[]): string {
-  return results.map((result) => result.signature || `${result.repo}\n${result.command}\n${result.exitCode ?? 'null'}`).join('|')
+  const { metricScore } = parseRatchetMetrics(results)
+  const scoreTag = metricScore !== null ? `#score=${metricScore}` : ''
+  return `${results.map((result) => result.signature || `${result.repo}\n${result.command}\n${result.exitCode ?? 'null'}`).join('|')}${scoreTag}`
 }
 
 // The last few attempts, in the order they happened. A retry prompt carries this so the next agent

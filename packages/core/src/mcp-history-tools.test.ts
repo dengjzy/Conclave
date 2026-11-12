@@ -22,7 +22,6 @@ function fakeCore(answers: Record<string, (params: { id?: string; query?: string
 const core = fakeCore({
   'conversations.list': () => [conversation(CHAT, '修登录页', day(8), 'codex'), conversation(OLD, '上个月的事', day(1))],
   'tasks.list': () => [{ id: TASK, title: '加缓存', status: 'done', agent: 'claude', repos: [{ path: '/code/api' }], conversationId: TASK_CHAT, createdAt: day(6), updatedAt: day(7) }],
-  'discussions.list': () => [],
   'conversations.search': ({ query }) => (query === 'redis' ? [{ conversationId: TASK_CHAT, snippet: 'redis' }] : []),
   'conversations.get': () => conversation(CHAT, '修登录页', day(8), 'codex'),
   'conversations.messages': ({ id }) => id === CHAT
@@ -80,7 +79,7 @@ describe('history tools', () => {
 
   it('refuses once the user turns reading their records off', async () => {
     let readHistory = true
-    const gated = fakeCore({ 'system.chatSettings': () => ({ promptSuggestions: true, readHistory }), 'conversations.list': () => [], 'tasks.list': () => [], 'discussions.list': () => [] })
+    const gated = fakeCore({ 'system.chatSettings': () => ({ promptSuggestions: true, readHistory }), 'conversations.list': () => [], 'tasks.list': () => [] })
     const history = historyToolsOverCore(gated, CHAT, () => day(10))
     expect((await history.call('list', {})).isError).toBeFalsy()
     readHistory = false

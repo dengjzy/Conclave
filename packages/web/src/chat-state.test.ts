@@ -188,38 +188,17 @@ describe('chatBlocks', () => {
   const turn = (id: string): ChatItem => ({ ...base, id, kind: 'turn', state: 'completed', error: null, durationMs: 70_800 })
   const blocksOf = (items: ChatItem[]) => chatBlocks(items.map((item) => ({ kind: 'item' as const, item })))
   const shape = (blocks: ReturnType<typeof chatBlocks>): unknown[] => blocks.map((block) =>
-    block.kind === 'tools' || block.kind === 'browser' ? `${block.kind}:${block.tools.map((each) => each.id).join('+')}`
+    block.kind === 'tools' ? `${block.kind}:${block.tools.map((each) => each.id).join('+')}`
       : block.kind === 'edits' ? `edits:${block.path}:${block.tools.map((each) => each.id).join('+')}`
       : block.kind === 'agents' ? `agents:${block.tools.map((each) => each.id).join('+')}`
       : block.kind === 'fold' ? { fold: shape(block.blocks) }
       : block.kind === 'changes' ? { changes: block.files }
-      : block.kind === 'delegation' ? { delegation: block.call.id }
       : block.entry.kind === 'item' ? block.entry.item.id : block.key)
 
   it('runs calls made one after another together, a change to files on its own card', () => {
     const edit = tool('e', 'Edit', [{ path: 'a.ts', change: 'update', patch: '+x' }])
     expect(shape(blocksOf([user('u'), tool('a'), tool('b', 'Bash'), edit, tool('c'), reply('r')])))
       .toEqual(['u', 'tools:a+b', 'e', 'tools:c', 'r'])
-  })
-
-  it('collects browser history across commands and narration, leaving screenshots separate', () => {
-    const shot = { ...tool('shot', 'mcp__conclave__browser_screenshot'), images: [{ id: `${'a'.repeat(64)}.png`, width: 2, height: 1 }] }
-    const items = [user('u'), tool('open', 'mcp__conclave__browser_navigate'), tool('cmd', 'Bash'), reply('checking'),
-      tool('click', 'conclave.browser_click'), shot, tool('refresh', 'conclave.browser_navigate'), reply('answer')]
-    expect(shape(blocksOf(items))).toEqual(['u', 'tools:cmd', 'checking', 'shot', 'browser:open+click+refresh', 'answer'])
-    const browser = blocksOf(items).find((block) => block.kind === 'browser')
-    expect(browser?.key).toBe('browser:item:chat-stage/open')
-    expect(items).toHaveLength(8)
-  })
-
-  it('keeps browser entry points visible after completion without counting them twice in the work fold', () => {
-    const items = [user('u'), { ...tool('open', 'conclave.browser_navigate'), at: 100 },
-      { ...tool('cmd'), at: 200 }, { ...tool('click', 'conclave.browser_click'), at: 300 },
-      { ...reply('answer'), at: 400 }, { ...turn('end'), at: 500 }]
-    expect(shape(blocksOf(items))).toEqual(['u', { fold: ['tools:cmd'] }, 'browser:open+click', 'answer', 'end'])
-    expect(blocksOf(items).find((block) => block.kind === 'fold')).toMatchObject({ steps: 1, workMs: 200 })
-    expect(shape(chatBlocks(items.map((item) => ({ kind: 'item' as const, item })), { foldTurns: false })))
-      .toEqual(['u', 'tools:cmd', 'browser:open+click', 'answer', 'end'])
   })
 
   it('gives a background command a line of its own, kept out of the fold while it runs or once its limit stopped it', () => {
@@ -245,38 +224,6 @@ describe('chatBlocks', () => {
     const lost = { ...tool('lost', 'imageGeneration'), status: 'failed' as const, at: 250 }
     const items = [user('u'), { ...tool('a'), at: 100 }, drawn, lost, { ...reply('answer'), at: 400 }, { ...turn('end'), at: 500 }]
     expect(shape(blocksOf(items))).toEqual(['u', { fold: ['tools:a', 'lost'] }, 'drawn', 'answer', 'end'])
-  })
-
-  it('groups third-party browser calls while keeping commands and returned screenshots separate', () => {
-    const shot = { ...tool('shot', 'playwright.browser_take_screenshot'), images: [{ id: `${'a'.repeat(64)}.png`, width: 2, height: 1 }] }
-    const display = { server: 'Cursor in Edge', name: 'Click' }
-    const items = [user('u'), tool('open', 'mcp__claude-in-chrome__navigate'), tool('cmd', 'Bash'),
-      { ...tool('click', 'other'), display }, shot, tool('text', 'codex_in_chrome.get_page_text')]
-    expect(shape(blocksOf(items))).toEqual(['u', 'tools:cmd', 'shot', 'browser:open+click+text'])
-  })
-
-  it('does not promote narration before the last browser operation to the final answer', () => {
-    expect(shape(blocksOf([user('u'), tool('open', 'conclave.browser_navigate'), reply('checking'),
-      tool('click', 'conclave.browser_click'), turn('end')])))
-      .toEqual(['u', { fold: ['checking'] }, 'browser:open+click', 'end'])
-  })
-
-  it('does not merge browser histories across users, turn endings or stages', () => {
-    const open = (id: string) => tool(id, 'conclave.browser_navigate')
-    expect(shape(blocksOf([user('u'), open('a'), turn('t'), open('b'), user('u2'), open('c'),
-      { ...open('d'), stageId: 'next' }])))
-      .toEqual(['u', 'browser:a', 't', 'browser:b', 'u2', 'browser:c', 'browser:d'])
-    expect(shape(chatBlocks([
-      { kind: 'item', item: open('a') }, { kind: 'stage', stage: stage('next', 1) },
-      { kind: 'item', item: { ...open('b'), stageId: 'next' } }
-    ]))).toEqual(['browser:a', 'stage:next', 'browser:b'])
-  })
-
-  it('retains running, failed and denied browser calls in inspectable history', () => {
-    const navigate = tool('open', 'conclave.browser_navigate')
-    const calls = [navigate, { ...navigate, id: 'running', status: 'running' as const },
-      { ...navigate, id: 'failed', status: 'failed' as const }, { ...navigate, id: 'denied', status: 'denied' as const }]
-    expect(blocksOf(calls)).toEqual([{ kind: 'browser', key: 'browser:item:chat-stage/open', tools: calls }])
   })
 
   it('gives a call that looked at a picture, or brought one back, a card of its own', () => {

@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { RpcError, terminalToolName, type RpcConnection, type TerminalOutput, type TerminalToolKind } from '@conclave/protocol'
-import type { ToolOutcome } from './mcp-browser-tools'
+import type { ToolOutcome } from './mcp-server'
 
 export type TerminalTools = {
   call(kind: TerminalToolKind, args: Record<string, unknown>): Promise<ToolOutcome>

@@ -65,14 +65,12 @@ function dependency(overrides: Partial<Task> = {}): Task {
 }
 
 describe('startNote', () => {
-  it('says when to note down what is left for the user, after the vault, and nothing with neither', () => {
+  it('combines profile instructions and knowledge base note, and returns null with neither', () => {
     const vault = { path: '/notes/vault', write: true }
-    expect(startNote({ todos: false })).toBeNull()
-    expect(startNote({ knowledgeBase: vault, todos: false })).toBe(knowledgeBaseNote(vault))
-    const both = startNote({ knowledgeBase: vault, todos: true })
-    expect(both?.startsWith(`${knowledgeBaseNote(vault)}\n\n`)).toBe(true)
-    expect(both).toContain('user_todo_add')
-    expect(both).toContain('user_todo_check')
+    expect(startNote()).toBeNull()
+    expect(startNote({})).toBeNull()
+    expect(startNote({ knowledgeBase: vault })).toBe(knowledgeBaseNote(vault))
+    expect(startNote({ instructions: '你是代码审查智能体。', knowledgeBase: vault })).toBe(`你是代码审查智能体。\n\n${knowledgeBaseNote(vault)}`)
   })
 })
 

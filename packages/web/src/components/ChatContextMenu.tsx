@@ -1,7 +1,6 @@
 import { t } from '../i18n'
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type RefObject } from 'react'
-import { canHaveHelper, type Conversation, type ResolvedFile } from '@conclave/protocol'
-import { handToHelper } from '../helper-conversations'
+import type { ResolvedFile } from '@conclave/protocol'
 import { useCore } from '../core-store'
 import { canRevealFile } from '../desktop-bridge'
 import { copyFileText, filePreviewSupported, showChatFile, type ChatFileScope } from '../file-actions'
@@ -9,7 +8,7 @@ import { linkTarget, type FileReference } from '../file-links'
 import { copyRegionText } from './ChatCopyRegion'
 import { ContextMenu, MenuItem, menuPoint, type MenuPoint } from './ContextMenu'
 import { FileMenuItems } from './FileMenu'
-import { CodeIcon, CopyIcon, DocumentIcon, FolderIcon, LinkIcon, SparkIcon } from './icons'
+import { CodeIcon, CopyIcon, DocumentIcon, FolderIcon, LinkIcon } from './icons'
 
 export const ChatFilesContext = createContext<ChatFileScope | null>(null)
 export function useChatFiles(): ChatFileScope | null { return useContext(ChatFilesContext) }
@@ -23,7 +22,6 @@ export function selectedChatText(root: HTMLElement): string {
 }
 
 export function useChatContextMenu(list: RefObject<HTMLDivElement | null>, scope: ChatFileScope) {
-  const parent = useCore((state) => state.conversations[scope.conversationId])
   const [menu, setMenu] = useState<Menu | null>(null)
   const sequence = useRef(0)
   const close = useCallback(() => { sequence.current++; setMenu(null) }, [])
@@ -65,7 +63,6 @@ export function useChatContextMenu(list: RefObject<HTMLDivElement | null>, scope
   const copy = (text: string) => { close(); void copyFileText(text) }
   const content = menu && (
     <ContextMenu at={menu.at} scrollBoundary={list.current} label={t('ChatContextMenu.chatContent')} onClose={close}>
-      <HandToHelperItem parent={parent} selection={menu.selection} inspector={scope.inspector} onClose={close} />
       {menu.selection && <MenuItem label={t('ChatContextMenu.copySelection')} icon={<CopyIcon />} onSelect={() => copy(menu.selection)} />}
       {menu.text && <MenuItem label={t('ChatContextMenu.copyContent')} icon={<DocumentIcon />} onSelect={() => copy(menu.text)} />}
       {menu.code !== null && <MenuItem label={t('ChatContextMenu.copyCode')} icon={<CodeIcon />} onSelect={() => copy(menu.code ?? '')} />}
@@ -78,15 +75,4 @@ export function useChatContextMenu(list: RefObject<HTMLDivElement | null>, scope
     </ContextMenu>
   )
   return { onContextMenu, onKeyDown, onPointerDown, menu: content, open: menu !== null }
-}
-
-export function HandToHelperItem({ parent, selection, inspector, onClose }: {
-  parent: Conversation | undefined
-  selection: string
-  inspector: 'task' | 'conversation'
-  onClose: () => void
-}) {
-  const supported = useCore((state) => state.rpc?.features.includes('conversation-helper') ?? false)
-  if (!selection.trim() || !supported || !parent || !canHaveHelper(parent)) return null
-  return <MenuItem label={t('ChatContextMenu.askHelper')} icon={<SparkIcon />} onSelect={() => { document.getSelection()?.removeAllRanges(); onClose(); void handToHelper(parent, selection, inspector) }} />
 }

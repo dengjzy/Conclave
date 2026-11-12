@@ -1,11 +1,7 @@
 import { getLocale, t, tr } from '../i18n'
-import { HelperTurnCost } from './HelperTurnCost'
-import { addQuote } from '../chat-quotes'
-import { focusChatInput } from '../helper-conversations'
 import { Fragment, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { CODEX_IMAGE_GENERATION, cursorProviderError, isBrowserTool, isPlanApproval, isPreviewTool, chatReferencesIn, parseForkMessage, parseHandoffMessage, toolImagePath, type AgentKind, type ChatItem, type Conversation, type ConversationStage } from '@conclave/protocol'
-import { ChatBrowserTabs, firstBrowserCall, shouldOpenBrowser, useWatchBrowserTabs } from '../browser-state'
-import { ChatBrowserCard, ChatBrowserRun, ChatShotCard } from './ChatBrowserCard'
+import { CODEX_IMAGE_GENERATION, cursorProviderError, isPlanApproval, isPreviewTool, chatReferencesIn, parseForkMessage, parseHandoffMessage, toolImagePath, type AgentKind, type ChatItem, type Conversation, type ConversationStage } from '@conclave/protocol'
+import { ChatShotCard } from './ChatShotCard'
 import { chatBlocks, dropChat, finalReplies, foldsOfTools, itemKey, pathShortener, prependChatPage, previousTodos, saidText, setChatPage, stageAgents, thoughtDurations, timeline, useChat, type ChatBlock, type TimelineEntry, type TurnAgent, type TurnFile } from '../chat-state'
 import { ChatDisclosureScope, ChatFindExpansion, setOpened, useDisclosure } from '../chat-disclosure'
 import { isCompaction, noticeSummary, readableNotice } from '../chat-notices'
@@ -18,10 +14,6 @@ import { forkConversation } from './ConversationActions'
 import { agentLabel, chatDayAndTime, dayAndTime, messageTime } from '../labels'
 import { usePreferences } from '../preferences'
 import { ChatDock } from './ChatDock'
-import { AgentDelegationResult } from './AgentDelegation'
-import { isAgentCallResult, useAgentCalls, useAgentCallsSupported } from '../agent-calls'
-import { withDelegations } from '../delegation-timeline'
-import { ChatDelegationCard } from './ChatDelegationCard'
 import { ProjectRunNotice } from './ProjectRunNotice'
 import { ChatImageStrip } from './ChatImages'
 import { ChatMarkdown, ChatRoots } from './ChatMarkdown'
@@ -328,11 +320,7 @@ function ChatNotice({ conversationId, item }: { conversationId: string; item: No
 const ChatVariant = createContext<'full' | 'compact'>('full')
 const FoldedTurns = createContext<ReadonlySet<string>>(new Set())
 
-function helperDuration(turn: TurnItem, workMs: number | null = null): string {
-  return t('ConversationChat.workedForS', { value1: Math.max(1, Math.round((turn.durationMs ?? workMs ?? 0) / 1000)) })
-}
-
-function AssistantReply({ conversationId, item, completedAt, ending, blockKey }: {
+function AssistantReply({ item, completedAt, ending }: {
   conversationId: string
   item: Extract<ChatItem, { kind: 'assistant' }>
   completedAt: number | undefined
@@ -344,19 +332,17 @@ function AssistantReply({ conversationId, item, completedAt, ending, blockKey }:
   // A stored reply can still end in Cursor's raw transport error. Say what happened instead.
   const failure = item.streaming ? null : cursorProviderError(item.text, getLocale())
   const text = failure ? failure.rest : item.text
-  const parentId = useCore((s) => s.conversations[conversationId]?.helperOf)
   const box = useRef<HTMLDivElement>(null)
   return (
     <div ref={box} className="chat-assistant" data-streaming={item.streaming || undefined}>
       {text && <ChatMarkdown text={text} highlight={!item.streaming} runnable={!item.streaming} />}
       {failure && <div className="chat-notice" data-level="warning">{failure.detail}</div>}
-      {(completedAt !== undefined || (parentId && !item.streaming)) && text && (
+      {completedAt !== undefined && text && (
         <div className="chat-message-actions">
           <CopyButton text={text} label={t('ConversationChat.copyReply')} />
-          {completedAt !== undefined && <MessageTime at={completedAt} />}
-          {ending && (!compact || ending.state !== 'completed' || !foldedTurns.has(itemKey(ending))) && <><span className="chat-turn chat-turn-inline" data-state={ending.state}>{compact && ending.state === 'completed' ? helperDuration(ending) : turnText(ending)}</span>{compact && <HelperTurnCost turn={ending} />}</>}
+          <MessageTime at={completedAt} />
+          {ending && (!compact || ending.state !== 'completed' || !foldedTurns.has(itemKey(ending))) && <span className="chat-turn chat-turn-inline" data-state={ending.state}>{turnText(ending)}</span>}
           <ForkButton item={item} />
-          {parentId && <button type="button" className="link-button helper-quote-button" onClick={() => { addQuote(parentId, null, text); focusChatInput(parentId) }}>{t('ConversationChat.quoteInMainConversation')}</button>}
         </div>
       )}
     </div>
@@ -385,9 +371,8 @@ function TurnStandalone({ conversationId, item }: { conversationId: string; item
   return (
     <div className="chat-turn" data-state={item.state}>
       <span className="chat-turn-summary-static" data-state={item.state}>
-        {compact && item.state === 'completed' ? helperDuration(item) : turnText(item)}
+        {turnText(item)}
       </span>
-      {compact && <HelperTurnCost turn={item} />}
       {isFoldedWithoutReply && (
         <div className="chat-turn-empty-prompt">
           <span className="chat-turn-empty-hint">{t('ConversationChat.noReplyPrompt')}</span>
@@ -410,7 +395,6 @@ function Item({ conversationId, item, completedAt, blockKey }: { conversationId:
   const compact = useContext(ChatVariant) === 'compact'
   switch (item.kind) {
     case 'user':
-      if (isAgentCallResult(item)) return <AgentDelegationResult conversationId={conversationId} item={item} />
       return <UserMessage item={item} />
     case 'assistant':
       return <AssistantReply conversationId={conversationId} item={item} completedAt={completedAt} ending={ending} blockKey={blockKey} />
@@ -418,7 +402,6 @@ function Item({ conversationId, item, completedAt, blockKey }: { conversationId:
       return <Reasoning item={item} />
     case 'tool':
       if (isPreviewTool(item.name)) return <ChatPreviewCard conversationId={conversationId} item={item} />
-      if (isBrowserTool(item.name)) return <ChatBrowserCard item={item} />
       return item.images?.length || toolImagePath(item) || item.name === CODEX_IMAGE_GENERATION ? <ChatShotCard item={item} /> : <ChatToolCard item={item} />
     case 'approval':
       return isPlanApproval(item) ? <ChatPlanLine item={item} /> : <ChatRequestLine item={item} />
@@ -475,7 +458,7 @@ function userAt(block: ChatBlock): number | null {
 
 // The user's own messages are what ↑ steps back through.
 function isUserEntry(entry: TimelineEntry): boolean {
-  return entry.kind === 'item' && entry.item.kind === 'user' && !isAgentCallResult(entry.item)
+  return entry.kind === 'item' && entry.item.kind === 'user'
 }
 
 // A finished turn's work, behind how long it took; opening it shows the calls, thinking and replies
@@ -491,7 +474,6 @@ type FoldState = { reveal: (key: string | null, path: string) => void }
 const Folds = createContext<FoldState>({ reveal: () => {} })
 
 function TurnFold({ foldKey, conversationId, turn, blocks, task, replies, steps, workMs }: { foldKey: string; conversationId: string; turn: TurnItem; blocks: readonly ChatBlock[]; task: boolean; replies: ReadonlyMap<string, number>; steps: number; workMs: number | null }) {
-  const compact = useContext(ChatVariant) === 'compact'
   const [open, setOpen] = useDisclosure(foldKey)
   // The header stays where the work is, so the fold opens under the line that opened it.
   return (
@@ -499,8 +481,7 @@ function TurnFold({ foldKey, conversationId, turn, blocks, task, replies, steps,
       <div className="chat-fold" data-fold={foldKey} data-open={open || undefined} data-state={turn.state}>
         <button type="button" className="chat-fold-header" aria-expanded={open} onClick={() => setOpen(!open)}>
           <span className="chat-tool-chevron" aria-hidden="true"><ChevronRightIcon /></span>
-          {compact ? helperDuration(turn, workMs) : foldText(steps, workMs)}
-          {compact && <HelperTurnCost turn={turn} />}
+          {foldText(steps, workMs)}
         </button>
         {open && (
           <div className="chat-fold-body">
@@ -592,12 +573,10 @@ function ActivityBlock({ next, ...props }: Parameters<typeof Block>[0] & { next:
 }
 
 // `fresh` is a block that arrived while the chat was open: it enters with a motion.
-function Block({ conversationId, block, task, replies, fresh, dispatched, returned }: { conversationId: string; block: ChatBlock; task: boolean; replies: ReadonlyMap<string, number>; fresh?: boolean; dispatched?: ReadonlyMap<string, number>; returned?: ReadonlyMap<string, number> }) {
+function Block({ conversationId, block, task, replies, fresh }: { conversationId: string; block: ChatBlock; task: boolean; replies: ReadonlyMap<string, number>; fresh?: boolean }) {
   const compact = useContext(ChatVariant) === 'compact'
   const entering = fresh || undefined
-  if (block.kind === 'delegation') return <div className="chat-entry" data-entry-key={block.key}><ChatDelegationCard call={block.call} fresh={Boolean(fresh && Date.now() - (dispatched?.get(block.call.id) ?? 0) < 2000)} returned={Date.now() - (returned?.get(block.call.id) ?? 0) < 2000} /></div>
   if (compact && block.kind === 'changes') return null
-  if (block.kind === 'browser') return <ChatCopyRegion text={block.tools.map(copyTextForItem).join('\n\n')}><div className="chat-entry" data-fresh={entering}><ChatBrowserRun tools={block.tools} /></div></ChatCopyRegion>
   if (block.kind === 'tools') return <ChatCopyRegion text={block.tools.map(copyTextForItem).join('\n\n')}><div className="chat-entry" data-fresh={entering}><ChatToolRun tools={block.tools} /></div></ChatCopyRegion>
   if (block.kind === 'agents') return <ChatCopyRegion text={block.tools.map(copyTextForItem).join('\n\n')}><div className="chat-entry" data-fresh={entering}><ChatSubagents tools={block.tools} fresh={fresh} /></div></ChatCopyRegion>
   if (block.kind === 'edits') return <ChatCopyRegion text={block.tools.map(copyTextForItem).join('\n\n')}><div className="chat-entry" data-fresh={entering}><ChatEditsCard path={block.path} tools={block.tools} /></div></ChatCopyRegion>
@@ -681,7 +660,6 @@ export function ConversationChat({ conversation, surface, onHandoff, variant = '
   }, [rpc, id, conversation.sessionId])
 
   const items = page?.items ?? NO_ITEMS
-  const browserTabs = useWatchBrowserTabs(items.some((item) => item.kind === 'tool' && isBrowserTool(item.name)) ? id : null)
   useEffect(() => acknowledgeInitialMessage(id, items), [id, items, conversation.initialMessage])
   // A task's redos, each starting its chat over.
   const attempts = useCore((s) => (conversation.taskId ? s.tasks[conversation.taskId]?.attempts : undefined))
@@ -704,21 +682,10 @@ export function ConversationChat({ conversation, surface, onHandoff, variant = '
     })
   }, [stages, items, redoneAt, getLocale()])
   const foldTurns = usePreferences((s) => s.foldTurns)
-  const delegationSupported = useAgentCallsSupported(conversation)
-  const { calls, dispatched } = useAgentCalls(delegationSupported ? id : null)
-  const resultEvents = useRef<{ id: string; seen: Set<string> | null; returned: Map<string, number> }>({ id, seen: null, returned: new Map() })
-  if (resultEvents.current.id !== id) resultEvents.current = { id, seen: null, returned: new Map() }
-  const { seen: resultSeen, returned } = resultEvents.current
-  if (page) {
-    const ids = items.filter(isAgentCallResult).map((item) => item.id.slice('u:agent-result:'.length))
-    if (resultSeen && !olderLoaded.current) for (const callId of ids) if (!resultSeen.has(callId)) returned.set(callId, Date.now())
-    resultEvents.current.seen = new Set([...(resultSeen ?? []), ...ids])
-    for (const [callId, at] of returned) if (Date.now() - at > 5000) returned.delete(callId)
-  }
-  const blocks = useMemo(() => {
-    const grouped = chatBlocks(entries, { foldTurns: variant === 'compact' || foldTurns })
-    return page && calls?.length ? withDelegations(grouped, calls, Boolean(page.before)) : grouped
-  }, [entries, foldTurns, variant, calls, page?.before, Boolean(page), getLocale()])
+  const blocks = useMemo(
+    () => chatBlocks(entries, { foldTurns: variant === 'compact' || foldTurns }),
+    [entries, foldTurns, variant, getLocale()]
+  )
   for (const key of freshKeys(seen.current, blocks.map((block) => block.key), olderLoaded.current)) entered.current.add(key)
   useEffect(() => {
     if (!page) return
@@ -814,17 +781,6 @@ export function ConversationChat({ conversation, surface, onHandoff, variant = '
     shownPlan.current = waitingPlanKey
     showPlan(waitingPlanKey)
   }, [waitingPlanKey, showPlan])
-
-  // The browser's live view opens beside the conversation when the agent first uses it, once per
-  // conversation; a call still running keeps old history from opening it on a revisit.
-  const browserCall = useMemo(() => firstBrowserCall(items), [items, getLocale()])
-  const shownBrowser = useRef<string | null>(null)
-  const showBrowser = shown.showBrowser
-  useEffect(() => {
-    if (!browserCall || shownBrowser.current === conversation.id || !shouldOpenBrowser()) return
-    shownBrowser.current = conversation.id
-    showBrowser()
-  }, [browserCall, conversation.id, showBrowser])
 
   // The working line comes and goes with the turn, below the entries: pinned to the end, the list
   // follows it too, or the line (and the relay's dot that runs to it) sits just under the edge.
@@ -951,7 +907,6 @@ export function ConversationChat({ conversation, surface, onHandoff, variant = '
     <ChatPaths.Provider value={shorten}>
     <StopBackground.Provider value={stopBackground}>
     <ChatRoots.Provider value={roots}>
-    <ChatBrowserTabs.Provider value={browserTabs}>
     <ChatFilesContext.Provider value={fileScope}>
     <ChatRunScope.Provider value={runScope}>
     <Thoughts.Provider value={thoughts}>
@@ -993,7 +948,7 @@ export function ConversationChat({ conversation, surface, onHandoff, variant = '
           const head = sentAt !== null && (next ? userAt(next) === null : live !== null)
           return (
             <Fragment key={block.key}>
-              <ActivityBlock conversationId={id} block={block} next={next} task={Boolean(conversation.taskId)} replies={replies} fresh={entering} dispatched={dispatched} returned={returned} />
+              <ActivityBlock conversationId={id} block={block} next={next} task={Boolean(conversation.taskId)} replies={replies} fresh={entering} />
               {variant !== 'compact' && head && message && <div className="chat-entry" data-fresh={entering || undefined}><TurnHead at={message.at} stageId={message.stageId} messageKey={block.key} live={live} /></div>}
             </Fragment>
           )
@@ -1047,7 +1002,6 @@ export function ConversationChat({ conversation, surface, onHandoff, variant = '
     </Thoughts.Provider>
     </ChatRunScope.Provider>
     </ChatFilesContext.Provider>
-    </ChatBrowserTabs.Provider>
     </ChatRoots.Provider>
     </StopBackground.Provider>
     </ChatPaths.Provider>

@@ -1,5 +1,4 @@
 import { getLocale, t, tr } from '../i18n'
-import { HelperStartOptions } from './HelperModelPicker'
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { chatReferencesIn, chatReferencesFor, type ChatReference, agentDescriptor, canReuseConversation, type ChatImage, type ChatItem, type ChatQueued, type Conversation } from '@conclave/protocol'
 import { perform, useChatImagesSupported, useChatOptionsSupported, useCore, useFileMentionsSupported, useScheduleImagesSupported, useSchedulesSupported } from '../core-store'
@@ -483,7 +482,7 @@ export function ChatComposer({ conversation, state, compact = false }: { convers
             <span className="chat-dock-spacer" />
             <HandoffModelPicker conversationId={id} agent={handingOff} />
           </>
-        ) : optionsSupported ? <ChatOptionsBar compact={compact} conversation={conversation} state={state} /> : compact ? <HelperStartOptions conversation={conversation} /> : null}
+        ) : optionsSupported ? <ChatOptionsBar compact={compact} conversation={conversation} state={state} /> : null}
         {suggestion && (
           <span className="chat-suggestion-hint" aria-hidden="true">{tr('ChatComposer.useSuggestion', { value1: <kbd>Tab</kbd> })}</span>
         )}

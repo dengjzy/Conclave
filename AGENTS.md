@@ -7,7 +7,7 @@ Task-first multi-agent manager. See docs/ARCHITECTURE.md for the architecture di
 - **daemon** owns every agent process and PTY. **core** owns tasks, git and persistence, and serves the built Web client over HTTP. **web** is a browser client only, and so is core's MCP server (`mcp-main.ts`), a process of its own that agents start.
 - **web** uses React, Vite, xterm.js and CodeMirror. It calls core over WebSocket; task logic, git and PTY ownership stay out of the client. Closing a browser tab must not stop an agent.
 - Native modules (node-pty) load only in the daemon, which runs on plain Node. core and web must stay free of Electron imports.
-- The browser-host protocol and core client remain for compatibility. This repository does not provide a browser host; running the Web client does not create embedded browser tabs. Keep this boundary explicit when documenting or changing browser features.
+- Conclave does not host or proxy an embedded browser. Running the Web client does not create embedded browser tabs; agents use their own native browser capabilities or user-configured MCP servers directly (`packages/protocol` retains legacy wire constants only for compatibility).
 
 ## Protocol
 

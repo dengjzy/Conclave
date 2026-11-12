@@ -1,12 +1,10 @@
 import { t, useLocale } from './i18n'
 import { useEffect, useState } from 'react'
-import { closeMobileDetail, conversationDraftVisible, focusSplitPane, selectTask, setFileQuickOpen, setNewTaskOpen, setSettingsOpen, toggleBrowserPanel, toggleFilesPanel, toggleSplit, toggleTerminalPanel, useCore, useSplitPanes } from './core-store'
+import { closeMobileDetail, conversationDraftVisible, focusSplitPane, selectTask, setFileQuickOpen, setNewTaskOpen, setSettingsOpen, toggleFilesPanel, toggleSplit, toggleTerminalPanel, useCore, useSplitPanes } from './core-store'
 import { ArrowLeftIcon, SidebarIcon } from './components/icons'
 import { NewTaskDialog } from './components/NewTaskDialog'
 import { SettingsPage } from './components/SettingsPage'
 import { SourceInboxView } from './components/SourceInboxView'
-import { IdeasEntry } from './components/IdeasEntry'
-import { IdeasView } from './components/IdeasView'
 import { InboxEntry } from './components/InboxEntry'
 import { SourceLoginDialog } from './components/SourceLoginDialog'
 import { ProjectTrustDialog } from './components/ProjectTrustDialog'
@@ -28,7 +26,6 @@ import { FileQuickOpen } from './components/FileQuickOpen'
 import { WorktreeManager } from './components/WorktreeManager'
 import { RoutinesView } from './components/RoutinesView'
 import { RoutinesEntry } from './components/RoutinesEntry'
-import { DiscussionView } from './components/DiscussionView'
 import { OverviewEntry } from './components/OverviewEntry'
 import { OverviewView } from './components/OverviewView'
 import { GuideView } from './components/GuideView'
@@ -63,8 +60,6 @@ export function App() {
   const selectedConversationId = useCore((s) => s.selectedConversationId)
   const splitPanes = useSplitPanes()
   const conversationDraft = useCore((s) => s.conversationDraft)
-  const selectedDiscussionId = useCore((s) => s.selectedDiscussionId)
-  const discussionDraft = useCore((s) => s.discussionDraft)
   const showingDraft = useCore(conversationDraftVisible)
   const view = useCore((s) => s.view)
   const error = useCore((s) => s.error)
@@ -74,15 +69,12 @@ export function App() {
   const worktreesOpen = useCore((s) => s.worktreesOpen)
   const routinesOpen = useCore((s) => s.routinesOpen)
   const overviewOpen = useCore((s) => s.overviewOpen)
-  const ideasOpen = useCore((s) => s.ideasOpen)
   const guideOpen = useCore((s) => s.guideOpen)
   useFirstRunSetup()
   const inboxOpen = useCore((s) => s.inboxOpen)
   const loginOpen = useCore((s) => s.login !== null)
   const terminalPanelOpen = useCore((s) => s.terminalPanelOpen)
   const terminalMaximized = useCore((s) => s.terminalMaximized)
-  const browserPanelOpen = useCore((s) => s.browserPanelOpen)
-  const browserMaximized = useCore((s) => s.browserMaximized)
   const portsPanelOpen = useCore((s) => s.portsPanelOpen)
   const portsMaximized = useCore((s) => s.portsMaximized)
   const filesPanelOpen = useCore((s) => s.filesPanelOpen)
@@ -161,11 +153,6 @@ export function App() {
         event.preventDefault()
         event.stopPropagation()
         void toggleTerminalPanel()
-      } else if (event.ctrlKey && !event.metaKey && !event.altKey && event.shiftKey && event.key === '~') {
-        // Ctrl+Shift+` beside it, for the browser panel.
-        event.preventDefault()
-        event.stopPropagation()
-        toggleBrowserPanel()
       }
     }
     window.addEventListener('keydown', onKeyDown, true)
@@ -204,39 +191,27 @@ export function App() {
   const hasActiveDetail = Boolean(
     settingsOpen ||
     overviewOpen ||
-    ideasOpen ||
     inboxOpen ||
     worktreesOpen ||
     routinesOpen ||
-    (section === 'squads') ||
-    (section === 'discussions' && (selectedDiscussionId || discussionDraft)) ||
     (section === 'conversations' && (selectedConversationId || conversationDraft)) ||
     selectedId
   )
 
   const conversationTitle = useCore((s) => selectedConversationId ? s.conversations[selectedConversationId]?.title : undefined)
-  const discussionTitle = useCore((s) => selectedDiscussionId ? s.discussions[selectedDiscussionId]?.title : undefined)
   const taskTitle = useCore((s) => selectedId ? s.tasks[selectedId]?.title : undefined)
 
   const activeMobileTitle = selectedConversationId
     ? conversationTitle || t('sidebar.conversations')
-    : selectedDiscussionId
-      ? discussionTitle || t('DiscussionView.groupChat_910')
-      : selectedId
-        ? taskTitle || t('sidebar.tasks')
-        : ideasOpen
-          ? t('Ideas.title')
-          : overviewOpen
-          ? t('OverviewEntry.overview_1276')
-          : settingsOpen
-            ? t('StatusBar.settings')
-            : section === 'tasks'
-              ? t('sidebar.tasks')
-              : section === 'squads'
-                ? t('Squads.developmentSquads')
-                : section === 'discussions'
-                  ? t('DiscussionView.groupChat_910')
-                  : t('sidebar.conversations')
+    : selectedId
+      ? taskTitle || t('sidebar.tasks')
+      : overviewOpen
+        ? t('OverviewEntry.overview_1276')
+        : settingsOpen
+          ? t('StatusBar.settings')
+          : section === 'tasks'
+            ? t('sidebar.tasks')
+            : t('sidebar.conversations')
 
   return (
     <div
@@ -286,7 +261,6 @@ export function App() {
               onItemSelect={onMobileSelect}
             >
               <OverviewEntry />
-              <IdeasEntry />
               <InboxEntry />
               <RoutinesEntry />
               <EnvironmentNotice />
@@ -295,8 +269,6 @@ export function App() {
             </Sidebar>
             {overviewOpen ? (
               guideOpen ? <GuideView /> : <OverviewView />
-            ) : ideasOpen ? (
-              <IdeasView />
             ) : inboxOpen ? (
               <SourceInboxView />
             ) : worktreesOpen ? (
@@ -305,9 +277,6 @@ export function App() {
               <RoutinesView />
             ) : showingDraft ? (
               <ConversationDrafts />
-            ) : section === 'discussions' ? (
-              selectedDiscussionId ? <DiscussionView key={selectedDiscussionId} id={selectedDiscussionId} /> :
-                <section className="detail-empty"><div className="detail-empty-body">{t('App.chooseOrCreateAGroupChat')}</div></section>
             ) : section === 'conversations' ? (
               splitPanes && selectedConversationId ? <ConversationSplit panes={splitPanes} active={selectedConversationId} /> :
               selectedConversationId ? <ConversationView key={selectedConversationId} id={selectedConversationId} /> :

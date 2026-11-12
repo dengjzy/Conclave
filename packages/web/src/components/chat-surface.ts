@@ -2,7 +2,7 @@ import { t } from '../i18n'
 import { createContext, useContext } from 'react'
 import type { AgentKind, ChatItem, Conversation } from '@conclave/protocol'
 import type { PlanItem } from '../chat-state'
-import { showBrowserPanel, showConversationChanges, showConversationPlan, showInspectorFile } from '../core-store'
+import { showConversationChanges, showConversationPlan, showInspectorFile } from '../core-store'
 import { insideProjects, locateInspectorFile, type ChatEdit } from '../inspector-file'
 import type { BranchTarget } from './BranchStatus'
 import { continueConversation } from './ConversationActions'
@@ -19,8 +19,6 @@ export type ChatSurface = {
   showFileChange(path: string, edit: ChatEdit): void
   // Whether a file lies in the projects `changes` covers; git shows nothing of one outside them.
   inProject(path: string): boolean
-  // The browser panel, on this conversation's tab.
-  showBrowser(): void
   // Whose uncommitted changes the chip counts, and what the chip says of them; null for none.
   changes: BranchTarget | null
   changesHint: string
@@ -29,9 +27,6 @@ export type ChatSurface = {
   prepareSend(stopped: boolean): Promise<boolean>
   // Why nothing can be sent now, or null.
   sendBlocker: string | null
-  handoffPlan?: (item: PlanItem) => void
-  // Where a squad's leader planned the task: starts the squad on the plan, the leader leading it.
-  squadStart?: { name: string; start(item: PlanItem): Promise<void> }
   // Keeps a plan for later, where the chat may only plan; null elsewhere.
   savePlan: ((item: PlanItem) => Promise<void>) | null
   // A word on a plan the chat's owner kept, or null.
@@ -63,7 +58,6 @@ export function conversationSurface(conversation: Conversation, handoff: ((agent
       if (found) showInspectorFile('conversation', conversation.id, found.project, found.file, edit)
     },
     inProject: (path) => insideProjects(path, conversation.workspacePath, conversation.projectPaths),
-    showBrowser: () => showBrowserPanel(conversation.id),
     changes: conversation.projectPaths.length > 0 ? { kind: 'conversation', id: conversation.id } : null,
     changesHint: t('chatSurface.uncommittedProjectChangesMayIncludeYourOwnClick'),
     prepareSend: async (stopped) => !stopped || Boolean(await continueConversation(conversation.id)),

@@ -14,19 +14,9 @@ This is the current scheme. It replaces the per-phase P0–P14 notes.
   conversation.
 - **Command check**: the only verification primitive core knows. A check is a command, a repo, an
   optional cwd/env, a timeout and whether it is required.
-- **Idea**: a title, notes, tags and an optional project, kept before it has an agent or a run. Its
-  status doubles as the user's own to-do list (`idea`, `todo`, `doing`, `done`, `archived`).
 - **Environment provider**: anything outside core that supplies a device/browser/service. It is a
   project script or an MCP server; core does not bundle ADB, iOS or a browser driver. A child
   verifier inherits the implement conversation's user MCP selection, never every server.
-
-## Ideas
-
-The sidebar's **Ideas** page is the capture surface. A record needs only a title; notes, tags and a
-project are optional. From there the user can ask an agent to look at it (a new conversation with
-the idea as its first message), start a task with it, or move it to `todo`/`done`/`archived`.
-
-This is deliberately not a task: an idea has no worktree, contract or run until the user starts one.
 
 ## Starting work
 
@@ -98,6 +88,4 @@ Core never knows the protocol behind either one.
 
 - The planner is a single read-only agent; its steps share one conversation, which changes hands
   rather than running in parallel. There is no parallel writing yet.
-- The task board still holds committed work and runs; standalone to-dos live on the Ideas page,
-  while a conversation's agent to-dos stay in that conversation's inspector.
 - A conversation started in a project root runs its flow there; it is not moved into a worktree.

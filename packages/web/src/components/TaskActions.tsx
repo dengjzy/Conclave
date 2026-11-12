@@ -1,5 +1,4 @@
 import { t, tr } from '../i18n'
-import { useHelper, useHelperSupported } from '../helper-conversations'
 import { useCallback, useState, type ReactElement } from 'react'
 import {
   agentDescriptor,
@@ -40,7 +39,6 @@ import { StatusIcon } from './StatusIcon'
 import { useTaskHandoff, type TaskHandoff } from './TaskHandoff'
 import { launchOptions, TaskModelPicker, useEditsInPlace, useTaskLaunch, type TaskLaunch } from './TaskLaunch'
 import { createSchedule, openRunForTask, scheduleState } from '../schedules'
-import { useOpenTodoCount, useTodosShown } from '../conversation-todos'
 
 function blockerText(blocker: string, waitingOn: readonly Task[]): string {
   if (blocker === 'blocked' && waitingOn.length > 0) {
@@ -403,7 +401,12 @@ function ScheduleButton({ task, dependencies, labelled }: { task: Task; dependen
 // Started from the details as the task keeps its launch, so the dialog is not needed there.
 async function startNow(task: Task, launch: TaskLaunch): Promise<void> {
   if (!task.agent || (!onProvider(task) && !confirmQuota(task.agent, modelText(launch.model)))) return
-  const bypass = useCore.getState().rpc?.features.includes('chat-options') ? { allowBypass: true } : {}
+  const features = useCore.getState().rpc?.features ?? []
+  const bypass = features.includes('chat-options') ? { allowBypass: true } : {}
+  if (launch.mode !== 'plan' && launch.mode !== 'readOnly' && features.includes('flows')) {
+    await openChatWhileStarting(task.id, () => perform((rpc) => rpc.call('flows.start', { id: task.id, ...bypass })))
+    return
+  }
   await openChatWhileStarting(task.id, () => perform((rpc) => rpc.call('tasks.start', { id: task.id, ...bypass, ...launchOptions(launch) })))
 }
 
@@ -604,28 +607,22 @@ function ViewToggle({ view }: { view: TaskView }) {
 }
 
 // The inspector sits beside the chat, so from the details the button switches over to open it.
-function InspectorToggle({ view, conversationId }: { view: TaskView; conversationId: string }) {
-  const parent = useCore((state) => state.conversations[conversationId])
-  const helperSupported = useHelperSupported(parent)
-  const helper = useHelper(helperSupported ? conversationId : null)
+function InspectorToggle({ view }: { view: TaskView; conversationId: string }) {
   const open = useCore((s) => s.inspectorOpen)
   const pressed = view === 'chat' && open
-  const todoLeft = useOpenTodoCount(useTodosShown() ? conversationId : null)
   return (
     <button
       type="button"
       className="tool-button"
-      aria-label={todoLeft > 0 ? t('ConversationView.inspectorToDos_739', { todoLeft: todoLeft }) : t('ConversationView.inspector')}
+      aria-label={t('ConversationView.inspector')}
       aria-pressed={pressed}
-      data-tooltip={pressed ? t('ConversationView.collapseInspector') : todoLeft > 0 ? t('ConversationView.inspectorToDos', { todoLeft: todoLeft }) : t('ConversationView.viewChanges')}
+      data-tooltip={pressed ? t('ConversationView.collapseInspector') : t('ConversationView.viewChanges')}
       onClick={() => {
         setInspectorOpen(!pressed)
         if (view !== 'chat') showView('chat')
       }}
     >
       <InspectorIcon />
-      {helper?.chat?.turn === 'awaiting' && <span className="helper-attention-dot tool-button-dot" role="img" aria-label={t('ConversationView.helperNeedsYourResponse')} />}
-      {!pressed && todoLeft > 0 && <span className="tool-button-badge" aria-hidden="true">{todoLeft}</span>}
     </button>
   )
 }
@@ -662,8 +659,7 @@ export function TaskSteps({ task, labelled = false }: { task: Task; labelled?: b
   // A running task's agent changes only by handing its chat over; otherwise the next start or
   // message takes the new one, which a chat already begun is handed to.
   const handsOff = task.status === 'running' && handoff.available
-  const squadsSupported = useCore((state) => state.rpc?.features.includes('squads') ?? false)
-  const agent = (squadsSupported && (task.status === 'pending' || task.squadId) ? <TaskExecutorPicker task={task} size={labelled ? 'large' : undefined} /> :
+  const agent = (
     <AgentPicker
       agent={task.agent}
       locked={task.status === 'abandoned' || (task.status === 'running' && !handsOff)}
@@ -675,12 +671,12 @@ export function TaskSteps({ task, labelled = false }: { task: Task; labelled?: b
     />
   )
   // From the details a task starts at once as it keeps its launch; a planning task's chat is open.
-  const launch = useTaskLaunch(task, dependencies, labelled && !task.squadId && task.status === 'pending' && checkStart(task, dependencies) !== 'planning')
+  const launch = useTaskLaunch(task, dependencies, labelled && task.status === 'pending' && checkStart(task, dependencies) !== 'planning')
   const moves = labelled ? manualMoves(task.status).filter((status) => moveAction(task.status, status)?.primary) : manualMoves(task.status)
   const start = task.status === 'pending' && (launch
     ? <StartSplitButton task={task} dependencies={dependencies} launch={launch} />
     : <StartButton task={task} dependencies={dependencies} labelled={labelled} />)
-  const submit = !task.squadId && task.status === 'running' && <SubmitButton task={task} labelled={labelled} />
+  const submit = task.status === 'running' && <SubmitButton task={task} labelled={labelled} />
   const moveButtons = moves.map((status) => <MoveButton key={status} task={task} to={status} labelled={labelled} />)
   // A finished task goes on by a message in its chat.
   const redo = isFinished(task.status) && <RedoButton task={task} labelled={labelled} />

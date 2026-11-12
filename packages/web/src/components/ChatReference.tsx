@@ -8,17 +8,15 @@ import { revealFile } from '../desktop-bridge'
 import { showChatFile } from '../file-actions'
 import { t } from '../i18n'
 import { useChatFiles } from './ChatContextMenu'
-import { openAgentProfile } from './AgentProfiles'
 import { FileTypeIcon } from './FileTypeIcon'
 import { AgentIcon, ChatIcon, FolderIcon, GlobeIcon } from './icons'
 import './chat-reference.css'
 
 // The icon the mention menu showed for it: an agent's own mark, a file's type.
 export function ReferenceIcon({ target }: { target: ChatReferenceTarget }) {
-  const agent = useCore((state) => target.kind === 'agent' ? state.agentProfiles[target.id]?.agent ?? null : null)
   const dark = useSyncExternalStore(onThemeChange, isDarkTheme, () => false)
   if (target.kind === 'conversation') return <ChatIcon />
-  if (target.kind === 'agent') return <AgentIcon agent={agent} />
+  if (target.kind === 'agent') return <AgentIcon agent={null} />
   if (target.kind === 'project') return <FolderIcon />
   return <FileTypeIcon path={target.path} directory={target.kind === 'directory'} dark={dark} />
 }
@@ -49,7 +47,7 @@ export function useOpenReference(): (target: ChatReferenceTarget) => void {
     if (target.kind === 'conversation') {
       if (useCore.getState().conversations[target.id]) selectConversation(target.id)
     }
-    else if (target.kind === 'agent') openAgentProfile(target.id)
+    else if (target.kind === 'agent') return
     else if (target.kind === 'file' && scope) void showChatFile(scope, { path: target.path, line: null })
     else void revealFile([target.path])
   }
@@ -57,7 +55,7 @@ export function useOpenReference(): (target: ChatReferenceTarget) => void {
 
 export function ChatReferenceLink({ target, children }: { target: ChatReferenceTarget; children?: ReactNode }) {
   const open = useOpenReference()
-  const available = useCore((state) => target.kind === 'conversation' ? Boolean(state.conversations[target.id]) : target.kind === 'agent' ? Boolean(state.agentProfiles[target.id]) : true)
+  const available = useCore((state) => target.kind === 'conversation' ? Boolean(state.conversations[target.id]) : target.kind === 'agent' ? false : true)
   return <ReferenceMark target={target} disabled={!available} title={target.kind === 'conversation' && !available ? t('ConversationReference.unavailable') : undefined} onClick={() => open(target)}>{children}</ReferenceMark>
 }
 

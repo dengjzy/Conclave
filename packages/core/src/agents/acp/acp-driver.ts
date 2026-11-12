@@ -269,7 +269,7 @@ export class AcpDriver implements ChatDriver {
     const logged = rpc(this.id(`prompt-${this.turns + 1}`), 'session/prompt', base)
     // ACP has no system prompt, so the start note goes ahead of the process's first prompt, and
     // only on the wire: the chat, its search and its handoffs show the message alone.
-    const start = this.turns === 0 ? [startNote({ instructions: this.options.instructions, knowledgeBase: this.options.knowledgeBase, todos: Boolean(this.options.mcp) && this.options.todos !== false }), this.dialect.startNote?.(this.options)].filter(Boolean).join('\n\n') : null
+    const start = this.turns === 0 ? [startNote({ instructions: this.options.instructions, knowledgeBase: this.options.knowledgeBase }), this.dialect.startNote?.(this.options)].filter(Boolean).join('\n\n') : null
     const note = start ? `${start}\n\n` : ''
     const wire = rpc(this.id(`prompt-${this.turns + 1}`), 'session/prompt', { ...base, prompt: [{ type: 'text', text: `${note}${text}` }, ...images.map((image) => ({ type: 'image', mimeType: image.mime, data: Buffer.from(image.read()).toString('base64') }))] })
     return { wire, logged }

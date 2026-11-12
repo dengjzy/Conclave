@@ -1,16 +1,14 @@
-import type { AgentProfileService } from './agent-profile-service'
 import type { AgentCliMaintenance } from './agent-cli-maintenance'
 import { suggestForProject } from './project-config-suggest'
 import { EMPTY_BASELINE, type SmallModelStore } from './small-model-store'
 import { GitService } from './git-service'
 import type { GitFavoriteStore } from './git-favorite-store'
-import { agentDescriptor, CORE_FEATURES, PROTOCOL_VERSION, type ChatItem } from '@conclave/protocol'
+import { CORE_FEATURES, PROTOCOL_VERSION, type ChatItem } from '@conclave/protocol'
 import packageJson from '../package.json' with { type: 'json' }
 import type { AgentRunStore } from './agent-run-store'
 import type { ChatTurnStore } from './chat-turn-store'
 import type { AttachmentStore } from './attachment-store'
 import type { AttachmentUploads } from './attachment-uploads'
-import type { BrowserService } from './browser-service'
 import type { SessionHost } from './daemon-client'
 import { findFiles, searchFiles } from './file-search'
 import { ConversationFiles, fileScope } from './conversation-files'
@@ -24,7 +22,6 @@ import type { UsageLimitResumes } from './usage-limit-resume'
 import { readableUsage, type UsageService } from './usage-service'
 import type { ConversationService } from './conversation-service'
 import type { TerminalCommandStore } from './terminal-commands'
-import type { BookmarkStore } from './bookmarks'
 import type { ChatCommandStore } from './chat-commands'
 import type { TerminalService } from './terminal-service'
 import type { ProjectConfigStore } from './project-config'
@@ -35,12 +32,8 @@ import type { EnvironmentService } from './environment-check'
 import { runAgentSmokeTest } from './agent-smoke-test'
 import type { ScheduleService } from './schedule-service'
 import type { RoutineService } from './routine-service'
-import type { SquadService } from './squad-service'
 import type { FlowService } from './flow-service'
 import type { EvolutionService } from './evolution-service'
-import type { TodoStore } from './todo-store'
-import type { IdeaStore } from './idea-store'
-import type { DiscussionService } from './discussion-service'
 import { AgentTerminals } from './agent-terminals'
 import { AgentCliInstaller } from './agent-cli-installation'
 import { dashboardSince, summarizeDashboard } from './dashboard-stats'
@@ -74,7 +67,6 @@ export function createRpcHandlers(
   attachments: { store: AttachmentStore; uploads: AttachmentUploads },
   terminals: TerminalService,
   worktrees: WorktreeService,
-  browser: BrowserService,
   awake: ComputerAwakeService,
   terminalCommands: TerminalCommandStore,
   limits: UsageLimitResumes,
@@ -85,11 +77,8 @@ export function createRpcHandlers(
   schedules: ScheduleService,
   chatCommands: ChatCommandStore,
   routines: RoutineService,
-  discussions: DiscussionService,
   wire: WireLog,
   gitChanged: () => void = () => {},
-  squads?: SquadService,
-  todos?: TodoStore,
   plugins?: PluginService,
   skills?: SkillsLibrary,
   mcpServers?: McpServerStore,
@@ -102,27 +91,30 @@ export function createRpcHandlers(
   analytics?: UsageAnalytics,
   automation?: UsageAutomation,
   projectStar?: ProjectStar,
-  profiles?: AgentProfileService,
-  bookmarks?: BookmarkStore,
   flows?: FlowService,
-  ideas?: IdeaStore,
   evolution?: EvolutionService
 ): RpcHandlers {
-  const profileService = () => {
-    if (!profiles) throw new Rejection('profile-unavailable')
-    return profiles
+  const profileUnavailable = (): never => {
+    throw new Rejection('profile-unavailable')
   }
-  const bookmarkStore = (): BookmarkStore => {
-    if (!bookmarks) throw new Rejection('bookmarks-unavailable')
-    return bookmarks
+  const squadUnavailable = (): never => {
+    throw new Rejection('squad-unavailable')
+  }
+  const discussionsUnavailable = (): never => {
+    throw new Rejection('discussions-unavailable')
+  }
+  const browserUnavailable = (): never => {
+    throw new Rejection('browser-unavailable')
+  }
+  const bookmarksUnavailable = (): never => {
+    throw new Rejection('bookmarks-unavailable')
   }
   const flowService = (): FlowService => {
     if (!flows) throw new Rejection('flow-unavailable')
     return flows
   }
-  const ideaStore = (): IdeaStore => {
-    if (!ideas) throw new Rejection('ideas-unavailable')
-    return ideas
+  const ideasUnavailable = (): never => {
+    throw new Rejection('ideas-unavailable')
   }
   const evolutionService = (): EvolutionService => {
     if (!evolution) throw new Rejection('evolution-unavailable')
@@ -180,10 +172,6 @@ export function createRpcHandlers(
     limits.cancelFor(id, since)
     return result
   }
-  const squadService = () => {
-    if (!squads) throw new Rejection('squad-unavailable')
-    return squads
-  }
   const skillsLibrary = () => {
     if (!skills) throw new Rejection('skills-unavailable')
     return skills
@@ -208,11 +196,8 @@ export function createRpcHandlers(
     if (!plugins) throw new Rejection('plugins-unavailable', '当前 core 不支持插件')
     return plugins
   }
-  // A conversation's to-dos, once it is known to be one.
-  const todosOf = (id: string) => {
-    if (!todos) throw new Rejection('todos-unavailable')
-    conversations.get(id)
-    return todos
+  const todosUnavailable = (): never => {
+    throw new Rejection('todos-unavailable')
   }
   return {
     'support.starStatus': () => projectStar?.check() ?? { state: 'unavailable' },
@@ -225,25 +210,25 @@ export function createRpcHandlers(
     'plugins.setEnabled': ({ id, enabled }) => pluginService().setEnabled(id, enabled),
     'plugins.rollback': ({ id, version }) => pluginService().rollback(id, version),
     'plugins.uninstall': async ({ id }) => { await pluginService().uninstall(id); return OK },
-    'agentProfiles.list': () => profileService().list(),
-    'agentProfiles.save': ({ id, ...fields }) => profileService().save(fields, id),
-    'agentProfiles.archive': ({ id, archived }) => profileService().archive(id, archived),
-    'agentProfiles.available': ({ id }) => profileService().available(id),
-    'agentCalls.list': ({ id }) => profileService().calls(id),
-    'agentCalls.dispatch': ({ id, profileId, target, instruction, ref }) => profileService().dispatch(id, profileId, instruction, ref, target),
-    'agentCalls.cancel': ({ id, callId }) => profileService().cancel(id, callId),
-    'squads.list': () => squadService().list(),
-    'squads.create': (fields) => squadService().create(fields),
-    'squads.update': ({ id, ...fields }) => squadService().update(id, fields),
-    'squads.archive': ({ id, archived }) => squadService().archive(id, archived),
-    'squads.activeRuns': () => squadService().activeRuns(),
-    'squads.runs': ({ id }) => squadService().runs(id),
-    'squads.start': ({ id, squadId, plan, planFirst, permissionMode, allowBypass }) => squadService().start(id, allowBypass, { permissionMode }, squadId, plan, planFirst),
-    'squads.control': ({ id, action }) => squadService().control(id, action),
-    'squads.retry': ({ id, workId }) => squadService().retry(id, workId),
-    'squads.roster': ({ id }) => squadService().roster(id),
-    'squads.dispatch': ({ id, memberId, instruction, capability, retryOf }) => squadService().dispatch(id, memberId, instruction, capability, retryOf),
-    'squads.finish': async ({ id, summary }) => { await squadService().finish(id, summary); return OK },
+    'agentProfiles.list': () => profileUnavailable(),
+    'agentProfiles.save': () => profileUnavailable(),
+    'agentProfiles.archive': () => profileUnavailable(),
+    'agentProfiles.available': () => profileUnavailable(),
+    'agentCalls.list': () => profileUnavailable(),
+    'agentCalls.dispatch': () => profileUnavailable(),
+    'agentCalls.cancel': () => profileUnavailable(),
+    'squads.list': () => squadUnavailable(),
+    'squads.create': () => squadUnavailable(),
+    'squads.update': () => squadUnavailable(),
+    'squads.archive': () => squadUnavailable(),
+    'squads.activeRuns': () => squadUnavailable(),
+    'squads.runs': () => squadUnavailable(),
+    'squads.start': () => squadUnavailable(),
+    'squads.control': () => squadUnavailable(),
+    'squads.retry': () => squadUnavailable(),
+    'squads.roster': () => squadUnavailable(),
+    'squads.dispatch': () => squadUnavailable(),
+    'squads.finish': () => squadUnavailable(),
     'git.status': (target) => git.status(target),
     'git.favorite': async ({ ref, favorite, ...target }) => { await git.favorite(target, ref, favorite); return OK },
     'git.history': ({ ref, offset, query, tips, ...target }) => git.history(target, ref, offset, query, tips),
@@ -263,7 +248,7 @@ export function createRpcHandlers(
       }, conversationId ? conversations.quickProvider(conversationId) : undefined)
       return { message: cleanCommitMessage(answer.text), model: answer.model }
     },
-    'system.hello': () => ({ protocolVersion: PROTOCOL_VERSION, serverVersion: packageJson.version, features: CORE_FEATURES.filter((feature) => (!['agent-profiles', 'direct-agent-calls'].includes(feature) || Boolean(profiles)) && (feature !== 'project-star' || Boolean(projectStar)) && (feature !== 'bookmarks' || Boolean(bookmarks)) && (!['squads', 'squad-leader-planning'].includes(feature) || Boolean(squads)) && (!['plugins', 'plugin-recommendations'].includes(feature) || Boolean(plugins)) && (!['skills-library', 'skills-search', 'skills-activation'].includes(feature) || Boolean(skills)) && (feature !== 'mcp-servers' || Boolean(mcpServers)) && (feature !== 'small-model-stats' || Boolean(smallModels)) && (feature !== 'model-providers' || Boolean(modelProviders)) && (feature !== 'agent-accounts' || Boolean(accounts))) }),
+    'system.hello': () => ({ protocolVersion: PROTOCOL_VERSION, serverVersion: packageJson.version, features: CORE_FEATURES.filter((feature) => !['conversation-todos', 'todo-overview', 'ideas', 'browser', 'bookmarks', 'conversation-helper', 'agent-profiles', 'direct-agent-calls', 'squads', 'squad-leader-planning', 'discussions', 'discussion-summary-choice', 'discussion-members', 'discussion-projects', 'discussion-topics', 'discussion-requirements', 'discussion-archive'].includes(feature) && (feature !== 'project-star' || Boolean(projectStar)) && (!['plugins', 'plugin-recommendations'].includes(feature) || Boolean(plugins)) && (!['skills-library', 'skills-search', 'skills-activation'].includes(feature) || Boolean(skills)) && (feature !== 'mcp-servers' || Boolean(mcpServers)) && (feature !== 'small-model-stats' || Boolean(smallModels)) && (feature !== 'model-providers' || Boolean(modelProviders)) && (feature !== 'agent-accounts' || Boolean(accounts))) }),
     'files.resolve': ({ conversationId, roots, path }) => files.resolve(fileScope(conversationId, roots), path),
     'files.read': ({ conversationId, roots, path }) => files.read(fileScope(conversationId, roots), path),
     'files.list': ({ conversationId, roots, path }) => files.list(fileScope(conversationId, roots), path),
@@ -427,7 +412,6 @@ export function createRpcHandlers(
     'tasks.startOptions': ({ id }) => service.startOptions(id),
     'tasks.move': async ({ id, status }) => {
       if (service.isLaunching(id)) throw new Rejection('run-in-progress')
-      if (service.get(id).squadId && status === 'done') await squads?.cancel(id)
       return service.move(id, status)
     },
     'tasks.redo': ({ id, reason }) => service.redo(id, reason),
@@ -453,10 +437,10 @@ export function createRpcHandlers(
     'evolution.trigger': (options) => evolutionService().trigger(options),
     'evolution.listGenerations': ({ limit }) => evolutionService().listGenerations(limit),
     'evolution.addFriction': (item) => evolutionService().addFriction(item),
-    'ideas.list': () => ideaStore().list(),
-    'ideas.create': (fields) => ideaStore().create(fields),
-    'ideas.update': ({ id, ...fields }) => ideaStore().update(id, fields),
-    'ideas.remove': ({ id }) => { ideaStore().remove(id); return OK },
+    'ideas.list': () => ideasUnavailable(),
+    'ideas.create': () => ideasUnavailable(),
+    'ideas.update': () => ideasUnavailable(),
+    'ideas.remove': () => ideasUnavailable(),
 
     'tasks.handoff': ({ id, agent, note, allowBypass, permissionMode, model, effort, references }) => service.handoff(id, agent, note, allowBypass, { permissionMode, model, effort, references }),
     'tasks.savePlan': ({ id, stageId, requestId }) => service.savePlan(id, stageId, requestId),
@@ -475,33 +459,27 @@ export function createRpcHandlers(
     'conversations.configuration': ({ id }) => conversations.configuration(id),
     'conversations.helper': ({ id }) => conversations.helper(id),
     'conversations.create': ({ agent, projectPaths, worktree, branch, allowBypass, permissionMode, model, effort, agentPreset, deferStart, helperOf, modelProvider, profileId }) => {
-      const profile = profileId ? profileService().get(profileId) : undefined
-      if (profile && (profile.agent !== agent || helperOf)) throw new Rejection('invalid-params', '智能体配置与会话不匹配')
-      return conversations.create(agent, projectPaths, allowBypass, { permissionMode: profile?.capability === 'readOnly' ? agentDescriptor(agent).readOnlyMode : permissionMode,
-        model: model ?? profile?.model ?? undefined, effort: effort ?? profile?.effort ?? undefined, agentPreset, worktree, branch, deferStart, helperOf,
-        modelProvider: profile?.modelProvider ?? modelProvider, profile })
+      if (profileId) profileUnavailable()
+      return conversations.create(agent, projectPaths, allowBypass, { permissionMode, model, effort, agentPreset, worktree, branch, deferStart, helperOf, modelProvider })
     },
     'conversations.chatCatalog': ({ agent, modelProvider }) => conversations.chatCatalog(agent, modelProvider),
     'conversations.translate': ({ id, text, to, model }) => translations.translate(conversations.get(id).agent, text, to, model, { kind: 'translation', conversationId: id, baseline: () => conversations.costBaseline(id) }, conversations.quickProvider(id)),
     'conversations.setAdditionalProjects': ({ id, projectPaths }) => conversations.setAdditionalProjects(id, projectPaths),
     'conversations.rename': ({ id, title }) => conversations.rename(id, title),
     'conversations.setPinned': ({ id, pinned }) => conversations.setPinned(id, pinned),
-    'todos.list': ({ id }) => todosOf(id).list(id),
-    'todos.open': () => {
-      if (!todos) throw new Rejection('todos-unavailable')
-      return todos.open()
-    },
-    'todos.add': ({ id, ...group }) => todosOf(id).add(id, group),
-    'todos.check': ({ id, groupId, itemId, done }) => todosOf(id).check(id, groupId, itemId, done),
-    'todos.edit': ({ id, groupId, itemId, text }) => todosOf(id).edit(id, groupId, itemId, text),
-    'todos.remove': ({ id, groupId, itemId }) => todosOf(id).remove(id, groupId, itemId),
+    'todos.list': () => todosUnavailable(),
+    'todos.open': () => todosUnavailable(),
+    'todos.add': () => todosUnavailable(),
+    'todos.check': () => todosUnavailable(),
+    'todos.edit': () => todosUnavailable(),
+    'todos.remove': () => todosUnavailable(),
     'conversations.setArchived': ({ id, archived }) => conversations.setArchived(id, archived),
-    'conversations.continue': ({ id, allowBypass }) => userActed(id, () => { profiles?.guardUser(id, true); squads?.guardUser(id, true); return conversations.continue(id, allowBypass) }),
+    'conversations.continue': ({ id, allowBypass }) => userActed(id, () => conversations.continue(id, allowBypass)),
     'conversations.handoff': ({ id, agent, note, stopRunning, allowBypass, permissionMode, model, effort, references }) => conversations.handoff(id, agent, note, stopRunning, allowBypass, { permissionMode, model, effort, references }),
     'conversations.fork': ({ id, stageId, itemId, agent, context }) => conversations.fork(id, stageId, itemId, { agent, context }),
-    'conversations.setOption': async ({ id, option, value }) => { profiles?.guardUser(id, true); squads?.guardUser(id, true); await conversations.setOption(id, option, value); return OK },
-    'conversations.send': ({ id, text, images, queue, steer, ref, references }) => userActed(id, async () => { profiles?.guardUser(id, true); squads?.guardUser(id, true); await conversations.send(id, text, images, queue, steer, ref, references); return OK }),
-    'conversations.submit': ({ id, ...message }) => userActed(id, () => { profiles?.guardUser(id, true); squads?.guardUser(id, true); return conversations.submit(id, message) }),
+    'conversations.setOption': async ({ id, option, value }) => { await conversations.setOption(id, option, value); return OK },
+    'conversations.send': ({ id, text, images, queue, steer, ref, references }) => userActed(id, async () => { await conversations.send(id, text, images, queue, steer, ref, references); return OK }),
+    'conversations.submit': ({ id, ...message }) => userActed(id, () => conversations.submit(id, message)),
     'conversations.cancelQueued': ({ id, ref }) => { conversations.cancelQueued(id, ref); return OK },
     'conversations.sendQueued': ({ id, ref, now }) => userActed(id, async () => { await conversations.sendQueued(id, ref, now); return OK }),
     'conversations.setUsageLimitAutoContinue': ({ id, stageId, itemId, autoContinue }) => {
@@ -511,16 +489,11 @@ export function createRpcHandlers(
     'conversations.retryUsageLimit': async ({ id, stageId, itemId }) => { await limits.retry(id, stageId, itemId); return OK },
     'conversations.retryTurn': async ({ id, stageId, itemId }) => { await conversations.retryTurn(id, stageId, itemId); return OK },
     'conversations.interrupt': async ({ id }) => {
-      const child = conversations.get(id)
-      if (child.agentCallId && child.parentConversationId) { await profiles?.cancel(child.parentConversationId, child.agentCallId); return OK }
-      await profiles?.cancelForParent(id)
-      const run = squads?.roster(id)
-      if (run?.leaderConversationId === id && run.state === 'running') await squads?.control(run.id, 'stop')
-      else await conversations.interrupt(id)
+      await conversations.interrupt(id)
       return OK
     },
     'conversations.stopBackground': async ({ id, itemId }) => { await conversations.stopBackground(id, itemId); return OK },
-    'conversations.respond': async ({ id, requestId, ...answer }) => { squads?.guardUser(id); conversations.attend(id); await conversations.respond(id, requestId, answer); return OK },
+    'conversations.respond': async ({ id, requestId, ...answer }) => { conversations.attend(id); await conversations.respond(id, requestId, answer); return OK },
     // Read after subscribing, so an item that changes in between reaches the client either way.
     'conversations.watchChat': ({ id }, connection) => {
       connection.watching.add(id)
@@ -531,15 +504,8 @@ export function createRpcHandlers(
     'conversations.chatItems': ({ id, before }) => page(conversations.chatPage(id, before)),
     // Any idle time will do: Infinity is past every agent's last activity.
     'conversations.releaseIdle': async () => ({ released: await conversations.releaseIdle(Infinity) }),
-    'conversations.stop': ({ id }) => userActed(id, async () => {
-      const child = conversations.get(id)
-      if (child.agentCallId && child.parentConversationId) { await profiles?.cancel(child.parentConversationId, child.agentCallId); return conversations.get(id) }
-      await profiles?.cancelForParent(id)
-      const run = squads?.roster(id)
-      if (run?.leaderConversationId === id && run.state === 'running') await squads?.control(run.id, 'stop')
-      return conversations.stop(id)
-    }),
-    'conversations.delete': async ({ id }) => { profiles?.guardUser(id, true); await profiles?.cancelForParent(id); squads?.guardUser(id, true); await conversations.delete(id); return OK },
+    'conversations.stop': ({ id }) => userActed(id, () => conversations.stop(id)),
+    'conversations.delete': async ({ id }) => { await conversations.delete(id); return OK },
     'conversations.messages': ({ id }) => conversations.messages(id),
     'conversations.stages': ({ id }) => conversations.stages(id),
     'conversations.branches': ({ id }) => conversations.branches(id),
@@ -553,50 +519,32 @@ export function createRpcHandlers(
     'conversations.search': ({ query }) => conversations.search(query),
     'conversations.changes': ({ id }) => conversations.changes(id),
     'conversations.diff': ({ id, project, file }) => conversations.diff(id, project, file),
-    // The agent's side: its MCP server is launched for one conversation and names it here. The
-    // token in core.json already grants everything, so this scopes correctness, not trust.
-    'browser.tabs': ({ conversationId }) => browser.tabsOf(conversationId),
-    'browser.open': ({ conversationId, url, viewport }) => browser.open(conversationId, url, viewport),
-    'browser.navigate': ({ conversationId, tabId, to, viewport }) => browser.navigate(conversationId, tabId, to, viewport),
-    'browser.setViewport': ({ conversationId, tabId, viewport }) => browser.setViewport(conversationId, tabId, viewport),
-    'browser.snapshot': ({ conversationId, tabId }) => browser.snapshot(conversationId, tabId),
-    'browser.screenshot': ({ conversationId, tabId, ...options }) => browser.screenshot(conversationId, tabId, options),
-    'browser.click': ({ conversationId, tabId, ...params }) => browser.click(conversationId, tabId, params),
-    'browser.type': ({ conversationId, tabId, ...params }) => browser.type(conversationId, tabId, params),
-    'browser.press': ({ conversationId, tabId, ...params }) => browser.press(conversationId, tabId, params),
-    'browser.hover': ({ conversationId, tabId, ...params }) => browser.hover(conversationId, tabId, params),
-    'browser.scroll': ({ conversationId, tabId, ...params }) => browser.scroll(conversationId, tabId, params),
-    'browser.select': ({ conversationId, tabId, ...params }) => browser.select(conversationId, tabId, params),
-    'browser.wait': ({ conversationId, tabId, ...params }) => browser.wait(conversationId, tabId, params),
-    'browser.console': ({ conversationId, tabId, sinceNavigation }) => browser.console(conversationId, tabId, sinceNavigation ?? false),
-    'browser.close': async ({ conversationId, tabId }) => {
-      await browser.close(conversationId, tabId)
-      return OK
-    },
-    // The user's side.
-    'browser.status': () => browser.status(),
-    'browser.watch': ({ conversationId }, connection) => browser.watch(connection, conversationId),
-    'browser.unwatch': ({ conversationId }, connection) => {
-      browser.unwatch(connection, conversationId)
-      return OK
-    },
-    'browser.watchAll': (_params, connection) => browser.watchAll(connection),
-    'browser.unwatchAll': (_params, connection) => {
-      browser.unwatchAll(connection)
-      return OK
-    },
-    'browser.userNavigate': ({ tabId, to }, connection) => browser.userNavigate(connection, tabId, to),
-    'browser.userViewport': ({ tabId, viewport }, connection) => browser.userViewport(connection, tabId, viewport),
-    'browser.newTab': ({ conversationId, url }, connection) => browser.newTab(connection, conversationId ?? null, url),
-    'browser.closeTab': async ({ tabId }, connection) => {
-      await browser.closeTab(connection, tabId)
-      return OK
-    },
-    'browser.handBack': ({ tabId }, connection) => {
-      browser.handBack(connection, tabId)
-      return OK
-    },
-    'browser.userScreenshot': ({ tabId }, connection) => browser.userScreenshot(connection, tabId),
+    'browser.tabs': () => browserUnavailable(),
+    'browser.open': () => browserUnavailable(),
+    'browser.navigate': () => browserUnavailable(),
+    'browser.setViewport': () => browserUnavailable(),
+    'browser.snapshot': () => browserUnavailable(),
+    'browser.screenshot': () => browserUnavailable(),
+    'browser.click': () => browserUnavailable(),
+    'browser.type': () => browserUnavailable(),
+    'browser.press': () => browserUnavailable(),
+    'browser.hover': () => browserUnavailable(),
+    'browser.scroll': () => browserUnavailable(),
+    'browser.select': () => browserUnavailable(),
+    'browser.wait': () => browserUnavailable(),
+    'browser.console': () => browserUnavailable(),
+    'browser.close': () => browserUnavailable(),
+    'browser.status': () => ({ state: 'app-closed' as const, running: false }),
+    'browser.watch': () => browserUnavailable(),
+    'browser.unwatch': () => OK,
+    'browser.watchAll': () => browserUnavailable(),
+    'browser.unwatchAll': () => OK,
+    'browser.userNavigate': () => browserUnavailable(),
+    'browser.userViewport': () => browserUnavailable(),
+    'browser.newTab': () => browserUnavailable(),
+    'browser.closeTab': () => browserUnavailable(),
+    'browser.handBack': () => browserUnavailable(),
+    'browser.userScreenshot': () => browserUnavailable(),
     'attachments.begin': ({ size }, connection) => ({ uploadId: attachments.uploads.begin(connection, size) }),
     'attachments.append': ({ uploadId, offset, data }, connection) => {
       attachments.uploads.append(connection, uploadId, offset, data)
@@ -636,13 +584,10 @@ export function createRpcHandlers(
       terminalCommands.delete(id)
       return OK
     },
-    'bookmarks.list': () => bookmarkStore().list(),
-    'bookmarks.add': (params) => bookmarkStore().add(params),
-    'bookmarks.delete': ({ id }) => {
-      bookmarkStore().delete(id)
-      return OK
-    },
-    'bookmarks.import': ({ bookmarks: imported }) => bookmarkStore().import(imported),
+    'bookmarks.list': () => bookmarksUnavailable(),
+    'bookmarks.add': () => bookmarksUnavailable(),
+    'bookmarks.delete': () => bookmarksUnavailable(),
+    'bookmarks.import': () => bookmarksUnavailable(),
     'chatCommands.list': () => chatCommands.list(),
     'chatCommands.save': (params) => chatCommands.save(params),
     'chatCommands.delete': ({ id }) => {
@@ -731,20 +676,20 @@ export function createRpcHandlers(
     'routines.runs': ({ routineId, before, limit }) => routines.runs(routineId, before ?? null, limit),
     'routines.markSeen': ({ runId }) => { routines.markSeen(runId); return OK },
     'routines.markAllSeen': ({ routineId }) => { routines.markAllSeen(routineId); return OK },
-    'discussions.list': () => discussions.list(),
-    'discussions.get': ({ id }) => discussions.get(id),
-    'discussions.create': (fields) => discussions.create(fields),
-    'discussions.posts': ({ id }) => discussions.posts(id),
-    'discussions.post': ({ id, text, mentions }) => discussions.post(id, text, mentions),
-    'discussions.newTopic': ({ id, text }) => discussions.newTopic(id, text),
-    'discussions.control': ({ id, action }) => discussions.control(id, action),
-    'discussions.rename': ({ id, title }) => discussions.rename(id, title),
-    'discussions.addMember': ({ id, member }) => discussions.addMember(id, member),
-    'discussions.removeMember': ({ id, memberId }) => discussions.removeMember(id, memberId),
-    'discussions.setProjects': ({ id, projectPaths }) => discussions.setProjects(id, projectPaths),
-    'discussions.setPinned': ({ id, pinned }) => discussions.setPinned(id, pinned),
-    'discussions.setArchived': ({ id, archived }) => discussions.setArchived(id, archived),
-    'discussions.delete': async ({ id }) => { await discussions.delete(id); return OK },
+    'discussions.list': () => discussionsUnavailable(),
+    'discussions.get': () => discussionsUnavailable(),
+    'discussions.create': () => discussionsUnavailable(),
+    'discussions.posts': () => discussionsUnavailable(),
+    'discussions.post': () => discussionsUnavailable(),
+    'discussions.newTopic': () => discussionsUnavailable(),
+    'discussions.control': () => discussionsUnavailable(),
+    'discussions.rename': () => discussionsUnavailable(),
+    'discussions.addMember': () => discussionsUnavailable(),
+    'discussions.removeMember': () => discussionsUnavailable(),
+    'discussions.setProjects': () => discussionsUnavailable(),
+    'discussions.setPinned': () => discussionsUnavailable(),
+    'discussions.setArchived': () => discussionsUnavailable(),
+    'discussions.delete': () => discussionsUnavailable(),
     'sources.list': () => sources.list(),
     'sources.saveSettings': (params) => sources.saveSettings(params),
     'sources.login': ({ provider, instance, flowId }, connection) => ({

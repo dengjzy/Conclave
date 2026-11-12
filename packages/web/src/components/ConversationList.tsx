@@ -1,8 +1,8 @@
 import { localized, t, tr } from '../i18n'
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Conversation } from '@conclave/protocol'
-import { openBeside, selectConversation, useCore, useDiscussionsSupported, useSplitPanes } from '../core-store'
-import { arrangeHistory, conversationHistory, historyGroupOf, historyKey, historyMatches, shownHistoryRows, sortHistory, type ConversationHistoryEntry, type ConversationHistoryFilter } from '../conversation-history'
+import { openBeside, selectConversation, useCore, useSplitPanes } from '../core-store'
+import { arrangeHistory, conversationHistory, historyGroupOf, historyMatches, shownHistoryRows, sortHistory, type ConversationHistoryEntry } from '../conversation-history'
 import { canSplit } from '../conversation-split'
 import { endConversationDrag, startConversationDrag } from '../conversation-drag'
 import { hasPrimaryModifier } from '../shortcut-keys'
@@ -19,9 +19,7 @@ import { projectName, projectNames } from './ProjectPicker'
 import { SidebarCollapseButton } from './SidebarCollapseButton'
 import { SidebarSearchField, SidebarSearchToggle } from './SidebarSearch'
 import { TitleEditor } from './TitleEditor'
-import { DiscussionHistoryRow } from './SidebarDiscussions'
 import { ConversationCreateMenu } from './ConversationCreateMenu'
-import { Segmented } from './SettingsControls'
 
 type GroupBy = Preferences['conversationGroup']
 type SortBy = Preferences['conversationSort']
@@ -120,11 +118,10 @@ function useMinute(): number {
   return now
 }
 
-function ViewMenu({ at, trigger, archived, archivedGroups, onClose }: { at: MenuPoint; trigger: HTMLElement | null; archived: number; archivedGroups: number; onClose: () => void }) {
+function ViewMenu({ at, trigger, archived, onClose }: { at: MenuPoint; trigger: HTMLElement | null; archived: number; onClose: () => void }) {
   const groupBy = usePreferences((p) => p.conversationGroup)
   const sortBy = usePreferences((p) => p.conversationSort)
   const showArchived = usePreferences((p) => p.showArchivedConversations)
-  const showArchivedGroups = usePreferences((p) => p.showArchivedDiscussions)
   const density = usePreferences((p) => p.conversationDensity)
   const [open, setOpen] = useState<'group' | 'sort' | 'density' | null>(null)
   const closeSubmenu = () => setOpen(null)
@@ -175,7 +172,6 @@ function ViewMenu({ at, trigger, archived, archivedGroups, onClose }: { at: Menu
           <MenuCheckboxItem label={t('ConversationList.showArchived', { archived: archived })} checked={showArchived} onSelect={() => setPreference('showArchivedConversations', !showArchived)} />
         </>
       )}
-      {archivedGroups > 0 && <MenuCheckboxItem label={t('SidebarDiscussions.showArchived', { value1: archivedGroups })} checked={showArchivedGroups} onSelect={() => setPreference('showArchivedDiscussions', !showArchivedGroups)} />}
     </ContextMenu>
   )
 }
@@ -184,12 +180,7 @@ export function ConversationList() {
   const now = useMinute()
   const [collapsed, setCollapsed] = useState(false)
   const conversations = useCore((s) => s.conversations)
-  const discussions = useCore((s) => s.discussions)
-  const groupsSupported = useDiscussionsSupported()
-  const [historyFilter, setHistoryFilter] = useState<ConversationHistoryFilter>('all')
-  const filterId = useId()
   const selected = useCore((s) => s.selectedConversationId)
-  const selectedDiscussion = useCore((s) => s.selectedDiscussionId)
   const panes = useSplitPanes()
   // Opening beside the conversation in front: there has to be one, and another to put next to it.
   const splitWith = (conversation: Conversation): 'right' | 'other' | null => {
@@ -200,13 +191,12 @@ export function ConversationList() {
   const section = useCore((s) => s.section)
   const groupBy = usePreferences((p) => p.conversationGroup)
   const sortBy = usePreferences((p) => p.conversationSort)
-  const free = conversationHistory(conversations, groupsSupported ? discussions : {}, historyFilter)
+  const free = conversationHistory(conversations)
   // Archived ones are out of the list unless asked for in the view menu, then in a group of their
   // own at the end; a search finds them either way.
   const all = free.filter((entry) => entry.value.archivedAt == null)
   const archivedAll = sortHistory(free.filter((entry) => entry.value.archivedAt != null), sortBy)
   const showArchived = usePreferences((p) => p.showArchivedConversations)
-  const showArchivedGroups = usePreferences((p) => p.showArchivedDiscussions)
   const [archivedOpen, setArchivedOpen] = useState(true)
   // Null while the search box is closed. Groups left empty by a search drop out.
   const [query, setQuery] = useState<string | null>(null)
@@ -216,12 +206,12 @@ export function ConversationList() {
   // Null until core has answered this query.
   const snippets = messageHits.query === needle ? messageHits.snippets : null
   const visible = searching
-    ? all.filter((entry) => historyMatches(entry, needle) || (entry.kind === 'single' && snippets?.has(entry.value.id)))
+    ? all.filter((entry) => historyMatches(entry, needle) || Boolean(snippets?.has(entry.value.id)))
     : all
   const groups = arrangeHistory(visible, groupBy, sortBy)
   const archived = archivedAll.filter((entry) => searching
-    ? historyMatches(entry, needle) || (entry.kind === 'single' && snippets?.has(entry.value.id))
-    : entry.kind === 'single' ? showArchived : showArchivedGroups)
+    ? historyMatches(entry, needle) || Boolean(snippets?.has(entry.value.id))
+    : showArchived)
   // A search opens every group, so nothing it found is folded away.
   const folded = usePreferences((p) => p.foldedConversationGroups)
   const foldKey = (key: string) => `${groupBy}:${key}`
@@ -245,7 +235,7 @@ export function ConversationList() {
   const density = usePreferences((p) => p.conversationDensity)
   const { peek, rowProps } = useConversationPeek()
   const peeked = peek && !menu && !renamingId ? conversations[peek.id] : undefined
-  const selectedHistory = section === 'discussions' && selectedDiscussion ? `group:${selectedDiscussion}` : selected ? `single:${selected}` : null
+  const selectedHistory = selected ? `single:${selected}` : null
 
   // heading: what the group the row is listed under is named after (its primary project, its agent).
   const conversationRow = (conversation: Conversation, heading: GroupBy = 'none') => {
@@ -284,9 +274,7 @@ export function ConversationList() {
         </button>}
     </li>
   }
-  const row = (entry: ConversationHistoryEntry, heading: GroupBy = 'none') => entry.kind === 'single'
-    ? conversationRow(entry.value, heading)
-    : <DiscussionHistoryRow key={historyKey(entry)} discussion={entry.value} now={now} underProject={heading === 'project'} />
+  const row = (entry: ConversationHistoryEntry, heading: GroupBy = 'none') => conversationRow(entry.value, heading)
 
   return (
     <nav className="conversation-list" data-collapsed={collapsed} data-density={density} aria-label={t('ConversationList.conversations')}>
@@ -317,10 +305,6 @@ export function ConversationList() {
         </button>
         <ConversationCreateMenu />
       </header>
-      {groupsSupported && !collapsed && <div className="conversation-history-filter">
-        <span className="visually-hidden" id={filterId}>{t('ConversationHistory.filter')}</span>
-        <Segmented labelId={filterId} value={historyFilter} options={[{ value: 'all', label: t('ConversationHistory.all') }, { value: 'single', label: t('ConversationHistory.single') }, { value: 'group', label: t('ConversationHistory.group') }]} onChange={setHistoryFilter} />
-      </div>}
       {query !== null && !collapsed && (
         <SidebarSearchField label={t('ConversationList.searchConversations')} placeholder={t('ConversationList.titleProjectNameOrChatContent')} query={query} onChange={setQuery} />
       )}
@@ -375,7 +359,7 @@ export function ConversationList() {
       )}
       </div>
       {peek && peeked && <ConversationPeek conversation={peeked} row={peek.row} />}
-      {viewAt && <ViewMenu at={viewAt} trigger={viewButton.current} archived={archivedAll.filter((entry) => entry.kind === 'single').length} archivedGroups={archivedAll.filter((entry) => entry.kind === 'group').length} onClose={closeView} />}
+      {viewAt && <ViewMenu at={viewAt} trigger={viewButton.current} archived={archivedAll.length} onClose={closeView} />}
       {menu && menuConversation && (
         <ConversationContextMenu
           conversation={menuConversation}

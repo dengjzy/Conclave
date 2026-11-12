@@ -13,7 +13,6 @@ const { values } = parseArgs({
     conversation: { type: 'string' },
     'plan-only': { type: 'boolean' },
     history: { type: 'boolean' },
-    'no-todos': { type: 'boolean' },
     'ready-file': { type: 'string' },
     // The ready file is written once the client has listed the tools rather than once it connects.
     'ready-on-list': { type: 'boolean' },
@@ -30,7 +29,7 @@ const ready = readyFile ? () => writePrivateJson(readyFile, { ready: true }) : u
 const onList = values['ready-on-list']
 const served = values.run
   ? runUserMcp(values.home ?? conclaveHome(), values.run, values['read-only'])
-  : serveMcp(values.home, values.conversation, values['plan-only'], onList ? undefined : ready, values.history, !values['no-todos'], onList ? ready : undefined)
+  : serveMcp(values.home, values.conversation, values['plan-only'], onList ? undefined : ready, values.history, onList ? ready : undefined)
 served.catch((error: unknown) => {
   const reason = error instanceof RpcError && error.reason ? ` (${error.reason})` : ''
   console.error(`conclave mcp: ${error instanceof Error ? error.message : String(error)}${reason}`)

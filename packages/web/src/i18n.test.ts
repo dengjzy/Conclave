@@ -5,7 +5,6 @@ import { MESSAGES } from './shared/messages'
 import { getLocale, localized, messageSearchText, setLocale, t, tr, useLocale } from './i18n'
 import { STATUS_LABEL, chatDayAndTime, reasonText } from './labels'
 import { compact } from './stat-format'
-import { mentionedMembers } from './discussions'
 import { ROUTINE_TEMPLATES } from './routine-templates'
 
 const PLURAL = /\{(\w+), plural, one \{([^{}]*)\} other \{([^{}]*)\}\}/g
@@ -77,12 +76,9 @@ describe('live language changes', () => {
     expect(messageSearchText('外观')).toContain('Appearance')
   })
 
-  it('accepts mentions from either language and keeps template instructions independent', () => {
-    const members = [{ id: 'a', name: 'Member A' }, { id: 'b', name: 'Member B' }]
+  it('keeps template instructions independent of display language', () => {
     const instructions = ROUTINE_TEMPLATES.map((template) => template.text)
     setLocale('en')
-    expect(mentionedMembers('@everyone please answer', members)).toEqual(['a', 'b'])
-    expect(mentionedMembers('@所有人 请回答', members)).toEqual(['a', 'b'])
     expect(ROUTINE_TEMPLATES[0]?.title).toBe('Daily code review')
     expect(ROUTINE_TEMPLATES.map((template) => template.text)).toEqual(instructions)
   })

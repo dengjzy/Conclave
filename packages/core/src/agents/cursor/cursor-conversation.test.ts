@@ -3,7 +3,6 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import { startNote } from '../../agent-prompt'
 import { AttachmentStore } from '../../attachment-store'
 import { ConversationService } from '../../conversation-service'
 import { ConversationStore } from '../../conversation-store'
@@ -121,9 +120,8 @@ it('lets an idle Cursor process go after half an hour, and resumes its session a
 })
 
 const stallNotice = (id: string) => service.chatPage(id).items.find((item) => item.kind === 'notice' && item.id.startsWith('cursor-stalled:'))
-// What the user sent, without the start note a new process puts ahead of its first prompt.
 const promptText = (sessionId: string) => daemon.written(sessionId).map((frame) => Frame.parse(frame)).filter((frame) => frame.method === 'session/prompt')
-  .map((frame) => z.object({ prompt: z.array(z.object({ text: z.string() })) }).parse(frame.params).prompt[0]?.text.replace(`${startNote({ todos: true })}\n\n`, ''))
+  .map((frame) => z.object({ prompt: z.array(z.object({ text: z.string() })) }).parse(frame.params).prompt[0]?.text)
 
 it('tells the user at 30 seconds that Cursor has not answered, stops it at 60, and retries it only when asked', async () => {
   vi.useFakeTimers()
@@ -153,7 +151,7 @@ it('tells the user at 30 seconds that Cursor has not answered, stops it at 60, a
     expect.objectContaining({ method: 'session/load' }),
     expect.objectContaining({
       method: 'session/prompt',
-      params: expect.objectContaining({ prompt: [expect.objectContaining({ text: expect.stringMatching(/\n\ndo this once$/) })] })
+      params: expect.objectContaining({ prompt: [expect.objectContaining({ text: 'do this once' })] })
     })
   ]))
   expect(service.chatItem(created.id, notice!.stageId, notice!.id)).toMatchObject({ action: null })

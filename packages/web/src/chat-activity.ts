@@ -1,4 +1,4 @@
-import { CODEX_IMAGE_GENERATION, isBrowserTool, isPreviewTool, type ChatItem, type ChatToolStatus } from '@conclave/protocol'
+import { CODEX_IMAGE_GENERATION, isPreviewTool, type ChatItem, type ChatToolStatus } from '@conclave/protocol'
 import type { ChatBlock } from './chat-state'
 import { toolDisplayStatus, toolRunStatus } from './chat-tools'
 
@@ -7,7 +7,7 @@ export type ChatActivity =
   | { kind: 'tool'; tool: ToolItem; status: ChatToolStatus }
   | { kind: 'reasoning' | 'todos' | 'request'; status: ChatToolStatus | 'awaiting' }
 
-// Keep answers and what the turn made for the user (a preview, the browser, a drawn picture) off
+// Keep answers and what the turn made for the user (a preview, a drawn picture) off
 // the work rail, including while they stream. A picture the agent only looked at is a step.
 export function activityOf(block: ChatBlock): ChatActivity | null {
   if (block.kind === 'tools' || block.kind === 'edits' || block.kind === 'agents') {
@@ -18,7 +18,7 @@ export function activityOf(block: ChatBlock): ChatActivity | null {
   const item = block.entry.item
   switch (item.kind) {
     case 'tool':
-      if (isPreviewTool(item.name) || isBrowserTool(item.name) || item.name === CODEX_IMAGE_GENERATION) return null
+      if (isPreviewTool(item.name) || item.name === CODEX_IMAGE_GENERATION) return null
       return { kind: 'tool', tool: item, status: toolDisplayStatus(item) }
     case 'reasoning':
       return { kind: 'reasoning', status: item.streaming ? 'running' : 'done' }

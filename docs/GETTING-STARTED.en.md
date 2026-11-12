@@ -97,17 +97,12 @@ When it is due, the agent runs unattended in the mode shown in the popover; **Ch
 
 Each side has its own input, progress and approvals.
 
-### Helper
-
-![The right-click menu on selected text](assets/guide/helper.en.png)
-
-Select part of a reply, right-click and choose **Ask helper**. It opens on the right with a light model and its own context, to explain or dig in without touching the main conversation. Choose its model in [**Settings → Conversations → "Model for quick tasks"**](conclave:settings/conversation).
-
 ### Also worth knowing
 
 | Feature | How |
 |---|---|
-| To-dos | Agents note what you need to do later; tick them off in the inspector's **To-dos** tab |
+| Autonomous task flows | Define checks in a task's contract and run; Conclave drives implementation, verification and retries |
+| Conversation preferences | Configure title naming, auto-archiving and quick-task models in [**Settings → Conversations**](conclave:settings/conversation) |
 | Conversation groups | **Group and sort** on the sidebar's **Conversations**: by project, agent or run status |
 | Keeps running | Agents run in a background process; closing the window does not stop them |
 

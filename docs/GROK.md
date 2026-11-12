@@ -22,7 +22,7 @@ Conclave 通过官方 `grok agent stdio` 接入 Grok CLI，复用通用 ACP driv
 
 启动命令只传 `['agent', 'stdio', '--no-auto-update']`，避免自动更新检查污染 stdio 通信流。权限模式通过 ACP 会话初始化与配置动态下发。
 
-Grok 在只读团队阶段（如代码审查与核验）使用 `ask` 模式，确保只读操作按安全边界执行。群聊讨论使用 `plan` 模式。
+Grok 在只读阶段（如代码审查与核验）使用 `ask` 或 `plan` 模式，确保只读操作按安全边界执行。
 
 ## 目录、多项目与 MCP
 

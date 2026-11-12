@@ -4,7 +4,7 @@ import { actionableItems } from './attention'
 import {
   openAttentionItem, openConversationDraft, selectConversation, selectTask, openOverview, setOverviewFilter, setOverviewScroll, setOverviewView, setRoutinesOpen,
   refreshAttentionSummaries, setInboxOpen, setTaskStarting, openChatWhileStarting, setSchedulesOpen, setSettingsOpen, setWorktreesOpen, useCore,
-  clearInspectorFile, closeConversationDraft, closeDiscussionDraft, conversationDraftVisible, installAgentCli, openDiscussionDraft, openNewConversationDraft, selectDiscussion, switchConversationDraftMode, showConversationChanges, showInspectorFile, showTaskChanges
+  clearInspectorFile, closeConversationDraft, conversationDraftVisible, installAgentCli, openNewConversationDraft, showConversationChanges, showInspectorFile, showTaskChanges
 } from './core-store'
 import { conversationSurface } from './components/chat-surface'
 
@@ -17,51 +17,28 @@ const chat: Conversation = {
 
 beforeEach(() => useCore.setState(useCore.getInitialState(), true))
 
-describe('conversation creation modes', () => {
-  it('changes routes without replacing the single-chat seed while switching draft modes', () => {
-    const client = createRpcClient(() => {})
-    const rpc: RpcConnection = { ...client, features: ['discussions'], close: () => {}, closed: new Promise(() => {}) }
-    useCore.setState({ rpc })
+describe('conversation creation draft', () => {
+  it('reuses a visible draft unless closed or given explicit projects', () => {
     const from = { key: 'copy-source', title: 'Copied', configuration: { agent: 'codex' as const, projectPaths: ['/repo'], permissionMode: 'readOnly', model: 'gpt-6-astra', effort: 'low', modelProvider: null } }
     openConversationDraft(['/repo'], null, from)
-    useCore.setState({ draftProfileId: 'chosen-role' })
     const initial = useCore.getState()
-    for (const mode of ['fanout', 'debate', 'single'] as const) {
-      switchConversationDraftMode(mode)
-      const state = useCore.getState()
-      expect(state.conversationDraftMode).toBe(mode)
-      expect(state.section).toBe(mode === 'single' ? 'conversations' : 'discussions')
-      expect(state.conversationDraftKey).toBe(initial.conversationDraftKey)
-      expect(state.conversationDraftFrom).toBe(initial.conversationDraftFrom)
-      expect(state.conversationDraftProjects).toBe(initial.conversationDraftProjects)
-      expect(state.draftProfileId).toBe('chosen-role')
-    }
-    openNewConversationDraft('fanout')
+    openNewConversationDraft()
     expect(useCore.getState().conversationDraftKey).toBe(initial.conversationDraftKey)
+    expect(useCore.getState().conversationDraftFrom).toBe(initial.conversationDraftFrom)
     closeConversationDraft()
-    openNewConversationDraft('single')
+    openNewConversationDraft()
     expect(useCore.getState().conversationDraftKey).not.toBe(initial.conversationDraftKey)
     expect(useCore.getState().conversationDraftFrom).toBeNull()
   })
 
-  it('keeps old services on single chat instead of opening unsupported group forms', () => {
-    openNewConversationDraft('single')
-    switchConversationDraftMode('fanout')
-    expect(useCore.getState()).toMatchObject({ section: 'conversations', conversationDraftMode: 'single', conversationDraft: true, discussionDraft: false })
-  })
-
-  it.each(['single', 'fanout'] as const)('starts a fresh %s draft after visiting the other kind of history', (mode) => {
-    const client = createRpcClient(() => {})
-    const rpc: RpcConnection = { ...client, features: ['discussions'], close: () => {}, closed: new Promise(() => {}) }
-    useCore.setState({ rpc })
-    openNewConversationDraft(mode, ['/draft-project'])
+  it('starts a fresh draft after visiting an existing conversation', () => {
+    openNewConversationDraft(['/draft-project'])
     const key = useCore.getState().conversationDraftKey
-    if (mode === 'single') selectDiscussion('existing-group')
-    else selectConversation('existing-chat')
-    expect(useCore.getState()).toMatchObject({ conversationDraft: false, discussionDraft: false })
+    selectConversation('existing-chat')
+    expect(useCore.getState()).toMatchObject({ conversationDraft: false })
     expect(conversationDraftVisible(useCore.getState())).toBe(false)
 
-    openNewConversationDraft(mode)
+    openNewConversationDraft()
     expect(useCore.getState().conversationDraftKey).not.toBe(key)
     expect(useCore.getState().conversationDraftProjects).toBeNull()
     expect(conversationDraftVisible(useCore.getState())).toBe(true)
@@ -70,11 +47,11 @@ describe('conversation creation modes', () => {
   it.each([
     { settingsOpen: true }, { overviewOpen: true }, { inboxOpen: true }, { worktreesOpen: true }, { routinesOpen: true }
   ])('does not reuse a hidden draft behind the higher-priority page %j', (page) => {
-    openNewConversationDraft('single', ['/old-project'])
+    openNewConversationDraft(['/old-project'])
     const key = useCore.getState().conversationDraftKey
     useCore.setState(page)
     expect(conversationDraftVisible(useCore.getState())).toBe(false)
-    openNewConversationDraft('single')
+    openNewConversationDraft()
     expect(useCore.getState().conversationDraftKey).not.toBe(key)
     expect(useCore.getState().conversationDraftProjects).toBeNull()
     expect(conversationDraftVisible(useCore.getState())).toBe(true)
@@ -226,8 +203,7 @@ describe('overview navigation', () => {
     ['routines', () => setRoutinesOpen(true), () => setRoutinesOpen(false)],
     ['schedules', () => setSchedulesOpen(true), () => setSchedulesOpen(false)],
     ['worktrees', () => setWorktreesOpen(true), () => setWorktreesOpen(false)],
-    ['conversation draft', () => openConversationDraft(), closeConversationDraft],
-    ['group chat draft', () => openDiscussionDraft(), closeDiscussionDraft]
+    ['conversation draft', () => openConversationDraft(), closeConversationDraft]
   ])('falls back to the overview when %s closes', (_label, open, close) => {
     selectConversation('chat')
     open()

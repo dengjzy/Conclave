@@ -1,11 +1,10 @@
-import { AGENT_KINDS, isHelper, type AgentKind, type Conversation, type Discussion } from '@conclave/protocol'
+import { AGENT_KINDS, isHelper, type AgentKind, type Conversation } from '@conclave/protocol'
 import { getLocale, t } from './i18n'
 import { agentLabel } from './labels'
 import type { Preferences } from './preferences'
 import { primaryProjectName, projectName } from './components/ProjectPicker'
 
-export type ConversationHistoryFilter = 'all' | 'single' | 'group'
-export type ConversationHistoryEntry = { kind: 'single'; value: Conversation } | { kind: 'group'; value: Discussion }
+export type ConversationHistoryEntry = { kind: 'single'; value: Conversation }
 type GroupBy = Preferences['conversationGroup']
 type SortBy = Preferences['conversationSort']
 export type ConversationHistoryGroup = {
@@ -14,30 +13,22 @@ export type ConversationHistoryGroup = {
 
 export const historyKey = (entry: ConversationHistoryEntry): string => `${entry.kind}:${entry.value.id}`
 
-// A group's member conversations remain inside its history entry, not duplicated in the list.
-export function conversationHistory(conversations: Record<string, Conversation>, discussions: Record<string, Discussion>, filter: ConversationHistoryFilter = 'all'): ConversationHistoryEntry[] {
-  const singles: ConversationHistoryEntry[] = filter === 'group' ? [] : Object.values(conversations)
+export function conversationHistory(conversations: Record<string, Conversation>): ConversationHistoryEntry[] {
+  return Object.values(conversations)
     .filter((conversation) => !isHelper(conversation) && !conversation.taskId && !conversation.routineId && !conversation.discussionId && !conversation.squadRunId && !conversation.parentConversationId && conversation.deletion?.state !== 'running')
     .map((value) => ({ kind: 'single', value }))
-  return filter === 'single' ? singles : [...singles, ...Object.values(discussions).map((value): ConversationHistoryEntry => ({ kind: 'group', value }))]
 }
 
 export function historyMatches(entry: ConversationHistoryEntry, query: string): boolean {
   const needle = query.toLocaleLowerCase()
-  const common = [entry.value.title, ...entry.value.projectPaths.map(projectName)]
-  const fields = entry.kind === 'group'
-    ? [...common, entry.value.topic, ...entry.value.members.flatMap((member) => [member.name, agentLabel(member.agent), member.model ?? ''])]
-    : common
+  const fields = [entry.value.title, ...entry.value.projectPaths.map(projectName)]
   return fields.some((text) => text.toLocaleLowerCase().includes(needle))
 }
 
 export function historyGroupOf(entry: ConversationHistoryEntry, by: Exclude<GroupBy, 'none'>): { label: string; rank: number } {
   if (by === 'project') return { label: primaryProjectName(entry.value.projectPaths), rank: entry.value.projectPaths.length > 0 ? 0 : 1 }
-  if (by === 'agent') return entry.kind === 'single'
-    ? { label: agentLabel(entry.value.agent), rank: AGENT_KINDS.indexOf(entry.value.agent) }
-    : { label: t('ConversationHistory.groupByAgent'), rank: AGENT_KINDS.length }
-  const running = entry.kind === 'single' ? Boolean(entry.value.sessionId)
-    : entry.value.state === 'running' || entry.value.state === 'pausing' || entry.value.members.some((member) => member.status !== 'idle')
+  if (by === 'agent') return { label: agentLabel(entry.value.agent), rank: AGENT_KINDS.indexOf(entry.value.agent) }
+  const running = Boolean(entry.value.sessionId)
   return running ? { label: t('ConversationList.running'), rank: 0 } : { label: t('ConversationList.stopped'), rank: 1 }
 }
 

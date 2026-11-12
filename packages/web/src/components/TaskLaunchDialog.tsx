@@ -10,7 +10,6 @@ import { AgentModelPicker } from './AgentModelPicker'
 import { modeOptions, startModes } from './ChatOptionsBar'
 import { ChatPicker } from './ChatPicker'
 import { AgentIcon, CloseIcon } from './icons'
-import { SquadLaunchDialog } from './SquadLaunchDialog'
 import { useEditsInPlace } from './TaskLaunch'
 import { OtherProjectsHint } from './OtherProjectsHint'
 import { providerFor, servingProviders } from '../model-provider-choice'
@@ -19,25 +18,22 @@ import { ProviderPicker } from './ProviderPicker'
 
 function closeTaskLaunch() {
   dismissError()
-  useCore.setState({ taskLaunchId: null, squadLaunch: false, squadPlan: null })
+  useCore.setState({ taskLaunchId: null })
 }
 
 export function TaskLaunchDialog({ taskId }: { taskId: string }) {
   const task = useCore((s) => s.tasks[taskId])
-  const plan = useCore((state) => state.squadPlan)
-  const [squad, setSquad] = useState(Boolean(task?.squadId || plan || useCore.getState().squadLaunch))
   useEffect(() => { if (!task) closeTaskLaunch() }, [task])
-  return task ? squad ? <SquadLaunchDialog task={task} onSingle={() => setSquad(false)} /> : <LaunchForm task={task} onSquad={() => setSquad(true)} /> : null
+  return task ? <LaunchForm task={task} /> : null
 }
 
-function LaunchForm({ task, onSquad }: { task: Task; onSquad(): void }) {
+function LaunchForm({ task }: { task: Task }) {
   const dialog = useRef<HTMLDialogElement>(null)
   const installed = useInstalledAgents()
   const recommended = useRecommendation(installed)?.agent ?? null
   const [agent, setAgent] = useState<AgentKind | null>(task.agent)
   const agents = agent && !installed.includes(agent) ? [...installed, agent] : installed
   const rpc = useCore((s) => s.rpc)
-  const squadsSupported = rpc?.features.includes('squads') ?? false
   const supported = rpc?.features.includes('task-launch-options') ?? false
   const error = useCore((s) => s.error)
   const tasks = useCore((s) => s.tasks)
@@ -101,6 +97,10 @@ function LaunchForm({ task, onSquad }: { task: Task; onSquad(): void }) {
       ...(providersSupported && !providerFixed ? { modelProvider: provider?.id ?? null } : {})
     }
     closeTaskLaunch()
+    if (mode !== 'plan' && mode !== 'readOnly' && rpc?.features.includes('flows')) {
+      await openChatWhileStarting(task.id, () => perform((connection) => connection.call('flows.start', { id: task.id, ...(rpc.features.includes('chat-options') ? { allowBypass: true } : {}) })))
+      return
+    }
     await openChatWhileStarting(task.id, () => perform((connection) => connection.call('tasks.start', params)))
   }
 
@@ -114,7 +114,6 @@ function LaunchForm({ task, onSquad }: { task: Task; onSquad(): void }) {
           <button type="button" className="icon-button modal-close" aria-label={t('BackdropPicker.close')} disabled={busy} onClick={closeTaskLaunch}><CloseIcon /></button>
         </header>
         <p className="task-launch-name">{task.title}</p>
-        {squadsSupported && <button type="button" className="link-button" disabled={busy} onClick={onSquad}>{t('SquadLaunchDialog.assignToDevelopmentSquad')}</button>}
         <fieldset className="task-launch-fields" disabled={busy}>
           <div className="task-launch-field"><span>Agent</span>
             <ChatPicker

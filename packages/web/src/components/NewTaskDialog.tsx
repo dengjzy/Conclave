@@ -39,8 +39,6 @@ export function NewTaskDialog() {
   const [agent, setAgent] = useState<AgentKind | null>(() => (draft ? draft.agent : null))
   const installed = useInstalledAgents()
   const recommended = useRecommendation(installed)?.agent ?? null
-  const squads = useCore((state) => state.squads)
-  const [squadId, setSquadId] = useState<string | null>(null)
   const [dependsOn, setDependsOn] = useState<string[]>([])
   const [details, setDetails] = useState('')
   // The details editor holds its own text; a new key starts it empty for the next task.
@@ -96,7 +94,6 @@ export function NewTaskDialog() {
         repos,
         dependsOn,
         agent,
-        ...(squadId ? { squadId } : {}),
         images: images.map(({ id, name }) => ({ id, name }))
       })
     )
@@ -230,14 +227,12 @@ export function NewTaskDialog() {
           <span className="new-task-agent-chip">
             <ChatPicker
               label={t('NewTaskDialog.assignee')}
-              value={squadId ? `squad:${squadId}` : agent ?? 'auto'}
-              placeholder={squadId ? t('NewTaskDialog.developmentSquad') : t('NewTaskDialog.autoAgent')}
-              options={[{ value: 'auto', label: t('NewTaskDialog.autoAgent'), description: t('NewTaskDialog.autoAgentDescription') }, ...executorOptions(installed, squads, squadId, recommended).filter((option) => option.value !== '')]}
+              value={agent ?? 'auto'}
+              placeholder={t('NewTaskDialog.autoAgent')}
+              options={[{ value: 'auto', label: t('NewTaskDialog.autoAgent'), description: t('NewTaskDialog.autoAgentDescription') }, ...executorOptions(installed, recommended).filter((option) => option.value !== '')]}
               size="large"
               placement="below"
               onChange={(value) => {
-                if (value.startsWith('squad:')) { setSquadId(value.slice(6)); return }
-                setSquadId(null)
                 if (value === 'auto') { setAgent(null); return }
                 const parsed = AgentKind.safeParse(value)
                 setAgent(parsed.success ? parsed.data : null)

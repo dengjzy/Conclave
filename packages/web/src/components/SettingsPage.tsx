@@ -1,10 +1,10 @@
 import { UsageSettings } from './UsageSettings'
 import { getLocale, localized, messageSearchText, t, tr, useLocale } from '../i18n'
-import type { BrowserStatus, WireUsage } from '@conclave/protocol'
+import type { WireUsage } from '@conclave/protocol'
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { AGENT_KINDS, agentDescriptor, agentModeText, PROTOCOL_VERSION, quickModel, UNATTENDED_MODES, type AgentKind, type SourceDescriptor } from '@conclave/protocol'
 import packageJson from '../../package.json'
-import { perform, setAwakeMode, setChatSettings, setSettingsOpen, useAwakeSupported, useCore, useBrowserSupported, useChatCommandsSupported, useKnowledgeBaseSupported, useMcpServersSupported, useModelProvidersSupported, useSessionImportSupported, useAccountsSupported, useProjectConfigEditSupported, useSkillsSupported, useWireLogSupported } from '../core-store'
+import { perform, setAwakeMode, setChatSettings, setSettingsOpen, useAwakeSupported, useCore, useChatCommandsSupported, useKnowledgeBaseSupported, useMcpServersSupported, useModelProvidersSupported, useSessionImportSupported, useAccountsSupported, useProjectConfigEditSupported, useSkillsSupported, useWireLogSupported } from '../core-store'
 import { setPreference, usePreferences } from '../preferences'
 import { UNATTENDED_LABEL } from '../schedules'
 import { detectedAgents, useInstalledAgents } from '../installed-agents'
@@ -129,7 +129,7 @@ function useRunSettingsShown(): boolean {
 
 function usePermissionSettingsShown(): boolean {
   const chatSettings = useCore((s) => s.chatSettings)
-  return Boolean(chatSettings?.unattendedMode) || chatSettings?.userBrowser !== undefined || chatSettings?.readHistory !== undefined
+  return Boolean(chatSettings?.unattendedMode) || chatSettings?.readHistory !== undefined
 }
 
 function RunSettings() {
@@ -270,15 +270,6 @@ function PermissionSettings() {
           )}
         />
       )}
-      {chatSettings?.userBrowser !== undefined && (
-        <SettingsRow
-          label={t('SettingsPage.letClaudeCodeUseYourChrome')}
-          description={t('SettingsPage.useTheClaudeInChromeExtensionToOpen')}
-          control={(labelId) => (
-            <Toggle labelId={labelId} checked={chatSettings.userBrowser ?? true} onChange={(next) => void setChatSettings({ userBrowser: next })} />
-          )}
-        />
-      )}
       {chatSettings?.readHistory !== undefined && (
         <SettingsRow
           label={t('SettingsPage.letAgentsReadYourConclaveRecords')}
@@ -303,15 +294,6 @@ function ConversationSettings() {
           description={t('SettingsPage.predictYourNextMessageInGrayAfterEach')}
           control={(labelId) => (
             <Toggle labelId={labelId} checked={chatSettings.promptSuggestions} onChange={(next) => void setChatSettings({ promptSuggestions: next })} />
-          )}
-        />
-      )}
-      {chatSettings?.userTodos !== undefined && (
-        <SettingsRow
-          label={t('SettingsPage.trackToDos')}
-          description={t('SettingsPage.agentRecordsThingsYouNeedToDoLater')}
-          control={(labelId) => (
-            <Toggle labelId={labelId} checked={chatSettings.userTodos ?? true} onChange={(next) => void setChatSettings({ userTodos: next })} />
           )}
         />
       )}

@@ -139,15 +139,15 @@ export function ChatPlanLine({ item }: { item: PlanItem }) {
 // button picks, or send it back with a note; where the chat may only plan, keep it for later
 // instead. An older core carries a plan out only asking about edits or accepting them. Or stop:
 // the turn ends with nothing carried out and nothing replanned, and the next word is the user's.
-type PlanChoice = 'run' | 'allow' | 'allowForSession' | 'squad' | 'save' | 'revise' | 'stop'
-const CHOICE_LABEL: Record<Exclude<PlanChoice, 'revise' | 'squad'>, string> = localized(() => ({
+type PlanChoice = 'run' | 'allow' | 'allowForSession' | 'save' | 'revise' | 'stop'
+const CHOICE_LABEL: Record<Exclude<PlanChoice, 'revise'>, string> = localized(() => ({
   run: t('ChatPlan.implementPlan_396'),
   allow: t('ChatPlan.implementPlanAskBeforeEditingFilesOrRunning'),
   allowForSession: t('ChatPlan.implementPlanAcceptFileEditsAutomatically'),
   save: t('ChatPlan.savePlanFirstExecuteAfterDependenciesFinish'),
   stop: t('ChatPlan.stopWithoutExecuting')
 }))
-const SUBMIT_LABEL: Record<PlanChoice, string> = localized(() => ({ run: t('ChatPlan.execute'), allow: t('ChatPlan.execute'), allowForSession: t('ChatPlan.execute'), squad: t('ChatPlan.startSquadDevelopment'), save: t('ChatPlan.savePlan'), revise: t('ChatPlan.continuePlanning'), stop: t('ChatPlan.stop') }))
+const SUBMIT_LABEL: Record<PlanChoice, string> = localized(() => ({ run: t('ChatPlan.execute'), allow: t('ChatPlan.execute'), allowForSession: t('ChatPlan.execute'), save: t('ChatPlan.savePlan'), revise: t('ChatPlan.continuePlanning'), stop: t('ChatPlan.stop') }))
 const PREVIEW_LINES = 12
 
 export function ChatPlanCard({ conversationId, item, modes }: { conversationId: string; item: PlanItem; modes: readonly string[] }) {
@@ -156,7 +156,7 @@ export function ChatPlanCard({ conversationId, item, modes }: { conversationId: 
   const [note, setNote] = useState('')
   const [saving, setSaving] = useState(false)
   const [open, setOpen] = useState(false)
-  const { savePlan, squadStart } = surface
+  const { savePlan } = surface
   // Not in a routine's chat, whose follow-ups nobody is told of (ChatComposer).
   const routine = useCore((s) => Boolean(s.conversations[conversationId]?.routineId || s.conversations[conversationId]?.helperOf))
   const agent = useCore((s) => s.conversations[conversationId]?.agent ?? 'claude')
@@ -165,7 +165,7 @@ export function ChatPlanCard({ conversationId, item, modes }: { conversationId: 
   const picked = usePreferences((s) => s.planRunMode)
   const runMode: RunMode = runModes.includes(picked) ? picked : runModes.includes('auto') ? 'auto' : runModes[0] ?? 'ask'
   const modesSupported = usePlanModesSupported() && runModes.length > 0
-  const choices: PlanChoice[] = squadStart ? (savePlan ? ['squad', 'save', 'revise', 'stop'] : ['squad', 'revise', 'stop']) : savePlan ? ['save', 'revise', 'stop'] : modesSupported ? ['run', 'revise', 'stop'] : ['allow', 'allowForSession', 'revise', 'stop']
+  const choices: PlanChoice[] = savePlan ? ['save', 'revise', 'stop'] : modesSupported ? ['run', 'revise', 'stop'] : ['allow', 'allowForSession', 'revise', 'stop']
   const [choice, setChoice] = useState<PlanChoice>(choices[0] ?? 'revise')
   const noteInput = useRef<HTMLInputElement>(null)
   const preview = useRef<HTMLDivElement>(null)
@@ -191,11 +191,6 @@ export function ChatPlanCard({ conversationId, item, modes }: { conversationId: 
     if (busy || saving) return
     if (choice === 'stop') {
       await stop()
-    } else if (choice === 'squad') {
-      if (!squadStart) return
-      setSaving(true)
-      await squadStart.start(item)
-      setSaving(false)
     } else if (choice === 'save') {
       if (!savePlan) return
       setSaving(true)
@@ -241,10 +236,8 @@ export function ChatPlanCard({ conversationId, item, modes }: { conversationId: 
     <div className="chat-request chat-plan" data-waiting onKeyDown={onKeyDown}>
       <div className="chat-request-title">{tr('ChatPlan.planAwaitingYourApproval', { value1: inView
           ? <span className="chat-plan-aside">{t('ChatPlan.fullPlanOnTheRight')}</span>
-          : <button type="button" className="link-button" onClick={() => surface.showPlan(key)}>{t('ChatPlan.viewFullPlanInInspector')}</button>, value2: surface.handoffPlan && <button type="button" className="link-button" disabled={busy || saving} onClick={() => surface.handoffPlan?.(item)}>{t('ChatPlan.assignToSquad')}</button>, value3: schedulable && <SchedulePlanButton conversationId={conversationId} />, value4: null })}</div>
-      {squadStart
-        ? <p className="chat-request-detail muted">{tr('ChatPlan.afterApprovalTheLeaderAssignsWorkToMembers', { value1: squadStart.name })}</p>
-        : savePlan && <p className="chat-request-detail muted">{t('ChatPlan.dependenciesAreUnfinishedSaveThePlanNowThen')}</p>}
+          : <button type="button" className="link-button" onClick={() => surface.showPlan(key)}>{t('ChatPlan.viewFullPlanInInspector')}</button>, value2: null, value3: schedulable && <SchedulePlanButton conversationId={conversationId} />, value4: null })}</div>
+      {savePlan && <p className="chat-request-detail muted">{t('ChatPlan.dependenciesAreUnfinishedSaveThePlanNowThen')}</p>}
       {item.detail && !inView && (
         <div className="chat-plan-preview" ref={preview} data-clipped={(long && !open) || undefined}>
           <ChatMarkdown text={item.detail} />
@@ -280,7 +273,7 @@ export function ChatPlanCard({ conversationId, item, modes }: { conversationId: 
                 onChange={(event) => setNote(event.target.value)}
               />
             ) : (
-              <span>{each === 'squad' ? t('ChatPlan.assignPlanTo', { value1: squadStart?.name ?? t('ChatPlan.squad') }) : each === 'save' && squadStart ? t('ChatPlan.savePlanFirstAssignToSquadLater') : CHOICE_LABEL[each]}</span>
+              <span>{CHOICE_LABEL[each]}</span>
             )}
           </div>
         ))}

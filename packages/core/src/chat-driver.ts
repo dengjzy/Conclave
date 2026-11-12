@@ -93,8 +93,6 @@ export type ChatStageOptions = {
   // Stores an image a tool result carries in its bytes (base64), for the chat to show; null when it
   // cannot. Without it, such an image shows as a placeholder.
   keepImage?: (data: string) => ChatImage | null
-  // Whether the agent is told to note down the user's to-dos (its tools come with mcp); unset is on.
-  todos?: boolean
   // The user's Obsidian vault, for a driver that gives roots over its protocol: writable only
   // where the stage may edit (write is false otherwise).
   knowledgeBase?: KnowledgeBase

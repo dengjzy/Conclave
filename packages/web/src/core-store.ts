@@ -1,4 +1,4 @@
-import type { AgentProfile, AgentSmokeTestResult } from '@conclave/protocol'
+import type { AgentSmokeTestResult } from '@conclave/protocol'
 import { mergeCliStatuses } from './agent-cli-state'
 import { getLocale, t } from './i18n'
 import { accountsSupported, activeAccount, isHelper, usageAccount, type AgentAccounts } from '@conclave/protocol'
@@ -24,9 +24,6 @@ import {
   type Task,
   type Terminal,
   type TerminalCommand,
-  type Bookmark,
-  type BookmarkFields,
-  type BookmarkImport,
   type SavedChatCommand,
   type SkillRepo,
   type McpServer,
@@ -36,34 +33,25 @@ import {
   type ComputerAwakeStatus,
   type ChatSettings,
   type Environment,
-  type ScheduledRun,
-  type Discussion,
-  type Squad,
-  type SquadRun,
-  type SquadPlanRef,
-  type Idea
+  type ScheduledRun
 } from '@conclave/protocol'
 import { receiveChatDelta, receiveChatItems } from './chat-state'
-import { forgetDiscussionPosts, receiveDiscussionPosts } from './discussions'
 import { fileScopeKey, forgetFileTabs, type FileScope } from './file-tabs'
 import { usePreferences } from './preferences'
 import { closePane, panesAfterSelect, panesBeside, restorePanes, shownPanes, splitPanesOf, type SplitPanes } from './conversation-split'
 import { activeInboxes, inboxKey } from './source-inboxes'
-import type { BrowserStatus } from '@conclave/protocol'
-import { focusBrowserConversation, focusBrowserTab, receiveBrowserTabs } from './browser-state'
 import type { InspectorTab } from './components/Inspector'
 import type { ChatEdit, InspectorFile } from './inspector-file'
 import { resolveCoreEndpoint } from './core-endpoint'
 import { reasonText } from './labels'
 import { askProjectTrust } from './project-trust'
-import { receiveTodos } from './conversation-todos'
 import { openUtilityPanel, visibleUtilityPanelOrder, type UtilityPanelKind, type UtilityPanelsOpen } from './utility-panel-order'
 import { exclusivePanels } from './side-panels'
 import { actionableItems, type ActionableItem } from './attention'
 import { overview, type Overview } from './overview'
 import { attentionSummaryMode, fetchAttentionSummaries, replaySummaryChanges, type AttentionSummaryMode } from './attention-summaries'
 
-export type OverviewFilter = null | 'mine' | 'todos' | 'running' | 'next' | 'unread'
+export type OverviewFilter = null | 'mine' | 'running' | 'next' | 'unread'
 export type OverviewPane = 'now' | 'stats'
 export type RoutinesTab = 'routines' | 'schedules'
 
@@ -72,7 +60,7 @@ export type ConnectionState = 'waiting-for-core' | 'connecting' | 'connected'
 // What the right-hand pane shows for the selected task.
 // terminal: a task's agent in a terminal · chat: a task started in the chat view, in its chat
 export type TaskView = 'detail' | 'chat'
-export type Section = 'tasks' | 'conversations' | 'discussions' | 'squads'
+export type Section = 'tasks' | 'conversations'
 
 // A sign-in this window started. The flow lives in core and ends if the connection drops.
 export type LoginState = {
@@ -97,30 +85,9 @@ export type CoreState = {
   selectedConversationId: string | null
   // The page a new conversation starts from while chats are the default (see ConversationDraft).
   conversationDraft: boolean
-  conversationDraftMode: 'single' | 'fanout' | 'debate'
   conversationDraftKey: string
-  // Group chats as core keeps them; empty on a core without them.
-  agentProfiles: Record<string, AgentProfile>
-  agentProfilesTab: 'profiles' | 'squads'
-  draftProfileId: string | null
-  squads: Record<string, Squad>
-  squadRuns: Record<string, SquadRun>
   // Bumped when a flow changes; a task inspector reads its flow again on this.
   flowsRevision: number
-  // Ideas and standalone to-dos, and a page of their own.
-  ideas: Record<string, Idea>
-  ideasRevision: number
-  ideasOpen: boolean
-  selectedSquadId: string | null
-  squadDraft: boolean
-  squadLaunch: boolean
-  squadPlan: SquadPlanRef | null
-  discussions: Record<string, Discussion>
-  selectedDiscussionId: string | null
-  // The page a new group chat starts from, and the group it copies, if any: a new object each time,
-  // so the page starts over.
-  discussionDraft: boolean
-  discussionDraftFrom: { discussion: Discussion } | null
   // The projects the new-conversation page was last asked to start with; a new object each time, so
   // asking again applies again.
   conversationDraftProjects: { paths: readonly string[] } | null
@@ -128,7 +95,6 @@ export type CoreState = {
   conversationDraftIssue: DraftIssue | null
   // A fresh settings snapshot; its key also keeps this composer's input separate from other drafts.
   conversationDraftFrom: { key: string; title: string; configuration: ConversationConfiguration } | null
-  taskMemberConversationId: string | null
   selectedId: string | null
   view: TaskView
   // The inspector beside a task's terminal or chat, kept open from one task to the next, on the
@@ -145,8 +111,6 @@ export type CoreState = {
   inspectorFile: InspectorFile | null
   // A turn's edit a chat should bring into view; seq tells a repeat of the same one apart.
   chatReveal: (ChatEdit & { seq: number }) | null
-  // The hosted browser as core last reported it; null until core says, or on a core without one.
-  browser: BrowserStatus | null
   awake: ComputerAwakeStatus | null
   // How chats run, as core keeps them; null until core says, or on a core without them.
   chatSettings: ChatSettings | null
@@ -212,16 +176,11 @@ export type CoreState = {
   filesFolders: { scope: FileScope; context: string } | null
   // The go-to-file box over the files panel's folders (⌘P).
   fileQuickOpen: boolean
-  // The browser panel in the shared utility dock: every tab there is, the user's own included.
-  browserPanelOpen: boolean
-  browserMaximized: boolean
   // Top to bottom among the utility panels that are open; reopening one moves it to the end.
   utilityPanelOrder: UtilityPanelKind[]
   activeTerminalId: string | null
   // Commands kept for the terminal panel, oldest first; empty from a core that keeps none.
   terminalCommands: TerminalCommand[]
-  // Pages kept for the built-in browser, oldest first; empty from a core that keeps none.
-  bookmarks: Bookmark[]
   // The user's own chat commands, oldest first; empty from a core that keeps none.
   chatCommands: SavedChatCommand[]
   // The skills repositories core installed; empty from a core without a library.
@@ -242,29 +201,11 @@ export const useCore = create<CoreState>()(() => ({
   section: 'tasks',
   selectedConversationId: null,
   conversationDraft: false,
-  conversationDraftMode: 'single',
   conversationDraftKey: 'blank',
   conversationDraftProjects: null,
   conversationDraftIssue: null,
   conversationDraftFrom: null,
-  agentProfiles: {},
-  agentProfilesTab: 'profiles',
-  draftProfileId: null,
-  squads: {},
-  squadRuns: {},
   flowsRevision: 0,
-  ideas: {},
-  ideasRevision: 0,
-  ideasOpen: false,
-  selectedSquadId: null,
-  squadDraft: false,
-  squadLaunch: false,
-  squadPlan: null,
-  discussions: {},
-  selectedDiscussionId: null,
-  discussionDraft: false,
-  discussionDraftFrom: null,
-  taskMemberConversationId: null,
   selectedId: null,
   view: 'detail',
   inspectorOpen: false,
@@ -276,7 +217,6 @@ export const useCore = create<CoreState>()(() => ({
   gitRevision: 0,
   inspectorFile: null,
   chatReveal: null,
-  browser: null,
   awake: null,
   chatSettings: null,
   agentCli: {},
@@ -318,12 +258,9 @@ export const useCore = create<CoreState>()(() => ({
   filesMaximized: false,
   filesFolders: null,
   fileQuickOpen: false,
-  browserPanelOpen: false,
-  browserMaximized: false,
   utilityPanelOrder: [],
   activeTerminalId: null,
   terminalCommands: [],
-  bookmarks: [],
   chatCommands: [],
   skillRepos: [],
   mcpServers: [],
@@ -346,14 +283,12 @@ export function selectTask(id: string | null): void {
     const chat = task?.conversationId && task.status !== 'done' && task.status !== 'abandoned'
     return {
       selectedId: id,
-      taskMemberConversationId: null,
       inspectorFile: s.section === 'tasks' && s.selectedId === id ? s.inspectorFile : null,
       section: 'tasks',
       inboxOpen: false,
       worktreesOpen: false,
       routinesOpen: false,
       overviewOpen: false,
-      ideasOpen: false,
       settingsOpen: false,
       view: chat ? 'chat' : 'detail',
       inspectorOpen: review || s.inspectorOpen
@@ -418,17 +353,15 @@ export function showConversationPlan(key: string | null): void {
   useCore.setState({ conversationInspectorOpen: true, conversationInspectorTab: 'plan', conversationPlan: key })
 }
 
-type UtilityPanelState = Pick<CoreState, 'utilityPanelOrder' | 'browserPanelOpen' | 'terminalPanelOpen' | 'portsPanelOpen' | 'filesPanelOpen' | 'browserMaximized' | 'terminalMaximized' | 'portsMaximized' | 'filesMaximized'>
+type UtilityPanelState = Pick<CoreState, 'utilityPanelOrder' | 'terminalPanelOpen' | 'portsPanelOpen' | 'filesPanelOpen' | 'terminalMaximized' | 'portsMaximized' | 'filesMaximized'>
 
 function utilityPanels(s: CoreState, order: UtilityPanelKind[], keepMaximized: boolean): UtilityPanelState {
   const open = (panel: UtilityPanelKind) => order.includes(panel)
   return {
     utilityPanelOrder: order,
-    browserPanelOpen: false,
     terminalPanelOpen: open('terminal'),
     portsPanelOpen: open('ports'),
     filesPanelOpen: open('files'),
-    browserMaximized: false,
     terminalMaximized: keepMaximized && s.terminalMaximized && open('terminal'),
     portsMaximized: keepMaximized && s.portsMaximized && open('ports'),
     filesMaximized: keepMaximized && s.filesMaximized && open('files')
@@ -448,13 +381,9 @@ function hiddenUtilityPanel(s: CoreState, panel: UtilityPanelKind): UtilityPanel
   return utilityPanels(s, visibleUtilityPanelOrder(s.utilityPanelOrder, openPanels(s)).filter((each) => each !== panel), true)
 }
 
-export function showBrowserPanel(_conversationId: string | null): void {}
-export function showBrowserTab(_tabId: string): void {}
-
 // A new terminal starts in the folder of whatever the user is looking at: a task's worktree, a
 // conversation's project. Core falls back to home.
 function contextFolder(s: CoreState): string | undefined {
-  if (s.section === 'discussions') return (s.selectedDiscussionId ? s.discussions[s.selectedDiscussionId] : undefined)?.projectPaths[0]
   if (s.section === 'conversations') {
     const conversation = s.selectedConversationId ? s.conversations[s.selectedConversationId] : undefined
     return conversation && !conversation.managedWorkspace ? conversation.workspacePath : undefined
@@ -545,7 +474,7 @@ export function togglePortsPanel(): void {
 }
 
 export function setPortsMaximized(maximized: boolean): void {
-  useCore.setState({ portsMaximized: maximized, ...(maximized ? { terminalMaximized: false, browserMaximized: false, filesMaximized: false } : {}) })
+  useCore.setState({ portsMaximized: maximized, ...(maximized ? { terminalMaximized: false, filesMaximized: false } : {}) })
 }
 
 // The list updates when core says so, through terminalCommands.changed.
@@ -555,29 +484,6 @@ export function saveTerminalCommand(params: RpcParams<'terminalCommands.save'>):
 
 export function deleteTerminalCommand(id: string): void {
   void perform((rpc) => rpc.call('terminalCommands.delete', { id }))
-}
-
-// The list updates when core says so, through bookmarks.changed.
-export function addBookmark(fields: BookmarkFields): void {
-  void perform((rpc) => rpc.call('bookmarks.add', fields))
-}
-
-export function deleteBookmark(id: string): void {
-  void perform((rpc) => rpc.call('bookmarks.delete', { id }))
-}
-
-// In slices, so a browser's thousands of bookmarks stay well under a message's size.
-const IMPORT_SLICE = 500
-export async function importBookmarks(bookmarks: readonly BookmarkFields[]): Promise<BookmarkImport | null> {
-  const total: BookmarkImport = { added: 0, skipped: 0 }
-  for (let at = 0; at < bookmarks.length; at += IMPORT_SLICE) {
-    const slice = bookmarks.slice(at, at + IMPORT_SLICE)
-    const result = await perform((rpc) => rpc.call('bookmarks.import', { bookmarks: slice }))
-    if (!result) return null
-    total.added += result.added
-    total.skipped += result.skipped
-  }
-  return total
 }
 
 // The list updates when core says so, through chatCommands.changed.
@@ -593,10 +499,6 @@ export function setTerminalMaximized(maximized: boolean): void {
   useCore.setState({ terminalMaximized: maximized, ...(maximized ? { portsMaximized: false, filesMaximized: false } : {}) })
 }
 
-export function toggleBrowserPanel(): void {}
-
-export function setBrowserMaximized(_maximized: boolean): void {}
-
 export function setFilesMaximized(maximized: boolean): void {
   useCore.setState({ filesMaximized: maximized, ...(maximized ? { terminalMaximized: false, portsMaximized: false } : {}) })
 }
@@ -609,10 +511,6 @@ export function toggleFilesPanel(): void {
 // elsewhere, and the folders it has, null where it has none (a page, or nothing selected).
 export function filesContext(s: CoreState): { key: string; scope: FileScope | null } {
   if (s.settingsOpen || s.overviewOpen || s.inboxOpen || s.worktreesOpen || s.routinesOpen) return { key: 'page', scope: null }
-  if (s.section === 'discussions') {
-    const discussion = s.selectedDiscussionId ? s.discussions[s.selectedDiscussionId] : undefined
-    return { key: `discussion:${s.selectedDiscussionId ?? ''}`, scope: discussion?.projectPaths.length ? { conversationId: null, roots: discussion.projectPaths } : null }
-  }
   if (s.section === 'conversations') {
     const conversation = s.selectedConversationId ? s.conversations[s.selectedConversationId] : undefined
     return { key: `conversation:${s.selectedConversationId ?? ''}`, scope: conversation ? { conversationId: conversation.id, roots: conversation.projectPaths } : null }
@@ -667,7 +565,7 @@ export function selectConversation(id: string | null): void {
   setSplitPanes(panesAfterSelect(savedPanes(), current, id))
   useCore.setState((s) => {
     const { [id ?? '']: _seen, ...unseen } = s.unseen
-    return { selectedConversationId: id, section: 'conversations', inspectorFile: s.section === 'conversations' && s.selectedConversationId === id ? s.inspectorFile : null, settingsOpen: false, worktreesOpen: false, routinesOpen: false, overviewOpen: false, ideasOpen: false, inboxOpen: false, conversationDraft: false, discussionDraft: false, unseen }
+    return { selectedConversationId: id, section: 'conversations', inspectorFile: s.section === 'conversations' && s.selectedConversationId === id ? s.inspectorFile : null, settingsOpen: false, worktreesOpen: false, routinesOpen: false, overviewOpen: false, inboxOpen: false, conversationDraft: false, unseen }
   })
   if (id) markRoutineRunSeen(id)
 }
@@ -763,32 +661,18 @@ export type DraftIssue = { provider: string; instance: string; key: string; titl
 // `projects`: what the page starts with, as from a project's group; without, it starts with none.
 // `issue`: the inbox issue the conversation is opened to look into.
 export function openConversationDraft(projects?: readonly string[], issue: DraftIssue | null = null, from: CoreState['conversationDraftFrom'] = null): void {
-  useCore.setState({ selectedConversationId: null, selectedDiscussionId: null, section: 'conversations', settingsOpen: false, worktreesOpen: false, routinesOpen: false, overviewOpen: false, inboxOpen: false, conversationDraft: true, discussionDraft: false, ideasOpen: false, conversationDraftMode: 'single', conversationDraftKey: crypto.randomUUID(), discussionDraftFrom: null, conversationDraftProjects: projects ? { paths: [...projects] } : null, conversationDraftIssue: issue, conversationDraftFrom: from, draftProfileId: null })
+  useCore.setState({ selectedConversationId: null, section: 'conversations', settingsOpen: false, worktreesOpen: false, routinesOpen: false, overviewOpen: false, inboxOpen: false, conversationDraft: true, conversationDraftKey: crypto.randomUUID(), conversationDraftProjects: projects ? { paths: [...projects] } : null, conversationDraftIssue: issue, conversationDraftFrom: from })
 }
 
-export type ConversationDraftMode = CoreState['conversationDraftMode']
-
-export function conversationDraftVisible(state: Pick<CoreState, 'section' | 'conversationDraft' | 'discussionDraft' | 'selectedConversationId' | 'selectedDiscussionId' | 'settingsOpen' | 'overviewOpen' | 'inboxOpen' | 'worktreesOpen' | 'routinesOpen'>): boolean {
+export function conversationDraftVisible(state: Pick<CoreState, 'section' | 'conversationDraft' | 'selectedConversationId' | 'settingsOpen' | 'overviewOpen' | 'inboxOpen' | 'worktreesOpen' | 'routinesOpen'>): boolean {
   if (state.settingsOpen || state.overviewOpen || state.inboxOpen || state.worktreesOpen || state.routinesOpen) return false
-  return (state.section === 'conversations' && state.conversationDraft && !state.selectedConversationId)
-    || (state.section === 'discussions' && state.discussionDraft && !state.selectedDiscussionId)
+  return state.section === 'conversations' && state.conversationDraft && !state.selectedConversationId
 }
 
-// Switching the visible form leaves its mounted sibling drafts intact.
-export function switchConversationDraftMode(mode: ConversationDraftMode): void {
-  const group = mode !== 'single'
-  if (group && !useCore.getState().rpc?.features.includes('discussions')) return
-  useCore.setState({ conversationDraftMode: mode, section: group ? 'discussions' : 'conversations', conversationDraft: !group, discussionDraft: group, selectedConversationId: null, selectedDiscussionId: null, ...PAGES_CLOSED })
-}
-
-export function openNewConversationDraft(mode: ConversationDraftMode = 'single', projects?: readonly string[]): void {
+export function openNewConversationDraft(projects?: readonly string[]): void {
   const current = useCore.getState()
-  if (projects === undefined && conversationDraftVisible(current)) {
-    switchConversationDraftMode(mode)
-    return
-  }
+  if (projects === undefined && conversationDraftVisible(current)) return
   openConversationDraft(projects)
-  switchConversationDraftMode(mode)
 }
 
 export function useSourceInvestigateSupported(): boolean {
@@ -799,63 +683,14 @@ export function closeConversationDraft(): void {
   openOverview()
 }
 
-const PAGES_CLOSED = { settingsOpen: false, worktreesOpen: false, routinesOpen: false, overviewOpen: false, ideasOpen: false, inboxOpen: false } as const
-
-export function selectSquad(id: string | null, draft = false): void {
-  useCore.setState({ section: 'squads', agentProfilesTab: 'squads', selectedSquadId: id, squadDraft: draft, ...PAGES_CLOSED })
-}
-
-export function useSquadsSupported(): boolean {
-  return useCore((state) => state.rpc?.features.includes('squads') ?? false)
-}
-
-export function selectDiscussion(id: string | null): void {
-  useCore.setState({ selectedDiscussionId: id, section: 'discussions', conversationDraft: false, discussionDraft: false, ...PAGES_CLOSED })
-}
-
-// from: a group whose members, projects and options the new one starts with.
-export function openDiscussionDraft(from?: Discussion): void {
-  useCore.setState({ selectedDiscussionId: null, selectedConversationId: null, section: 'discussions', conversationDraft: false, discussionDraft: true, conversationDraftMode: from && from.maxRounds > 1 ? 'debate' : 'fanout', conversationDraftKey: crypto.randomUUID(), discussionDraftFrom: from ? { discussion: from } : null, conversationDraftFrom: null, conversationDraftIssue: null, conversationDraftProjects: null, draftProfileId: null, ...PAGES_CLOSED })
-}
-
-export function closeDiscussionDraft(): void {
-  openOverview()
-}
-
-// Whether core runs group chats (discussions.*).
-export function useDiscussionsSupported(): boolean {
-  return useCore((s) => s.rpc?.features.includes('discussions') ?? false)
-}
-
-export function useDiscussionSummarySupported(): boolean {
-  return useCore((state) => state.rpc?.features.includes('discussion-summary-choice') ?? false)
-}
-
-// A core that lets members join and leave a group chat midway, and one that changes its projects.
-export function useDiscussionMembersSupported(): boolean {
-  return useCore((s) => s.rpc?.features.includes('discussion-members') ?? false)
-}
-
-export function useDiscussionProjectsSupported(): boolean {
-  return useCore((s) => s.rpc?.features.includes('discussion-projects') ?? false)
-}
-
-export function useDiscussionRequirementsSupported(): boolean {
-  return useCore((s) => s.rpc?.features.includes('discussion-requirements') ?? false)
-}
-
 // Whether core writes a commit message with the target's agent (git.commitMessage).
 export function useCommitMessageSupported(): boolean {
   return useCore((s) => s.rpc?.features.includes('commit-message') ?? false)
 }
 
-// Whether core puts conversations and group chats away (conversations.setArchived, discussions.setArchived).
+// Whether core puts conversations away (conversations.setArchived).
 export function useConversationArchiveSupported(): boolean {
   return useCore((s) => s.rpc?.features.includes('conversation-archive') ?? false)
-}
-
-export function useDiscussionArchiveSupported(): boolean {
-  return useCore((s) => s.rpc?.features.includes('discussion-archive') ?? false)
 }
 
 // Whether core cancels and reopens tasks (tasks.cancel, tasks.reopen).
@@ -866,11 +701,6 @@ export function useTaskCancelSupported(): boolean {
 // Whether a redo keeps the task, starting it over in place, rather than making a new one.
 export function useTaskRedoInPlace(): boolean {
   return useCore((s) => s.rpc?.features.includes('task-redo-in-place') ?? false)
-}
-
-// Whether core moves a group chat on to a new topic (discussions.newTopic).
-export function useDiscussionTopicsSupported(): boolean {
-  return useCore((s) => s.rpc?.features.includes('discussion-topics') ?? false)
 }
 
 // A page of its own, as the overview is: an issue may become a task or be looked into in a
@@ -888,8 +718,7 @@ export function setInboxOpen(open: boolean): void {
         settingsOpen: false,
         worktreesOpen: false,
         routinesOpen: false,
-        overviewOpen: false,
-        ideasOpen: false
+        overviewOpen: false
       }
     : OVERVIEW)
 }
@@ -926,11 +755,11 @@ export function setNewTaskOpen(open: boolean, draft: NewTaskDraft | null = null)
 }
 
 export function setSettingsOpen(open: boolean, section: string | null = null): void {
-  useCore.setState({ settingsOpen: open, settingsSection: section, ...(open ? { overviewOpen: false, ideasOpen: false } : {}) })
+  useCore.setState({ settingsOpen: open, settingsSection: section, ...(open ? { overviewOpen: false } : {}) })
 }
 
 export function setWorktreesOpen(open: boolean): void {
-  useCore.setState(open ? { worktreesOpen: true, routinesOpen: false, overviewOpen: false, ideasOpen: false, inboxOpen: false, settingsOpen: false } : OVERVIEW)
+  useCore.setState(open ? { worktreesOpen: true, routinesOpen: false, overviewOpen: false, inboxOpen: false, settingsOpen: false } : OVERVIEW)
 }
 
 // The reservations are a tab of the routines' page: what runs once, beside what runs again.
@@ -945,7 +774,7 @@ export function openUsageCard(agent: AgentKind | null): void {
 
 export function setRoutinesOpen(open: boolean, tab?: RoutinesTab): void {
   if (!open) return openOverview()
-  useCore.setState({ routinesOpen: true, ...(tab ? { routinesTab: tab } : {}), worktreesOpen: false, overviewOpen: false, ideasOpen: false, inboxOpen: false, settingsOpen: false })
+  useCore.setState({ routinesOpen: true, ...(tab ? { routinesTab: tab } : {}), worktreesOpen: false, overviewOpen: false, inboxOpen: false, settingsOpen: false })
 }
 
 export function useSchedulesOpen(): boolean {
@@ -955,8 +784,8 @@ export function useSchedulesOpen(): boolean {
 // The overview has no close of its own: it is what every other page leaves behind when it closes,
 // but a task, which goes back to the task board.
 const OVERVIEW = {
-  overviewOpen: true, ideasOpen: false, guideOpen: false, section: 'tasks', selectedId: null, selectedConversationId: null, conversationDraft: false, discussionDraft: false,
-  squadDraft: false, inboxOpen: false, worktreesOpen: false, routinesOpen: false, settingsOpen: false
+  overviewOpen: true, guideOpen: false, section: 'tasks', selectedId: null, selectedConversationId: null, conversationDraft: false,
+  inboxOpen: false, worktreesOpen: false, routinesOpen: false, settingsOpen: false
 } as const
 
 export function openOverview(): void {
@@ -966,10 +795,8 @@ export function openOverview(): void {
 export function closeMobileDetail(): void {
   useCore.setState({
     selectedConversationId: null,
-    selectedDiscussionId: null,
     selectedId: null,
     conversationDraft: false,
-    discussionDraft: false,
     settingsOpen: false,
     overviewOpen: false,
     inboxOpen: false,
@@ -987,18 +814,11 @@ export function useActionableItems(): ActionableItem[] {
   const conversations = useCore((s) => s.conversations)
   const mode = useCore((s) => s.attentionSummaryMode)
   const schedules = useCore((s) => s.schedules)
-  const squadRuns = useCore((state) => state.squadRuns)
-  return useMemo(() => actionableItems({ tasks, conversations, schedules, squadRuns }, mode === 'complete'), [tasks, conversations, schedules, squadRuns, mode, getLocale()])
+  return useMemo(() => actionableItems({ tasks, conversations, schedules }, mode === 'complete'), [tasks, conversations, schedules, mode, getLocale()])
 }
 
 export function setOverviewView(view: OverviewPane): void {
   useCore.setState({ overviewView: view, overviewScroll: 0 })
-}
-
-export function setIdeasOpen(open: boolean): void {
-  useCore.setState(open
-    ? { ideasOpen: true, overviewOpen: false, inboxOpen: false, worktreesOpen: false, routinesOpen: false, settingsOpen: false, selectedId: null, selectedConversationId: null, conversationDraft: false, discussionDraft: false }
-    : { ideasOpen: false })
 }
 
 export function setOverviewFilter(filter: OverviewFilter): void {
@@ -1015,15 +835,14 @@ export function useOverview(): Overview {
   const unseen = useCore((s) => s.unseen)
   const routines = useCore((s) => s.routines)
   const schedules = useCore((s) => s.schedules)
-  const squadRuns = useCore((s) => s.squadRuns)
   const mode = useCore((s) => s.attentionSummaryMode)
   const [now, setNow] = useState(Date.now)
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30_000)
     return () => clearInterval(timer)
   }, [])
-  return useMemo(() => overview({ tasks, conversations, unseen, routines, schedules, squadRuns, now,
-    includeTaskSummaries: mode === 'complete' }), [tasks, conversations, unseen, routines, schedules, squadRuns, now, mode, getLocale()])
+  return useMemo(() => overview({ tasks, conversations, unseen, routines, schedules, now,
+    includeTaskSummaries: mode === 'complete' }), [tasks, conversations, unseen, routines, schedules, now, mode, getLocale()])
 }
 
 export function openAttentionItem(item: ActionableItem): void {
@@ -1033,8 +852,6 @@ export function openAttentionItem(item: ActionableItem): void {
     const task = useCore.getState().tasks[item.target.id]
     if (!task || task.status === 'done' || task.status === 'abandoned') return
     selectTask(task.id)
-    const member = item.conversationId ? useCore.getState().conversations[item.conversationId] : null
-    if (member?.squadRunId) useCore.setState({ taskMemberConversationId: member.id, view: 'chat', inspectorOpen: true, taskInspectorTab: 'squad' })
     if (task.status === 'review' && task.conversationId) showTaskChanges()
   }
 }
@@ -1233,10 +1050,6 @@ export function useWireLogShown(): boolean {
   return useCore((s) => supported && (s.chatSettings?.wireLog ?? false))
 }
 
-export function useBrowserSupported(): boolean {
-  return useCore((s) => s.rpc?.features.includes('browser') ?? false)
-}
-
 export function useKnowledgeBaseSupported(): boolean {
   return useCore((s) => s.rpc?.features.includes('knowledge-base') ?? false)
 }
@@ -1300,10 +1113,6 @@ export function useAwakeSupported(): boolean {
 export async function setAwakeMode(mode: ComputerAwakeStatus['mode']): Promise<void> {
   const status = await perform((rpc) => rpc.call('system.setAwakeMode', { mode }))
   if (status) useCore.setState({ awake: status })
-}
-
-export function useBookmarksSupported(): boolean {
-  return useCore((s) => s.rpc?.features.includes('bookmarks') ?? false)
 }
 
 export function useTerminalCommandsSupported(): boolean {
@@ -1405,28 +1214,9 @@ export function startCoreConnection(): void {
         const conversationChanges = new Map<string, Conversation | null>()
         let changedSchedules: ScheduledRun[] | null = null
         let changedRoutines: Routine[] | null = null
-        const runChanges = new Map<string, SquadRun | null>()
-        const squadChanges = new Map<string, Squad | null>()
-        const profileChanges = new Map<string, AgentProfile | null>()
-        rpc.on('agentProfiles.changed', ({ profile }) => {
-          if (!initialized) profileChanges.set(profile.id, profile)
-          useCore.setState((state) => ({ agentProfiles: { ...state.agentProfiles, [profile.id]: profile } }))
-        })
-        const discussionChanges = new Map<string, Discussion | null>()
         useCore.setState({ attentionSummaryLoading: true, attentionSummaryError: null, agentCli: {} })
-        rpc.on('squads.changed', ({ squad }) => {
-          if (!initialized) squadChanges.set(squad.id, squad)
-          useCore.setState((state) => ({ squads: { ...state.squads, [squad.id]: squad } }))
-        })
-        rpc.on('squads.runChanged', ({ run }) => {
-          if (!initialized) runChanges.set(run.id, run)
-          useCore.setState((state) => ({ squadRuns: { ...state.squadRuns, [run.id]: run } }))
-        })
         rpc.on('flows.changed', () => {
           useCore.setState((state) => ({ flowsRevision: state.flowsRevision + 1 }))
-        })
-        rpc.on('ideas.changed', () => {
-          useCore.setState((state) => ({ ideasRevision: state.ideasRevision + 1 }))
         })
         rpc.on('git.changed', () => useCore.setState((s) => ({ gitRevision: s.gitRevision + 1 })))
         rpc.on('tasks.changed', ({ task }) => {
@@ -1437,7 +1227,7 @@ export function startCoreConnection(): void {
           if (!initialized) taskChanges.set(id, null)
           useCore.setState((s) => {
             const { [id]: _removed, ...tasks } = s.tasks
-            return { tasks, squadRuns: Object.fromEntries(Object.entries(s.squadRuns).filter(([, run]) => run.taskId !== id)), selectedId: s.selectedId === id ? null : s.selectedId }
+            return { tasks, selectedId: s.selectedId === id ? null : s.selectedId }
           })
         })
         rpc.on('conversations.changed', ({ conversation }) => {
@@ -1468,12 +1258,10 @@ export function startCoreConnection(): void {
         })
         rpc.on('conversations.chatItems', ({ conversationId, items }) => receiveChatItems(conversationId, items))
         rpc.on('conversations.chatDelta', ({ conversationId, stageId, itemId, append }) => receiveChatDelta(conversationId, stageId, itemId, append))
-        rpc.on('browser.changed', ({ status }) => useCore.setState({ browser: status }))
         rpc.on('system.awakeChanged', ({ status }) => useCore.setState({ awake: status }))
         rpc.on('system.chatSettingsChanged', ({ settings }) => useCore.setState({ chatSettings: settings }))
         rpc.on('system.agentCliChanged', ({ status }) => useCore.setState((s) => ({ agentCli: mergeCliStatuses(s.agentCli, [status]) })))
         rpc.on('system.environmentChanged', ({ environment }) => useCore.setState({ environment }))
-        rpc.on('browser.tabsChanged', ({ conversationId, tabs }) => receiveBrowserTabs(conversationId, tabs))
         rpc.on('usage.changed', ({ usage }) =>
           useCore.setState((s) => withUsage([...s.accountUsage.filter((entry) => entry.agent !== usage.agent || usageAccount(entry) !== usageAccount(usage)), usage], s.accounts))
         )
@@ -1492,7 +1280,6 @@ export function startCoreConnection(): void {
           }))
         )
         rpc.on('terminalCommands.changed', ({ commands }) => useCore.setState({ terminalCommands: commands }))
-        rpc.on('bookmarks.changed', ({ bookmarks }) => useCore.setState({ bookmarks }))
         rpc.on('chatCommands.changed', ({ commands }) => useCore.setState({ chatCommands: commands }))
         rpc.on('skills.changed', ({ repos }) => useCore.setState({ skillRepos: repos }))
         rpc.on('mcpServers.changed', ({ servers }) => useCore.setState({ mcpServers: servers }))
@@ -1505,20 +1292,6 @@ export function startCoreConnection(): void {
           if (!initialized) changedRoutines = routines
           useCore.setState({ routines })
         })
-        rpc.on('discussions.changed', ({ discussion }) => {
-          if (!initialized) discussionChanges.set(discussion.id, discussion)
-          useCore.setState((s) => ({ discussions: { ...s.discussions, [discussion.id]: discussion } }))
-        })
-        rpc.on('discussions.deleted', ({ id }) => {
-          if (!initialized) discussionChanges.set(id, null)
-          forgetDiscussionPosts(id)
-          useCore.setState((s) => {
-            const { [id]: _removed, ...discussions } = s.discussions
-            return { discussions, selectedDiscussionId: s.selectedDiscussionId === id ? null : s.selectedDiscussionId }
-          })
-        })
-        rpc.on('discussions.posts', ({ discussionId, posts }) => receiveDiscussionPosts(discussionId, posts))
-        rpc.on('todos.changed', ({ conversationId, groups }) => receiveTodos(conversationId, groups))
         rpc.on('sources.inboxChanged', ({ inbox }) =>
           useCore.setState((s) => ({ inboxes: { ...s.inboxes, [inboxKey(inbox)]: inbox } }))
         )
@@ -1541,19 +1314,10 @@ export function startCoreConnection(): void {
         const inboxes = await rpc.call('sources.inbox', {})
         const terminals = await rpc.call('terminals.list', {}).catch(() => [])
         const terminalCommands = rpc.features.includes('terminal-commands') ? await rpc.call('terminalCommands.list', {}).catch(() => []) : []
-        // Query the optional browser host's status without delaying the rest of the connection.
-        if (rpc.features.includes('browser')) void rpc.call('browser.status', {}).then((status) => useCore.setState({ browser: status })).catch(() => {})
-        if (rpc.features.includes('bookmarks')) void rpc.call('bookmarks.list', {}).then((bookmarks) => useCore.setState({ bookmarks })).catch(() => {})
         if (rpc.features.includes('keep-awake')) void rpc.call('system.awakeStatus', {}).then((awake) => useCore.setState({ awake })).catch(() => {})
-        // What is left to do everywhere, for the overview; todos.changed keeps it current.
-        if (rpc.features.includes('todo-overview')) void rpc.call('todos.open', {}).then((open) => open.forEach(({ conversationId, groups }) => receiveTodos(conversationId, groups))).catch(() => {})
         if (rpc.features.includes('prompt-suggestions')) void rpc.call('system.chatSettings', {}).then((chatSettings) => useCore.setState({ chatSettings })).catch(() => {})
         const schedules = rpc.features.includes('schedules') ? await rpc.call('schedules.list', {}).catch(() => []) : []
         const routines = rpc.features.includes('routines') ? await rpc.call('routines.list', {}).catch(() => []) : []
-        const activeSquadRuns = rpc.features.includes('squads') ? await rpc.call('squads.activeRuns', {}) : []
-        const agentProfiles = rpc.features.includes('agent-profiles') ? await rpc.call('agentProfiles.list', {}) : []
-        const squads = rpc.features.includes('squads') ? await rpc.call('squads.list', {}) : []
-        const discussions = rpc.features.includes('discussions') ? await rpc.call('discussions.list', {}).catch(() => []) : []
         if (rpc.features.includes('chat-commands')) void rpc.call('chatCommands.list', {}).then((chatCommands) => useCore.setState({ chatCommands })).catch(() => {})
         if (rpc.features.includes('skills-library')) void rpc.call('skills.list', {}).then((skillRepos) => useCore.setState({ skillRepos })).catch(() => {})
         if (rpc.features.includes('mcp-servers')) void rpc.call('mcpServers.list', {}).then((mcpServers) => useCore.setState({ mcpServers })).catch(() => {})
@@ -1566,10 +1330,6 @@ export function startCoreConnection(): void {
           conversations: replaySummaryChanges(Object.values(conversations ?? s.conversations), conversationChanges),
           schedules: changedSchedules ?? schedules,
           routines: changedRoutines ?? routines,
-          agentProfiles: replaySummaryChanges(agentProfiles, profileChanges),
-          squads: replaySummaryChanges(squads, squadChanges),
-          squadRuns: replaySummaryChanges(activeSquadRuns, runChanges),
-          discussions: replaySummaryChanges(discussions, discussionChanges),
           attentionSummaryMode: attentionSummaryMode(rpc),
           attentionSummaryLoading: false,
           attentionSummaryError: summaryError,

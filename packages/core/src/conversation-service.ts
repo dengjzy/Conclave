@@ -167,8 +167,6 @@ export class ConversationService {
 
   // Core's chat settings say; main hands them over before any stage starts.
   private promptSuggestions = false
-  private userBrowser: boolean | undefined
-  private userTodos = true
   private knowledgeBase: KnowledgeBase | null = null
   private readonly retiring = new Set<string>()
   private readonly launching = new Map<string, AgentKind>()
@@ -329,15 +327,6 @@ export class ConversationService {
     const showing = this.store.list().filter((conversation) => this.chats.suggestion(conversation.id) !== null)
     this.chats.pauseSuggestions(!enabled)
     showing.forEach((conversation) => this.changed(conversation))
-  }
-
-  // Read at each start: a running agent keeps what it started with.
-  setUserBrowser(enabled: boolean): void {
-    this.userBrowser = enabled
-  }
-
-  setUserTodos(enabled: boolean): void {
-    this.userTodos = enabled
   }
 
   setTitleNaming(mode: NonNullable<ChatSettings['titleNaming']>): void { this.titles.setMode(mode) }
@@ -1267,8 +1256,6 @@ export class ConversationService {
       // As its adapter starts it, for an agent that takes it on its command (OpenCode's config).
       ...(this.mcp ? { mcp: launch ? launch.mcp(this.mcp(id), agentStage) : this.mcp(id) } : {}),
       ...(userMcp.length ? { userMcp } : {}),
-      ...(this.userBrowser === undefined ? {} : { userBrowser: this.userBrowser }),
-      todos: this.userTodos && !current.discussionId && !current.parentConversationId,
       ...(knowledgeBase ? { knowledgeBase } : {}),
       ...(skills ? { skills } : {}),
       ...(provider ? { provider } : {}),
@@ -1389,10 +1376,9 @@ export class ConversationService {
         planOnly: Boolean(stage.planOnly),
         readOnly: !stage.planOnly && Boolean(conversation.workspaceReadOnly),
         allowBypass: !stage.planOnly && !conversation.workspaceReadOnly && (chosen.allowBypass ?? false),
-        promptSuggestions: this.promptSuggestions,
+        promptSuggestions: this.promptSuggestions && !conversation.taskId && !conversation.parentConversationId && !conversation.discussionId && !conversation.squadRunId && !conversation.routineId,
         preferred: { permissionMode, ...remembered.preferred },
         keepImage: (data) => this.keepImage(data),
-        todos: this.userTodos && !conversation.discussionId && !conversation.parentConversationId,
         ...(knowledgeBase ? { knowledgeBase } : {}),
         ...(userMcp.length ? { userMcp } : {}),
         ...(onProvider ? { providerModels: onProvider } : {})
@@ -1871,15 +1857,8 @@ export class ConversationService {
     } finally { const pending = (this.gitSending.get(id) ?? 1) - 1; if (pending) this.gitSending.set(id, pending); else this.gitSending.delete(id) }
   }
 
-  // Asks the user, in the running chat, whether the browser may open a site; the card stays
-  // until they answer, the agent leaves, or the turn is interrupted.
-  askHost(id: string, host: string, url: string): Promise<ChatDecision> {
-    const requestId = this.chats.ask(id, { kind: 'browser-host', host, url })
-    return new Promise((resolve, reject) => this.asks.set(requestId, { resolve, reject }))
-  }
-
   // Asks the user, in the running chat, whether a command the agent wants may run in a terminal
-  // of its own; the same card, and the same answers, as a site the browser would open.
+  // of its own.
   askTerminal(id: string, command: string, cwd: string): Promise<ChatDecision> {
     const requestId = this.chats.ask(id, { kind: 'terminal-run', command, cwd })
     return new Promise((resolve, reject) => this.asks.set(requestId, { resolve, reject }))

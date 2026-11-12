@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url'
 import { PROTOCOL_VERSION } from '../packages/protocol/src/index.ts'
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
-const REQUIRED_FEATURES = ['flows', 'ideas', 'task-contracts']
+const REQUIRED_FEATURES = ['flows', 'task-contracts']
 const START_TIMEOUT_MS = 90_000
 
 const args = process.argv.slice(2)
@@ -99,12 +99,10 @@ async function main() {
     const missing = REQUIRED_FEATURES.filter((feature) => !hello.features.includes(feature))
     if (missing.length > 0) throw new Error(`features missing: ${missing.join(', ')}`)
 
-    const idea = await call('ideas.create', { title: 'smoke', notes: '', status: 'idea', tags: [], projectPath: null })
-    const listed = await call('ideas.list', {})
-    if (!listed.some((each) => each.id === idea.id)) throw new Error('ideas.list did not return the created idea')
-    await call('ideas.update', { id: idea.id, status: 'todo' })
-    await call('ideas.remove', { id: idea.id })
-    if ((await call('ideas.list', {})).length !== 0) throw new Error('ideas.remove left the idea behind')
+    const evolution = await call('evolution.status', {})
+    if (evolution.stagingBranch !== 'self/evolve' || typeof evolution.openFrictionCount !== 'number') {
+      throw new Error('evolution.status did not return status')
+    }
 
     const task = await call('tasks.create', { title: 'smoke', details: '', repos: [repo], agent: 'claude', dependsOn: [] })
     const contract = await call('tasks.setContract', {
@@ -120,9 +118,11 @@ async function main() {
     if (contract.verification.checks.length !== 1) throw new Error('the contract lost its check')
     if (!contract.verification.trustedHash) throw new Error('the contract has no trust hash')
     if ((await call('tasks.contract', { id: task.id })).verification.checks.length !== 1) throw new Error('the contract did not read back')
+    const flows = await call('flows.list', { taskId: task.id })
+    if (!Array.isArray(flows)) throw new Error('flows.list did not return a list')
     await call('tasks.delete', { id: task.id })
 
-    console.log(`self-smoke: ok · protocol ${hello.protocolVersion} · ${hello.features.length} features · ideas · contract`)
+    console.log(`self-smoke: ok · protocol ${hello.protocolVersion} · ${hello.features.length} features · flows · evolution · contract`)
     return 0
   } catch (error) {
     console.error(`self-smoke: failed · ${error instanceof Error ? error.message : String(error)}`)

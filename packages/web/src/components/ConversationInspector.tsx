@@ -1,19 +1,13 @@
 import { PullRequestPanel } from './PullRequestPanel'
-import { AgentCalls } from './AgentCalls'
-import { useAgentCalls, useAgentCallsSupported } from '../agent-calls'
 import { t } from '../i18n'
-import { HelperPanel } from './HelperPanel'
-import { useHelper, useHelperSupported } from '../helper-conversations'
 import { GitInspector } from './GitInspector'
 import { useEffect, useState, type ReactNode } from 'react'
-import { openTodoCount, type Conversation, type FolderChanges } from '@conclave/protocol'
+import type { Conversation, FolderChanges } from '@conclave/protocol'
 import { pathShortener, usePlans } from '../chat-state'
 import { clearInspectorFile, setConversationInspectorOpen, setConversationInspectorTab, showConversationPlan, showInspectorFile, useCore } from '../core-store'
 import { ProjectGroups, ProjectRow, useProjectHeads } from './BranchStatus'
 import { ChatPlanView } from './ChatPlan'
 import { ChangedFiles, CommitList, FileDiffView, GIT_TABS, InspectorPanel, useFocusCount, type InspectorTab } from './Inspector'
-import { TodoPanel } from './TodoPanel'
-import { useConversationTodos, useTodosShown } from '../conversation-todos'
 import { projectName } from './ProjectPicker'
 import { WireLogView } from './WireLogView'
 import { DiffCommentConversation } from './DiffComments'
@@ -72,19 +66,11 @@ export function ConversationInspector({ conversation, widthRatio, onWidthRatioCh
   onWidthRatioChange: (ratio: number) => void
   wire?: boolean
 }) {
-  const delegationSupported = useAgentCallsSupported(conversation)
-  const { calls } = useAgentCalls(delegationSupported ? conversation.id : null)
-  const helperSupported = useHelperSupported(conversation)
-  const helper = useHelper(helperSupported ? conversation.id : null)
-  const conversationId = conversation.id
-  const gitRevision = useCore((state) => state.gitRevision)
   const rpc = useCore((state) => state.rpc)
   const wanted = useCore((state) => state.conversationInspectorTab)
   const selectedPlan = useCore((state) => state.conversationPlan)
   const plans = usePlans(conversation.id)
-  const todosShown = useTodosShown()
-  const todos = useConversationTodos(todosShown ? conversation.id : null)
-  const tabs: InspectorTab[] = [...(helper ? ['helper' as const] : []), ...(calls?.length ? ['delegation' as const] : []),...(conversation.projectPaths.length > 0 ? GIT_TABS : []), ...(plans.length > 0 ? ['plan' as const] : []), ...(todosShown ? ['todos' as const] : []), ...(wire ? ['wire' as const] : []), 'pull-request']
+  const tabs: InspectorTab[] = [...(conversation.projectPaths.length > 0 ? GIT_TABS : []), ...(plans.length > 0 ? ['plan' as const] : []), ...(wire ? ['wire' as const] : []), 'pull-request']
   const tab = tabs.includes(wanted) ? wanted : (tabs[0] ?? 'changes')
   const [refreshCount, setRefreshCount] = useState(0)
   const [gitMaximized, setGitMaximized] = useState(false)
@@ -104,21 +90,13 @@ export function ConversationInspector({ conversation, widthRatio, onWidthRatioCh
       tabs={tabs}
       tab={tab}
       onTab={setConversationInspectorTab}
-      helperAwaiting={helper?.chat?.turn === 'awaiting'}
       fileCount={fileCount}
-      todoCount={openTodoCount(todos)}
       onRefresh={() => setRefreshCount((count) => count + 1)}
       onClose={() => setConversationInspectorOpen(false)}
     >
       <DiffCommentConversation.Provider value={conversation.id}>
         {tab === 'pull-request' ? (
           <PullRequestPanel key={conversation.id} conversationId={conversation.id} />
-        ) : tab === 'helper' ? (
-          <HelperPanel key={conversation.id} parent={conversation} />
-        ) : tab === 'delegation' && conversation ? (
-          <AgentCalls key={conversation.id} conversation={conversation} />
-        ) : tab === 'todos' ? (
-          <TodoPanel conversationId={conversation.id} />
         ) : tab === 'wire' ? (
           <WireLogView conversationId={conversation.id} />
         ) : tab === 'plan' ? (

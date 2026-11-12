@@ -13,17 +13,12 @@ import { ChatTurnStore } from './chat-turn-store'
 import { SmallModelStore } from './small-model-store'
 import { AttachmentStore } from './attachment-store'
 import { AttachmentUploads } from './attachment-uploads'
-import { watchBrowserHostFile } from './browser-host-file'
-import { BrowserService, WATCH_ALL } from './browser-service'
 import { CredentialStore } from './credential-store'
 import { DaemonClient } from './daemon-client'
 import { PluginService } from './plugin-service'
 import { ProjectStar } from './project-star'
 import { createRpcHandlers } from './rpc-handlers'
 import { SessionImports } from './session-imports'
-import { TodoStore } from './todo-store'
-import { IdeaStore } from './idea-store'
-import { DiscussionService } from './discussion-service'
 import { startRpcServer, type RpcServer } from './rpc-server'
 import { TaskService } from './task-service'
 import { TaskContractStore } from './task-contract-store'
@@ -59,7 +54,6 @@ import { ConversationStore } from './conversation-store'
 import { ConversationService } from './conversation-service'
 import { NativeSessionRunner } from './native-session-runner'
 import { TerminalCommandStore } from './terminal-commands'
-import { BookmarkStore } from './bookmarks'
 import { ChatCommandStore } from './chat-commands'
 import { ShellPrompt } from './shell-prompt'
 import { TerminalService } from './terminal-service'
@@ -87,7 +81,6 @@ await mkdir(paths.home, { recursive: true, mode: 0o700 })
 await mkdir(paths.worktrees, { recursive: true })
 await mkdir(paths.attachments, { recursive: true, mode: 0o700 })
 await mkdir(paths.sessions, { recursive: true, mode: 0o700 })
-await mkdir(paths.browser, { recursive: true, mode: 0o700 })
 await mkdir(paths.skills, { recursive: true, mode: 0o700 })
 
 // TaskStore first: its migrations create every table the other stores read.
@@ -118,10 +111,6 @@ const wire = new WireLog(paths.sessions, (conversationId, stageId, entries) =>
   [...(server?.connections ?? [])].filter((c) => c.wiring.has(conversationId)).forEach((c) => c.notify('debug.wireEntries', { conversationId, stageId, entries }))
 )
 
-// Each conversation's to-dos; they go with it.
-const todos = new TodoStore(paths.database, (conversationId, groups) => server?.broadcast('todos.changed', { conversationId, groups }))
-const ideas = new IdeaStore(paths.database, () => server?.broadcast('ideas.changed', {}))
-
 // Built before the task service, which runs its chat tasks in it; each hands the other its events.
 const conversations = new ConversationService(
   conversationsStore, daemon, paths.sessions,
@@ -133,15 +122,12 @@ const conversations = new ConversationService(
       service.chatChanged(event.conversation)
       schedules.conversationChanged(event.conversation)
       routines.conversationChanged(event.conversation)
-      discussions.conversationChanged(event.conversation)
       refreshAwake()
     } else if (event.type === 'deleted') {
       server?.broadcast('conversations.deleted', { id: event.id })
       smallModels.interruptConversation(event.id)
       schedules.conversationDeleted(event.id)
       sources.tasksChanged()
-      todos.drop(event.id)
-      void browser.closeForConversation(event.id)
     }
     else if (event.type === 'prompt') {
       const helper = conversations.get(event.conversationId)
@@ -160,7 +146,6 @@ const conversations = new ConversationService(
         if (stage) analytics.observe(stage, event.items.filter((item) => item.stageId === id))
       }
       routines.observe(event.conversationId, event.items)
-      discussions.observe(event.conversationId, event.items)
       flows?.observe(event.conversationId, event.items)
       notifyChatItems(event.conversationId, limits.decorate(smallModels.decorate(event.items)))
     } else if (event.type === 'planApproved') {
@@ -174,29 +159,11 @@ const conversations = new ConversationService(
   },
   projects,
   attachments,
-  // Read at each agent start, so turning history or to-dos off holds from the next start.
-  (id) => conclaveChatMcpServer(paths.home, id, { history: chatSettings.current().readHistory, todos: chatSettings.current().userTodos }),
+  // Read at each agent start, so turning history off holds from the next start.
+  (id) => conclaveChatMcpServer(paths.home, id, { history: chatSettings.current().readHistory }),
   paths.worktrees,
   wire
 )
-
-const browser = new BrowserService(
-  paths,
-  attachments,
-  (id, host, url) => conversations.askHost(id, host, url),
-  (event) => {
-    if (event.type === 'status') server?.broadcast('browser.changed', { status: event.status })
-    else {
-      const { conversationId, tabs } = event
-      ;[...(server?.connections ?? [])]
-        .filter((c) => c.browsing.has(WATCH_ALL) || (conversationId !== null && c.browsing.has(conversationId)))
-        .forEach((c) => c.notify('browser.tabsChanged', { conversationId, tabs }))
-    }
-  }
-)
-// Browser hosts are external to this workspace; reconnect when their endpoint appears.
-watchBrowserHostFile(paths.browserHostFile, () => browser.hostFileChanged())
-browser.hostFileChanged()
 
 const service = new TaskService(
   store,
@@ -339,18 +306,6 @@ const routines = new RoutineService(paths.database, {
   emit: (list) => server?.broadcast('routines.changed', { routines: list })
 })
 
-// Group chats run their members as conversations; built after them, called only once one changes.
-const discussions = new DiscussionService(paths.database, {
-  conversations,
-  events: {
-    changed: (discussion) => server?.broadcast('discussions.changed', { discussion }),
-    deleted: (id) => server?.broadcast('discussions.deleted', { id }),
-    posts: (discussionId, posts) => server?.broadcast('discussions.posts', { discussionId, posts })
-  }
-})
-
-
-
 const terminals = new TerminalService(paths.database, daemon, (list) => server?.broadcast('terminals.changed', { terminals: list }), Date.now, new ShellPrompt(path.join(paths.home, 'shell')))
 
 const hiddenTests = new HiddenTestProvider(terminals)
@@ -410,7 +365,6 @@ service.setWorktreeSetup(worktreeSetup)
 service.setCheckRunner(new CheckRunner(new CommandCheckProvider(terminals), worktreeSetup, hiddenTests))
 conversations.setWorktreeSetup(worktreeSetup)
 const terminalCommands = new TerminalCommandStore(paths.database, (commands) => server?.broadcast('terminalCommands.changed', { commands }))
-const bookmarks = new BookmarkStore(paths.database, (list) => server?.broadcast('bookmarks.changed', { bookmarks: list }))
 const chatCommands = new ChatCommandStore(paths.database, (commands) => server?.broadcast('chatCommands.changed', { commands }))
 const worktrees = new WorktreeService(paths.worktrees, service, () => server?.broadcast('worktrees.changed', {}), conversations)
 awake = new ComputerAwakeService(daemon, new AwakeConfigStore(paths.awakeConfig), (status) =>
@@ -419,8 +373,6 @@ awake = new ComputerAwakeService(daemon, new AwakeConfigStore(paths.awakeConfig)
 const chatSettings = new ChatSettingsStore(paths.chatSettings, (settings) => {
   conversations.setPromptSuggestions(settings.promptSuggestions)
   conversations.setTitleNaming(settings.titleNaming ?? 'off')
-  conversations.setUserBrowser(settings.userBrowser ?? true)
-  conversations.setUserTodos(settings.userTodos ?? true)
   conversations.setKnowledgeBase(settings.knowledgeBase ?? null)
   conversations.setCapacity(settings, () => { void schedules.tick() })
   wire.setEnabled(settings.wireLog ?? false)
@@ -464,8 +416,6 @@ conversations.setSkillsProvider(async (agent, selected) => {
 const initialChatSettings = await chatSettings.load()
 conversations.setPromptSuggestions(initialChatSettings.promptSuggestions)
 conversations.setTitleNaming(initialChatSettings.titleNaming)
-conversations.setUserBrowser(initialChatSettings.userBrowser)
-conversations.setUserTodos(initialChatSettings.userTodos)
 conversations.setKnowledgeBase(initialChatSettings.knowledgeBase)
 conversations.setCapacity(initialChatSettings, () => { void schedules.tick() })
 wire.setEnabled(initialChatSettings.wireLog)
@@ -502,7 +452,6 @@ daemon.onConnect(() => {
       conversations.recoverInitialMessages()
       await smallModels.recoverHelpers({ stages: () => conversations.chatStageRefs(), items: (id, stageId) => conversations.stageChatItems(id, stageId) })
       terminals.reconcile(sessions)
-      await discussions.reconcile()
       await flows?.reconcile()
       void environment.check(true).catch((error: unknown) => console.error('[conclave-core] agent discovery failed', error))
       // What came due while core or the daemon was away goes now, not at the next tick.
@@ -555,7 +504,7 @@ server = await startRpcServer({
   handlers: createRpcHandlers(service, conversations, projects, gitFavorites, daemon, usage, sources, {
     store: attachments,
     uploads: new AttachmentUploads(attachments)
-  }, terminals, worktrees, browser, awake, terminalCommands, limits, runs, turns, chatSettings, environment, schedules, chatCommands, routines, discussions, wire, () => server?.broadcast('git.changed', {}), undefined, todos, plugins, skills, mcpServers, smallModels, projectConfigs, modelProviders, sessionImports, accounts, cliMaintenance, analytics, automation, new ProjectStar(sources), undefined, bookmarks, flows ?? undefined, ideas, evolution)
+  }, terminals, worktrees, awake, terminalCommands, limits, runs, turns, chatSettings, environment, schedules, chatCommands, routines, wire, () => server?.broadcast('git.changed', {}), plugins, skills, mcpServers, smallModels, projectConfigs, modelProviders, sessionImports, accounts, cliMaintenance, analytics, automation, new ProjectStar(sources), flows ?? undefined, evolution)
 })
 await writeCoreEndpoint({ port: server.port, token, pid: process.pid, protocolVersion: PROTOCOL_VERSION, version: packageJson.version })
 daemon.start()
@@ -604,7 +553,6 @@ async function shutdown(): Promise<void> {
   routines.stop()
   autoArchive.stop()
   flows?.close()
-  discussions.close()
   sources.stop()
   await plugins.close()
   await sources.pause(sources.list().map((source) => source.provider))
@@ -621,7 +569,6 @@ async function shutdown(): Promise<void> {
   smallModels.close()
   projects.close()
   gitFavorites.close()
-  bookmarks.close()
   process.exit(0)
 }
 process.on('SIGINT', () => void shutdown())

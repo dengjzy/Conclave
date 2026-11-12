@@ -15,13 +15,12 @@ describe('conclave MCP server', () => {
     const readOnly = createMcpHandler({
       preview: checkPreviewFile, planOnly: true,
       initialized: async () => { initialized = true },
-      browser: { call: async () => ({ text: 'read' }) },
       terminal: { call: async () => ({ text: 'read' }) }
     })
     const listed = await readOnly(frame('tools/list'))
     expect(initialized).toBe(false)
     expect(listed?.result).toMatchObject({ tools: expect.arrayContaining([expect.objectContaining({ name: 'show_preview' }), expect.objectContaining({ name: 'terminal_read' })]) })
-    for (const name of ['terminal_run', 'terminal_stop', 'browser_navigate', 'browser_click', 'browser_type']) {
+    for (const name of ['terminal_run', 'terminal_stop']) {
       expect((await readOnly(frame('tools/call', { name, arguments: {} })))?.error?.code).toBe(-32602)
     }
     await readOnly(frame('initialize'))
@@ -37,10 +36,10 @@ describe('conclave MCP server', () => {
     expect(listed).toBe(1)
   })
 
-  it('gives a group chat member only read-only tools and no to-dos', () => {
-    expect(conversationToolLimits({ discussionId: 'group' })).toEqual({ readOnly: true, todos: false })
-    expect(conversationToolLimits({ workspaceReadOnly: true })).toEqual({ readOnly: true, todos: true })
-    expect(conversationToolLimits({})).toEqual({ readOnly: false, todos: true })
+  it('gives a group chat member only read-only tools', () => {
+    expect(conversationToolLimits({ discussionId: 'group' })).toEqual({ readOnly: true })
+    expect(conversationToolLimits({ workspaceReadOnly: true })).toEqual({ readOnly: true })
+    expect(conversationToolLimits({})).toEqual({ readOnly: false })
   })
 
   it('answers the handshake with the client version and a tools capability', async () => {
@@ -54,28 +53,26 @@ describe('conclave MCP server', () => {
     expect(response?.result).toEqual({ tools: [expect.objectContaining({ name: 'show_preview', annotations: expect.objectContaining({ readOnlyHint: true }) })] })
   })
 
-  it('adds the browser tools for a conversation, checks their arguments, and passes a screenshot through', async () => {
+  it('adds the terminal tools for a conversation and checks their arguments', async () => {
     const called: Array<[string, unknown]> = []
     const chat = createMcpHandler({
       preview: checkPreviewFile,
-      browser: {
+      terminal: {
         call: async (kind, args) => {
           called.push([kind, args])
-          return kind === 'screenshot' ? { text: '截图已保存', image: { data: 'AAAA', mimeType: 'image/jpeg' } } : { text: `did ${kind}` }
+          return { text: `did ${kind}` }
         }
       }
     })
     const listed = (await chat(frame('tools/list')))?.result as { tools: { name: string; annotations: { readOnlyHint: boolean } }[] }
-    expect(listed.tools.map((tool) => tool.name)).toEqual(['show_preview', 'browser_navigate', 'browser_snapshot', 'browser_screenshot', 'browser_click', 'browser_type', 'browser_press', 'browser_hover', 'browser_scroll', 'browser_select', 'browser_wait', 'browser_tabs', 'browser_console'])
-    expect(listed.tools.find((tool) => tool.name === 'browser_snapshot')?.annotations.readOnlyHint).toBe(true)
-    const bad = await chat(frame('tools/call', { name: 'browser_click', arguments: { ref: 'nope' } }))
+    expect(listed.tools.map((tool) => tool.name)).toEqual(['show_preview', 'terminal_run', 'terminal_read', 'terminal_stop'])
+    expect(listed.tools.find((tool) => tool.name === 'terminal_read')?.annotations.readOnlyHint).toBe(true)
+    const bad = await chat(frame('tools/call', { name: 'terminal_read', arguments: { id: 'nope' } }))
     expect(bad?.result).toMatchObject({ isError: true, content: [{ text: expect.stringContaining('参数不对') }] })
     expect(called).toEqual([])
-    const shot = await chat(frame('tools/call', { name: 'browser_screenshot', arguments: { fullPage: true } }))
-    expect(shot?.result).toEqual({ content: [{ type: 'image', data: 'AAAA', mimeType: 'image/jpeg' }, { type: 'text', text: '截图已保存' }], isError: false })
-    expect(called).toEqual([['screenshot', { fullPage: true }]])
-    const unknown = await chat(frame('tools/call', { name: 'browser_fly', arguments: {} }))
-    expect(unknown?.error?.code).toBe(-32602)
+    const run = await chat(frame('tools/call', { name: 'terminal_run', arguments: { command: 'pnpm test' } }))
+    expect(run?.result).toEqual({ content: [{ type: 'text', text: 'did run' }], isError: false })
+    expect(called).toEqual([['run', { command: 'pnpm test' }]])
   })
 
   it('shows an HTML file or a picture that exists, and refuses anything else', async () => {

@@ -26,12 +26,12 @@ A generation's contract checks are exactly these, in this order:
 pnpm typecheck
 pnpm test
 pnpm build
-pnpm self:smoke                        # isolated core boots, protocol, ideas, contract
+pnpm self:smoke                        # isolated core boots, protocol, flows, evolution, contract
 pnpm self:tests --base <generation base>   # tests may change, but not shrink or gain skips
 ```
 
 `self:smoke` starts its own core with a temp `CONCLAVE_HOME` and port, no daemon and no agent, then
-checks `system.hello`, the feature list, ideas CRUD and a contract round-trip. It is the gate that
+checks `system.hello`, the feature list, evolution status, flows list and a task contract round-trip. It is the gate that
 catches "compiles, tests pass, cannot start".
 
 `self:tests` compares the test suite between the base and the candidate. Editing a test is allowed
@@ -72,5 +72,4 @@ First batch: the stuck dev watcher, and a rebuilt web bundle that an open page k
 
 ## Status
 
-Built: `self:smoke`, `self:tests`, the staging branch. Next: friction storage and the generation
-runner (create the task, run the gates, merge to `self/evolve`, probe, roll back).
+Built: `EvolutionService` in `packages/core` (improvement queue, shadow worktree task + flow launch, 5-gate contract verification, fast-forward promotion to `self/evolve`, health probe & automatic rollback), `self:smoke`, and `self:tests`.

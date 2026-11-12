@@ -4,8 +4,7 @@ import { create } from 'zustand'
 import { isCompaction } from './chat-notices'
 import { diffCounts, isSubagent } from './chat-tools'
 import { isBackgroundCommand, keepsInView } from './background-work'
-import { browserOperation } from './browser-activity'
-import { parseForkMessage, parseHandoffMessage, type AgentCall, type AgentKind, type ChatDiff, type ChatItem, type ChatQuestion, type ChatTodo, type ConversationStage, browserToolKind, isPlanApproval, isPreviewTool, toolImagePath, CODEX_IMAGE_GENERATION, terminalToolKind, todoToolKind } from '@conclave/protocol'
+import { parseForkMessage, parseHandoffMessage, type AgentKind, type ChatDiff, type ChatItem, type ChatQuestion, type ChatTodo, type ConversationStage, isPlanApproval, isPreviewTool, toolImagePath, CODEX_IMAGE_GENERATION, terminalToolKind, todoToolKind } from '@conclave/protocol'
 
 // A conversation's chat items as this window holds them, in the order core first saw them;
 // `before` pages further back, null when nothing older is left.
@@ -266,10 +265,8 @@ type TurnReply = { key: string; text: string }
 // edits to one file one after another as one card, and a finished turn's work folded behind one
 // line, leaving its answer in view with the files it changed under it.
 export type ChatBlock =
-  | { kind: 'delegation'; key: string; call: AgentCall }
   | { kind: 'entry'; key: string; entry: TimelineEntry }
   | { kind: 'tools'; key: string; tools: ToolItem[] }
-  | { kind: 'browser'; key: string; tools: ToolItem[] }
   | { kind: 'agents'; key: string; tools: ToolItem[] }
   | { kind: 'edits'; key: string; path: string; tools: ToolItem[] }
   // steps: the calls the turn made on the way, and workMs how long the work ran before the answer
@@ -282,7 +279,7 @@ export type ChatBlock =
 // A preview the agent asked for is its own card, never one of a run; so is a call that brought
 // back a picture (a screenshot), looked at one on disk or is drawing one, which wants room to be seen.
 function runTool(entry: TimelineEntry): ToolItem | null {
-  return entry.kind === 'item' && entry.item.kind === 'tool' && entry.item.diffs.length === 0 && !isSubagent(entry.item.name) && !isPreviewTool(entry.item.name) && !entry.item.images?.length && !toolImagePath(entry.item) && entry.item.name !== CODEX_IMAGE_GENERATION && browserToolKind(entry.item.name) !== 'navigate' && terminalToolKind(entry.item.name) !== 'run'
+  return entry.kind === 'item' && entry.item.kind === 'tool' && entry.item.diffs.length === 0 && !isSubagent(entry.item.name) && !isPreviewTool(entry.item.name) && !entry.item.images?.length && !toolImagePath(entry.item) && entry.item.name !== CODEX_IMAGE_GENERATION && terminalToolKind(entry.item.name) !== 'run'
     ? entry.item
     : null
 }
@@ -303,7 +300,7 @@ export function foldsOfTools(blocks: readonly ChatBlock[]): Map<string, string> 
 }
 
 function toolsOf(block: ChatBlock): ToolItem[] {
-  if (block.kind === 'tools' || block.kind === 'browser' || block.kind === 'edits' || block.kind === 'agents') return block.tools
+  if (block.kind === 'tools' || block.kind === 'edits' || block.kind === 'agents') return block.tools
   if (block.kind === 'fold') return block.blocks.flatMap(toolsOf)
   const item = itemOf(block)
   return item?.kind === 'tool' ? [item] : []
@@ -335,10 +332,8 @@ function itemOf(block: ChatBlock): ChatItem | null {
 }
 
 // What the turn made for the user to see, which stays with its answer as Claude keeps an artifact in
-// its reply rather than among its steps: a preview the agent showed, a picture it drew, and the
-// browser's page, a way into the browser panel (its history is already folded).
+// its reply rather than among its steps: a preview the agent showed, or a picture it drew.
 function deliverable(block: ChatBlock): boolean {
-  if (block.kind === 'browser' || block.kind === 'delegation') return true
   const item = itemOf(block)
   if (item?.kind !== 'tool') return false
   return isPreviewTool(item.name) || (item.name === CODEX_IMAGE_GENERATION && item.status === 'done' && toolImagePath(item) !== null)
@@ -422,27 +417,9 @@ function unfoldedTurn(body: ChatBlock[], end: ChatBlock): ChatBlock[] {
 
 export function chatBlocks(entries: readonly TimelineEntry[], { foldTurns = true }: { foldTurns?: boolean } = {}): ChatBlock[] {
   const runs: ChatBlock[] = []
-  let browser: Extract<ChatBlock, { kind: 'browser' }> | null = null
-  let stageId: string | null = null
   for (const entry of entries) {
-    if (entry.kind === 'stage' || entry.item.stageId !== stageId || entry.item.kind === 'user' || entry.item.kind === 'turn') browser = null
-    stageId = entry.kind === 'stage' ? entry.stage.id : entry.item.stageId
     // Claude often thinks without saying anything it keeps.
     if (entry.kind === 'item' && entry.item.kind === 'reasoning' && !entry.item.streaming && !entry.item.text.trim()) continue
-    const call = entry.kind === 'item' && entry.item.kind === 'tool' ? entry.item : null
-    // Pictures and diffs keep their own cards; navigation and interaction share one turn's history.
-    if (call && browserOperation(call.name, call.display) !== null && !call.images?.length && call.diffs.length === 0) {
-      if (browser) {
-        browser.tools.push(call)
-        // Keep the summary at its latest activity, so earlier narration cannot become the answer.
-        runs.splice(runs.indexOf(browser), 1)
-        runs.push(browser)
-      } else {
-        browser = { kind: 'browser', key: `browser:${entryKey(entry)}`, tools: [call] }
-        runs.push(browser)
-      }
-      continue
-    }
     const tool = runTool(entry)
     const subagent = subagentTool(entry)
     const last = runs.at(-1)

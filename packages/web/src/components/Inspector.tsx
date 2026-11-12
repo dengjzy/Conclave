@@ -54,12 +54,12 @@ export function useChangedFiles(target: BranchTarget | null, updatedAt: number, 
   return files?.key === key ? files.files : null
 }
 
-export type InspectorTab = 'changes' | 'branch' | 'plan' | 'todos' | 'wire' | 'squad' | 'flow' | 'helper' | 'delegation' | 'pull-request'
+export type InspectorTab = 'changes' | 'branch' | 'plan' | 'wire' | 'flow' | 'pull-request'
 
-const TAB_LABEL: Record<InspectorTab, string> = localized(() => ({ changes: t('Inspector.changes'), branch: t('GitInspector.branches_1030'), plan: t('chatTools.plan'), todos: t('chatTools.toDos'), wire: t('Inspector.rawData'), squad: t('ChatPlan.squad'), flow: t('FlowPanel.flow'), helper: t('HelperPanel.helper'), delegation: t('AgentProfiles.calls'), 'pull-request': 'PR' }))
+const TAB_LABEL: Record<InspectorTab, string> = localized(() => ({ changes: t('Inspector.changes'), branch: t('GitInspector.branches_1030'), plan: t('chatTools.plan'), wire: t('Inspector.rawData'), flow: t('FlowPanel.flow'), 'pull-request': 'PR' }))
 export const GIT_TABS: readonly InspectorTab[] = ['changes', 'branch']
 
-export function InspectorPanel({ label, ratio, onRatioChange, tabs = GIT_TABS, tab, onTab, fileCount, todoCount = 0, helperAwaiting = false, onRefresh, onClose, maximized = false, owner, children }: {
+export function InspectorPanel({ label, ratio, onRatioChange, tabs = GIT_TABS, tab, onTab, fileCount, onRefresh, onClose, maximized = false, owner, children }: {
   maximized?: boolean
   // Above the tabs, whose it is where that is not plain: a split's column.
   owner?: ReactNode
@@ -70,9 +70,6 @@ export function InspectorPanel({ label, ratio, onRatioChange, tabs = GIT_TABS, t
   tab: InspectorTab
   onTab: (tab: InspectorTab) => void
   fileCount: number
-  // To-dos not done yet, counted on their tab.
-  helperAwaiting?: boolean
-  todoCount?: number
   onRefresh: () => void
   onClose: () => void
   children: ReactNode
@@ -91,12 +88,11 @@ export function InspectorPanel({ label, ratio, onRatioChange, tabs = GIT_TABS, t
           <div className="inspector-tabs" role="tablist" aria-label={t('ConversationView.inspector')}>
             {tabs.map((each) => (
               <button key={each} type="button" role="tab" aria-selected={tab === each} onClick={() => onTab(each)}>
-                {TAB_LABEL[each]}{each === 'helper' && helperAwaiting && <span className="helper-attention-dot" role="img" aria-label={t('ConversationView.helperNeedsYourResponse')} />}{each === 'changes' && fileCount > 0 && <span className="count">{fileCount}</span>}
-                {each === 'todos' && todoCount > 0 && <span className="count">{todoCount}</span>}
+                {TAB_LABEL[each]}{each === 'changes' && fileCount > 0 && <span className="count">{fileCount}</span>}
               </button>
             ))}
           </div>
-          {tab !== 'pull-request' && tab !== 'helper' && tab !== 'delegation' && tab !== 'plan' && tab !== 'wire' && tab !== 'todos' && (
+          {tab !== 'pull-request' && tab !== 'plan' && tab !== 'wire' && (
             <button type="button" className="tool-button inspector-refresh" aria-label={t('BrowserPanel.reload')} data-tooltip={t('BrowserPanel.reload')} onClick={onRefresh}>
               <RefreshIcon />
             </button>

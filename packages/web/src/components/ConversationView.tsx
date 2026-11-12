@@ -1,9 +1,8 @@
 import { t, tr } from '../i18n'
 import { RouteBadge } from './RouteBadge'
-import { useHelper, useHelperSupported } from '../helper-conversations'
 import { useCallback, useEffect, useState, type DragEvent } from 'react'
 import { usePlans } from '../chat-state'
-import { markRoutineRunSeen, openBeside, openOverview, perform, selectConversation, selectDiscussion, selectTask, setConversationInspectorOpen, setInspectorOpen, setRoutinesOpen, setTaskInspectorTab, useCore, useWireLogShown } from '../core-store'
+import { markRoutineRunSeen, openBeside, openOverview, perform, selectConversation, selectTask, setConversationInspectorOpen, setInspectorOpen, setRoutinesOpen, setTaskInspectorTab, useCore, useWireLogShown } from '../core-store'
 import { conversationState } from '../conversation-state'
 import { agentLabel } from '../labels'
 import { primaryProjectName } from './ProjectPicker'
@@ -18,7 +17,6 @@ import { flowWorktree } from './flow-trajectory'
 import { PRIMARY_KEY_LABEL } from '../shortcut-keys'
 import { DEFAULT_SIDE_PANEL_RATIO } from './side-panel-size'
 import { TitleEditor } from './TitleEditor'
-import { useOpenTodoCount, useTodosShown } from '../conversation-todos'
 import { CONVERSATION_DRAG_TYPE, draggedConversation } from '../conversation-drag'
 import type { ConversationPane } from './conversation-pane'
 import { canReuseConversation, type AgentKind, type Conversation, type Flow } from '@conclave/protocol'
@@ -94,22 +92,18 @@ export function useConversationPanel(conversation: Conversation | undefined) {
   const id = conversation?.id ?? ''
   const plans = usePlans(id)
   const wire = useWireLogShown()
-  const todosShown = useTodosShown()
-  const todoLeft = useOpenTodoCount(todosShown && conversation ? id : null)
   // A managed workspace is Conclave's own scratch folder: nothing of the user's to compare, but the
   // inspector still shows the agent's plans.
   const inspectable = (conversation?.projectPaths.length ?? 0) > 0
   const hasPanel = Boolean(conversation)
-  const hint = todoLeft > 0 ? t('ConversationView.inspectorToDos', { todoLeft: todoLeft }) : inspectable ? t('ConversationView.viewChanges') : plans.length > 0 ? t('ConversationView.viewPlan') : wire ? t('ConversationView.viewRawData') : todosShown ? t('chatTools.listToDos') : t('ConversationView.inspector')
-  return { hasPanel, wire, todoLeft, hint }
+  const hint = inspectable ? t('ConversationView.viewChanges') : plans.length > 0 ? t('ConversationView.viewPlan') : wire ? t('ConversationView.viewRawData') : t('ConversationView.inspector')
+  return { hasPanel, wire, hint }
 }
 
 // One conversation: the whole pane, or, in a split, one of its two columns (pane), whose header
 // says which and closes the column rather than the conversation. A split's inspector is its own.
 export function ConversationView({ id, pane }: { id: string; pane?: ConversationPane & { onClose: () => void } }) {
   const conversation = useCore((state) => state.conversations[id])
-  const helperSupported = useHelperSupported(conversation)
-  const helper = useHelper(helperSupported ? id : null)
   // Stable, so the chat's surface is not rebuilt on every render.
   const openHandoff = useCallback((agent?: AgentKind) => {
     const current = useCore.getState().conversations[id]
@@ -124,11 +118,10 @@ export function ConversationView({ id, pane }: { id: string; pane?: Conversation
   const reuseSupported = useReuseConversationSupported()
   const inspectorOpen = useCore((state) => state.conversationInspectorOpen)
   const [panelRatio, setPanelRatio] = useState(DEFAULT_SIDE_PANEL_RATIO)
-  const { hasPanel, wire, todoLeft, hint } = useConversationPanel(conversation)
+  const { hasPanel, wire, hint } = useConversationPanel(conversation)
   // A conversation dragged from the list over the right half opens there, beside this one.
   const [dropping, setDropping] = useState(false)
   const routine = useCore((state) => state.routines.find((each) => each.id === conversation?.routineId) ?? null)
-  const discussion = useCore((state) => (conversation?.discussionId ? state.discussions[conversation.discussionId] : undefined) ?? null)
   const routineId = conversation?.routineId ?? null
   const turn = conversation?.chat?.turn ?? null
   // Looking at a routine's conversation, with the window in front, is looking at its run: when
@@ -211,9 +204,6 @@ export function ConversationView({ id, pane }: { id: string; pane?: Conversation
         {conversation.routineId && (
           <span className="muted conversation-origin">{tr('ConversationView.fromRoutine', { value1: routine ? `「${routine.title}」` : '', value2: <button type="button" className="link-button" onClick={() => setRoutinesOpen(true, 'routines')}>{t('ConversationView.backToRoutine')}</button> })}</span>
         )}
-        {conversation.discussionId && (
-          <span className="muted conversation-origin" title={t('ConversationView.messagesSentHereGoOnlyToThisMember')}>{tr('ConversationView.memberOfGroupChat', { value1: discussion ? `「${discussion.title}」` : '', value2: <button type="button" className="link-button" onClick={() => conversation.discussionId && selectDiscussion(conversation.discussionId)}>{t('ConversationView.backToGroupChat')}</button> })}</span>
-        )}
       </div>
       <div className="toolbar">
         {reuseSupported && canReuseConversation(conversation) && <button type="button" className="tool-button" aria-label={t('ConversationActions.newWithSameConfiguration')} data-tooltip={t('ConversationView.startABlankConversationWithTheCurrentConfiguration')} disabled={busy} onClick={() => void action(() => newConversationFrom(conversation))}><CopyIcon /></button>}
@@ -221,14 +211,12 @@ export function ConversationView({ id, pane }: { id: string; pane?: Conversation
           <button
             type="button"
             className="tool-button"
-            aria-label={todoLeft > 0 ? t('ConversationView.inspectorToDos_739', { todoLeft: todoLeft }) : t('ConversationView.inspector')}
+            aria-label={t('ConversationView.inspector')}
             aria-pressed={inspecting}
             data-tooltip={inspecting ? t('ConversationView.collapseInspector') : hint}
             onClick={() => setConversationInspectorOpen(!inspecting)}
           >
             <InspectorIcon />
-            {helper?.chat?.turn === 'awaiting' && <span className="helper-attention-dot tool-button-dot" role="img" aria-label={t('ConversationView.helperNeedsYourResponse')} />}
-            {!inspecting && todoLeft > 0 && <span className="tool-button-badge" aria-hidden="true">{todoLeft}</span>}
           </button>
         )}
         {flowsSupported && !conversation.discussionId && !conversation.parentConversationId && (

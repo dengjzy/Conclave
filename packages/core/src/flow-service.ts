@@ -17,7 +17,7 @@ import {
 import type { ConversationService } from './conversation-service'
 import type { FlowStore } from './flow-store'
 import { defaultPlan, graphPlan } from './flow-planner'
-import { attemptHistory, classifyFailure, detectEnvironmentDemand, failureSignature } from './flow-policy'
+import { attemptHistory, classifyFailure, detectEnvironmentDemand, failureSignature, parseRatchetMetrics } from './flow-policy'
 import { Rejection } from './rejection'
 import type { TaskService } from './task-service'
 import type { RedFirstResult } from './red-first'
@@ -503,10 +503,12 @@ export class FlowService {
     this.save(flow)
     try {
       const history = attemptHistory(flow)
+      const ratchet = parseRatchetMetrics(results)
+      const ratchetNote = ratchet.metricScore !== null ? `\n当前评估指标：METRIC_SCORE=${ratchet.metricScore}` : ''
       const guidance = replan
         ? `新的做法（第 ${flow.replans.length} 次）：\n诊断：${replan.diagnosis}\n下一步：${replan.instruction}${replan.steps.length ? `\n步骤：\n${replan.steps.map((step, index) => `${index + 1}. ${step}`).join('\n')}` : ''}`
         : '不要重复同样的改法；先找出上一轮为什么没有通过，再动手。'
-      const prompt = `上一轮验收没有通过（${kind}）。\n\n之前的尝试：\n${history || '（这是第一次）'}\n\n${guidance}\n\n${detail}`
+      const prompt = `上一轮验收没有通过（${kind}）。${ratchetNote}\n\n之前的尝试：\n${history || '（这是第一次）'}\n\n${guidance}\n\n${detail}`
       await this.chats.send(implement.conversationId, prompt, [], false, false, this.ref(flow, implement))
     } catch (error) {
       this.pause(flow, implement, `发送失败：${failure(error)}`)

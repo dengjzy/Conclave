@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { z } from 'zod'
-import { CONTEXT_COMPACTED, RESERVED_MCP_SERVER_NAME, type ApprovalChoice, type ChatDecision, type ChatImage, type ChatModel, type ChatOption, type ChatTodo, type ChatTurnActivity, type ChatTurnState } from '@conclave/protocol'
+import { CONTEXT_COMPACTED, RESERVED_MCP_SERVER_NAME, todoToolKind, type ApprovalChoice, type ChatDecision, type ChatImage, type ChatModel, type ChatOption, type ChatTodo, type ChatTurnActivity, type ChatTurnState } from '@conclave/protocol'
 import { conclaveReadTools } from '../../agent-command'
 import { offeredCommand } from '../../agent-commands'
 import { startNote } from '../../agent-prompt'
@@ -192,7 +192,7 @@ export class ZCodeAppServer implements ChatDriver {
     if (!this.ready() || !this.sessionId) throw new Rejection('chat-starting', 'ZCode 尚未就绪')
     if (this.turn) throw new Rejection('chat-busy', 'ZCode 正在处理上一条消息')
     if (this.changing()) throw new Rejection('chat-option-changing', '请等待 ZCode 确认配置变更')
-    const note = this.turns === 0 ? startNote({ instructions: this.options.instructions, knowledgeBase: this.options.knowledgeBase, todos: Boolean(this.options.mcp) && this.options.todos !== false }) : null
+    const note = this.turns === 0 ? startNote({ instructions: this.options.instructions, knowledgeBase: this.options.knowledgeBase }) : null
     const wired = note ? `${note}\n\n${text}` : text
     if (images.length) {
       if (!this.currentModel()?.images) throw new Rejection('chat-images-unsupported', '当前 ZCode 模型不支持图片输入')
@@ -624,8 +624,9 @@ export class ZCodeAppServer implements ChatDriver {
     const toolItemId = `tool:${request.toolCallId}`
     const itemId = `a:${request.requestId}`
     const allow = request.options.find((option) => option.kind === 'allow_once')
-    // Conclave's own tools that ask nothing of the user go through as they would for any agent.
-    const readTool = request.toolName.startsWith(`mcp__${RESERVED_MCP_SERVER_NAME}__`) && conclaveReadTools(this.options.todos !== false).includes(request.toolName.slice(`mcp__${RESERVED_MCP_SERVER_NAME}__`.length))
+    // Conclave's own tools that ask nothing of the user (including retired user_todo_* in saved logs) go through without a card.
+    const conclaveTool = request.toolName.startsWith(`mcp__${RESERVED_MCP_SERVER_NAME}__`) ? request.toolName.slice(`mcp__${RESERVED_MCP_SERVER_NAME}__`.length) : null
+    const readTool = (conclaveTool !== null && conclaveReadTools().includes(conclaveTool)) || todoToolKind(request.toolName) !== null
     const fenced = referencePathIn([...(this.options.references ?? []), ...(this.options.knowledgeBase && !this.options.knowledgeBase.write ? [this.options.knowledgeBase.path] : [])], [str(input.file_path), str(input.path)].filter((each): each is string => each !== null))
     const readOnly = (this.options.planOnly || this.readOnlyChosen) && EDIT_TOOLS.has(request.toolName)
     const title = describeClaudeTool(request.toolName, input) || request.toolName

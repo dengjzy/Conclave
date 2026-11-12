@@ -2,11 +2,11 @@
 
 # Conclave
 
-**轻量纯 Web 架构的多 Agent 本机协同工作台**
+**面向任务自主完成与递归自我迭代的多 Agent 本机工作台**
 
 Claude Code · Codex · Antigravity · Pi · OpenCode · Cursor · DeepSeek Harness · ZCode · Kimi · Gemini · Grok · omp
 
-额度监控 · 并发提问对比 · 多轮讨论 · 研发小队 · 自动化与定时调度 · 独立 Worktree 隔离
+契约驱动自治任务流 · 递归自我迭代（RSI） · 独立 Worktree 隔离 · 额度监控与自动换号 · 自动化与定时调度
 
 ![Version](https://img.shields.io/badge/version-0.0.1--web-blue)
 ![Platform](https://img.shields.io/badge/platform-Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-green)
@@ -23,11 +23,11 @@ Claude Code · Codex · Antigravity · Pi · OpenCode · Cursor · DeepSeek Harn
 
 Conclave 直接驱动你在本机装好、登录好的各 Agent CLI，配置与登录凭据完全沿用本机环境，无需重新配置 API Key。
 
-* **告别窗口间搬运**：支持跨 Agent 移交聊天记录、主 Agent 委派子任务，并在会话中自动汇总结论。
-* **并发提问横向对比**：同一问题同时发给多个 Agent，流式并排输出，快速对比方案优劣。
-* **多轮讨论与互审**：支持多个 Agent 共同参与议题讨论，分轮交叉质询与补充，最后汇总共识。
-* **独立 Worktree 隔离**：每个任务分配独立的 Git worktree，多 Agent 并行开发互不干扰代码库。
-* **额度用量实时把控**：底部状态栏直观展示各 Agent 的使用量、额度重置窗口与节奏预警。
+* **契约驱动自主闭环**：围绕验收契约（Acceptance Contract）自动完成规划、实现、隐藏盲测、重规划与环境异常挂起，无需人工逐轮盯盘。
+* **递归自我迭代（RSI）**：内生化 `EvolutionService` 从可复现问题队列出发，在影子 Worktree 中通过 5 重硬门禁完成自我演进。
+* **跨 Agent 无缝移交**：支持在单会话或任务执行中随时切换 Agent，聊天上下文与改动现场完整接续，告别手动复制粘贴。
+* **独立 Worktree 隔离**：每个任务分配独立的 Git worktree，多任务并行开发互不干扰代码库。
+* **额度用量实时把控**：底部状态栏直观展示各 Agent 的使用量、额度重置窗口、节奏预警与多账号自动切换。
 * **自动化与定时任务**：支持配置周期性循环任务（Cron 规则）与单次定时预约，自动入队并跟踪执行。
 * **纯 Web 跨平台运行**：移除厚重的桌面外壳，基于轻量 Node.js 后台 + 纯浏览器前端，Linux / macOS / Windows 均可秒级启动并流畅运行。
 
@@ -35,28 +35,27 @@ Conclave 直接驱动你在本机装好、登录好的各 Agent CLI，配置与�
 
 ## 核心能力
 
-### 1. 并发提问与多轮讨论
-- **并发提问**：点选参与的 Agent，一次输入任务要求，各 Agent 同时独立作答，分屏横向对比。
-- **多轮讨论**：让多个 Agent 在同一话题下开展多轮交互，互相审查论点，由指定主持人汇总共识与分歧。
-
-### 2. 契约驱动的自主任务流（Flow）与环境动态补给（HITL）
+### 1. 契约驱动的自主任务流（Flow）与环境动态补给（HITL）
 - **验收契约（Acceptance Contract）**：明确界定任务的完成定义，内置命令级 checks、脚本哈希防篡改与历史 baseline 过滤。
 - **TDD 红检与隐藏盲测（Red-First & Hidden Tests）**：独立只读 Agent 提前编写盲测用例并在起点 commit 验证先红后绿，防止实现 Agent 编写假测试。
 - **环境异常动态感知与人机补给（Environment Demand）**：当检测到缺少命令工具、环境变量或 MCP 插件时，自动生成结构化需求并挂起等待，用户补给后一键接续推进。
 
-### 3. 会话上下文无缝移交
-- 在当前会话中随时切换执行的 Agent，聊天记录与上下文自动传递给新 Agent 继续执行，无需手动复制粘贴。
+### 2. 递归自我迭代（RSI, Recursive Self-Improvement）
+- **Conclave fixing Conclave**：内置内生化自演化引擎（`EvolutionService`），从可复现改进项出发，在隔离影子 Worktree 中自动完成修复。
+- **严苛 5 重门禁拦截**：类型检查、完整单测、构建打包、独立 Headless Core 启动冒烟（`self:smoke`）及单测防删防 skip 审查（`self:tests`），全绿灯后自动推进 `self/evolve` 基线。
 
-### 4. 额度感知与用量监控
-- 常驻底部状态栏监控各 Agent CLI 的使用用量与恢复时间，并在额度紧张或即将重置时给出建议。
+### 3. 独立 Worktree 隔离与外部事项接入
+- 每个执行中的任务自动在 `~/.conclave/worktrees/` 下创建独立 Git 分支与工作树，支持从 GitHub、Jira、Linear、禅道插件同步外部 Issue 并一键转入任务流。
 
-### 5. 自动化与定时调度（Automations）
+### 4. 会话上下文无缝移交
+- 在当前会话或任务中随时切换执行的 Agent，聊天记录与上下文自动传递给新 Agent 继续执行，无需手动复制粘贴。
+
+### 5. 额度感知与多账号自动续跑
+- 常驻底部状态栏监控各 Agent CLI 的使用用量与恢复时间，支持多账号轮换与额度耗尽后自动切号续跑。
+
+### 6. 自动化与定时调度（Automations）
 - **周期与预约调度**：支持设置周期性循环任务（按小时/天/自定义 Cron 表达式）或单次预约执行，自动唤起指定 Agent 进行自动化巡检或日常维护。
 - **任务队列与执行追踪**：实时展示当前排队队列、历史执行状态及详情日志，任务完成或出错均有记录可查。
-
-### 6. 递归自我迭代（RSI, Recursive Self-Improvement）
-- **Conclave fixing Conclave**：内置内生化自演化引擎（`EvolutionService`），自动从摩擦队列读取痛点复现，并在隔离 Worktree 中完成改动。
-- **严苛 5 重门禁拦截**：类型检查、完整单测、构建打包、独立 Headless Core 启动冒烟（`self:smoke`）及单测防删防 skip 审查（`self:tests`），全绿灯后自动推进 `self/evolve` 基线。
 
 ---
 

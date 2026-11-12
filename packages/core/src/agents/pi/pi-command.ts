@@ -24,7 +24,7 @@ export function piStartMode(launch: { preferred?: AgentLaunch['preferred']; plan
 
 // What the extension (pi-extension.ts) is told for this start.
 export function piExtensionConfig(launch: AgentLaunch): PiExtensionConfig {
-  const { mcp, userMcp = [], knowledgeBase, todos = true } = launch
+  const { mcp, userMcp = [], knowledgeBase } = launch
   const fenced = launch.planOnly ?? launch.readOnly
   const servers: Record<string, PiMcpServer> = {
     ...(mcp ? { [RESERVED_MCP_SERVER_NAME]: { command: mcp.command, args: mcp.args, ...(mcp.env ? { env: mcp.env } : {}) } } : {}),
@@ -35,7 +35,7 @@ export function piExtensionConfig(launch: AgentLaunch): PiExtensionConfig {
     servers,
     noEdit: [...(fenced?.dirs ?? []), ...(launch.references ?? []), ...(knowledgeBase && !knowledgeBase.write ? [knowledgeBase.path] : [])],
     workDirs: [...launch.extraProjects, ...(knowledgeBase?.write ? [knowledgeBase.path] : [])],
-    readTools: mcp ? conclaveReadTools(todos).map((tool) => `mcp__${RESERVED_MCP_SERVER_NAME}__${tool}`) : [],
+    readTools: mcp ? conclaveReadTools().map((tool) => `mcp__${RESERVED_MCP_SERVER_NAME}__${tool}`) : [],
     ...(launch.provider ? { provider: piProvider(launch.provider) } : {})
   }
 }
@@ -57,10 +57,10 @@ export function piProvider(provider: ProviderLaunch): PiProvider {
 // What Pi is told once, in its system prompt: Conclave's start note, and the folders it may work in
 // besides its own, which it reaches by their paths (Pi has no option for more folders).
 export function piSystemNote(launch: AgentLaunch): string | null {
-  const { extraProjects, knowledgeBase, instructions, mcp, todos = true } = launch
+  const { extraProjects, knowledgeBase, instructions } = launch
   const fenced = launch.planOnly ?? launch.readOnly
   const notes = [
-    startNote({ knowledgeBase, instructions, todos: Boolean(mcp) && todos }),
+    startNote({ knowledgeBase, instructions }),
     extraProjects.length ? `这个会话还涉及以下项目文件夹，需要时按绝对路径访问：\n${extraProjects.map((dir) => `- ${dir}`).join('\n')}` : null,
     fenced ? `以下文件夹只读，不能修改其中的文件：\n${fenced.dirs.map((dir) => `- ${dir}`).join('\n')}` : null
   ]

@@ -32,10 +32,6 @@ export type AgentLaunch = {
   mcp?: McpServer
   // The user's MCP servers picked for this agent, beside Conclave's: never named conclave.
   userMcp?: readonly AgentMcpServer[]
-  // Whether it may drive the user's own browser, for an agent that can; unset leaves its own default.
-  userBrowser?: boolean
-  // Whether Conclave's tools for the user's to-dos come along, and the note on when to use them; unset is on.
-  todos?: boolean
   // The user's Obsidian vault: its own folder, never a project, so never fenced or given a
   // worktree. write is already false where the stage may not edit.
   knowledgeBase?: KnowledgeBase

@@ -9,9 +9,8 @@ import { SourceLink } from './SourceLink'
 import { SourceSnapshotCard } from './SourceSnapshotCard'
 import { BoardCrumb } from './TaskBoard'
 import { TaskAlerts } from './TaskAlerts'
-import { TaskPlanCard } from './TaskPlanCard'
+import { FlowPanel } from './FlowPanel'
 import { TaskContractPanel } from './TaskContractPanel'
-import { TaskRunPanel } from './TaskRunPanel'
 import { TaskImages, useImageAdder } from './TaskImages'
 import { reopenTask, TaskStatusMenu, TaskSteps, TaskToolbar } from './TaskActions'
 import { DependencyPicker, TaskDependents } from './DependencyPicker'
@@ -158,8 +157,7 @@ function TaskDetailBody({ task }: { task: Task }) {
 
         <div className="task-detail-main">
           <SourceSnapshotCard task={task} />
-          <TaskPlanCard task={task} />
-          <TaskRunPanel task={task} />
+          <FlowPanel task={task} inline />
           <TaskContractPanel task={task} />
 
           <MarkdownEditor

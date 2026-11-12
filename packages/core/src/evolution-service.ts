@@ -52,7 +52,7 @@ export class EvolutionService {
     const slug = item.summary.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40)
     const id = slug || `f-${createHash('sha1').update(item.summary).digest('hex').slice(0, 8)}`
     if (items.some((each) => each.id === id)) {
-      throw new Rejection('friction-already-exists', `痛点项 ${id} 已存在`)
+      throw new Rejection('friction-already-exists', `改进项 ${id} 已存在`)
     }
     const now = new Date().toISOString()
     const friction: FrictionItem = {
@@ -104,14 +104,14 @@ export class EvolutionService {
 
   async trigger(options: { frictionId?: string; agent?: AgentKind; dryRun?: boolean } = {}): Promise<EvolutionGeneration> {
     if (this.activeGeneration?.state === 'running') {
-      throw new Rejection('generation-active', '当前已有正在进行的自进化代数')
+      throw new Rejection('generation-active', '当前已有正在运行的自我迭代任务')
     }
     const items = await this.listFriction()
     const friction = options.frictionId
       ? items.find((i) => i.id === options.frictionId)
       : items.find((i) => i.status === 'open')
     if (!friction) {
-      throw new Rejection('no-open-friction', '没有未处理的摩擦/痛点项')
+      throw new Rejection('no-open-friction', '没有待处理的改进项')
     }
 
     if (this.git('status', '--porcelain')) {
@@ -128,14 +128,14 @@ export class EvolutionService {
     ]
 
     const details = [
-      `摩擦：${friction.summary}`,
+      `问题：${friction.summary}`,
       `复现：${friction.repro}`,
-      `期望：${friction.expect}`,
+      `预期：${friction.expect}`,
       friction.paths?.length ? `允许改动的路径：${friction.paths.join('、')}` : '',
       '要求：',
       '- 先复现，再改；改完自己跑 pnpm typecheck 和 pnpm test。',
       '- 测试可以改，但不许删测试、减用例或加 skip：self:tests 会因此判负。',
-      '- 保持改动小；这是一个自举代，评审看的是能不能安全合入。'
+      '- 保持改动最小且可安全合入。'
     ].filter(Boolean).join('\n')
 
     const agent = options.agent ?? 'dsh'

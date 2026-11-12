@@ -2,7 +2,7 @@ import { localized, t } from '../i18n'
 import { setRoutinesOpen, useCore, useSchedulesSupported, type RoutinesTab } from '../core-store'
 import { RoutinesSection } from './RoutinesSection'
 import { SchedulesPanel } from './SchedulesPanel'
-import './agent-profiles.css'
+import './routines-view.css'
 
 const TABS: ReadonlyArray<{ value: RoutinesTab; label: string }> = localized(() => ([{ value: 'routines', label: t('RoutinesView.tabRecurring') }, { value: 'schedules', label: t('RoutinesView.tabQueue') }]))
 

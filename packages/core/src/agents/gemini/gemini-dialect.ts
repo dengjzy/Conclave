@@ -3,8 +3,6 @@ import type { AcpDialect } from '../acp/acp-dialect'
 
 const Permission = z.looseObject({ toolCall: z.looseObject({ title: z.string() }) })
 
-const REPORTING_INSTRUCTION = '工具或命令调用结束后（无论是执行成功、报错，还是主动终止了冗余后台任务），必须在回合结束前用文字向用户总结执行结果、汇报最新发现或说明任务终止的原因，严禁在执行工具后直接静默结束。'
-
 export const geminiDialect: AcpDialect = {
   name: 'Gemini CLI', idPrefix: 'gemini',
   startupError: (message) => /This client is no longer supported for Gemini Code Assist for individuals/i.test(message)
@@ -38,8 +36,7 @@ export const geminiDialect: AcpDialect = {
     const path = title?.startsWith('Requesting plan approval for: ') ? title.slice('Requesting plan approval for: '.length) : null
     return path ? { kind: 'plan', path, runMode: 'ask' } : null
   },
-  startNote: (options) => {
-    const extra = options.extraDirs.length ? `此会话还包含以下项目，请按绝对路径访问；命令分别指定各项目的工作目录：\n${options.extraDirs.map((dir) => `- ${dir}`).join('\n')}` : null
-    return [extra, REPORTING_INSTRUCTION].filter(Boolean).join('\n\n')
-  }
+  startNote: (options) => options.extraDirs.length
+    ? `此会话还包含以下项目，请按绝对路径访问；命令分别指定各项目的工作目录：\n${options.extraDirs.map((dir) => `- ${dir}`).join('\n')}`
+    : null
 }

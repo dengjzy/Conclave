@@ -6,7 +6,7 @@ import { useCore, useFileMentionsSupported } from '../core-store'
 import { fileTarget, insertMention, matchConversations, matchProjects, mentionQuery, placeMention, type MentionedText, type MentionTarget } from '../chat-mentions'
 import type { SetText } from './ChatMentionField'
 import { projectName } from './ProjectPicker'
-import { AgentIcon, ChatIcon, ClockIcon, FolderIcon } from './icons'
+import { ChatIcon, ClockIcon, FolderIcon } from './icons'
 import { FileTypeIcon } from './FileTypeIcon'
 import { isDarkTheme, onThemeChange } from '../appearance'
 import { agentLabel } from '../labels'
@@ -21,7 +21,7 @@ type InputProps = Pick<HTMLAttributes<HTMLDivElement>, 'aria-autocomplete' | 'ar
 }
 
 // `opens`: what Tab puts after the @ to look inside a folder, its path under its project.
-type MentionGroup = 'files' | 'projects' | 'profiles' | 'conversations'
+type MentionGroup = 'files' | 'projects' | 'conversations'
 type MentionEntry = { key: string; group: MentionGroup; target: MentionTarget | null; name: string; detail: string; opens: string | null; icon: ReactNode }
 const NO_FILES: readonly ProjectFileMatch[] = []
 
@@ -102,12 +102,6 @@ export function useChatMentionMenu({ value, setText, setValue, roots, cwd, agent
   const readHistory = useCore((s) => s.chatSettings?.readHistory === true)
   const references = Boolean(rpc?.features.includes('conversation-references') && readHistory)
   const supported = (fileMentions || references) && agent !== null
-  const profiles = useCore((s) => s.agentProfiles)
-  const conversation = useCore((s) => conversationId ? s.conversations[conversationId] : null)
-  const delegates = Boolean(rpc?.features.includes('agent-profiles') && conversation
-    && !conversation.parentConversationId && !conversation.discussionId && !conversation.squadRunId && !conversation.routineId && !conversation.helperOf)
-  const callable = Object.values(profiles).filter((profile) => delegates && profile.archivedAt === null && profile.id !== conversation?.profile?.id
-    && (!conversation?.profile || conversation.profile.callableProfiles.includes(profile.id)))
   const range = supported ? mentionQuery(text, Math.min(caret, text.length)) : null
   const query = range?.query ?? null
   const rootsKey = roots.join('\0')
@@ -149,7 +143,7 @@ export function useChatMentionMenu({ value, setText, setValue, roots, cwd, agent
   }, [asking, rpc, projects])
 
   const entries = useMemo(() => {
-    if (query === null) return { profiles: [], files: [], projects: [], conversations: [] }
+    if (query === null) return { files: [], projects: [], conversations: [] }
     const fileRows = rootsKey ? files.map((match) => fileEntry(match, cwd, roots.length > 1, dark)) : []
     const projectRows = matchProjects(projects ?? [], query).map((projectPath): MentionEntry => ({
       key: `project:${projectPath}`,
@@ -160,20 +154,15 @@ export function useChatMentionMenu({ value, setText, setValue, roots, cwd, agent
       opens: null,
       icon: <FolderIcon />
     }))
-    const profileRows = callable.filter((profile) => profile.name.toLocaleLowerCase().includes(query.toLocaleLowerCase())).map((profile): MentionEntry => ({
-      key: `profile:${profile.id}`, group: 'profiles', target: { kind: 'agent', id: profile.id, name: profile.name }, name: profile.name, detail: profile.description || agentLabel(profile.agent), opens: null,
-      icon: <AgentIcon agent={profile.agent} />
-    }))
     const conversationRows = references ? matchConversations(Object.values(conversations), query, conversationId).map((entry): MentionEntry => ({
       key: `conversation:${entry.id}`, group: 'conversations', target: { kind: 'conversation', id: entry.id, title: entry.title },
       name: entry.title || entry.id.slice(0, 8),
       detail: [agentLabel(entry.agent), ...entry.projectPaths.map(projectName), entry.archivedAt != null ? t('ConversationList.archived') : '', entry.id.slice(0, 8)].filter(Boolean).join(' · '),
       opens: null, icon: <ChatIcon />
     })) : []
-    return { profiles: profileRows, files: fileRows, projects: projectRows, conversations: conversationRows }
-  }, [query, files, projects, cwd, rootsKey, roots.length, profiles, conversation, delegates, conversations, conversationId, references, dark, getLocale()])
+    return { files: fileRows, projects: projectRows, conversations: conversationRows }
+  }, [query, files, projects, cwd, rootsKey, roots.length, conversations, conversationId, references, dark, getLocale()])
   const tabs: { id: MentionGroup; label: string; loading: boolean }[] = [
-    ...(delegates ? [{ id: 'profiles' as const, label: t('AgentProfiles.title'), loading: false }] : []),
     { id: 'files', label: t('ChatMentionMenu.files'), loading: filesLoading },
     { id: 'projects', label: t('ChatMentionMenu.projects'), loading: projects === null },
     ...(references ? [{ id: 'conversations' as const, label: t('ChatMentionMenu.conversations'), loading: false }] : [])
@@ -184,7 +173,7 @@ export function useChatMentionMenu({ value, setText, setValue, roots, cwd, agent
     return ['闹钟', '时钟', '预约', 'alarm', 'clock', 'schedule'].some((keyword) => keyword.includes(lower) || lower.includes(keyword))
   }
   const alarmMatch = Boolean(onSchedule && isAlarmQuery(query))
-  const selectedGroup = tabs.some((tab) => tab.id === group) && group !== null ? group : delegates && callable.length ? 'profiles' : rootsKey ? 'files' : 'projects'
+  const selectedGroup = tabs.some((tab) => tab.id === group) && group !== null ? group : rootsKey ? 'files' : 'projects'
   const shown = useMemo(() => {
     const list = entries[selectedGroup]
     if (!alarmMatch) return list
@@ -284,7 +273,7 @@ export function useChatMentionMenu({ value, setText, setValue, roots, cwd, agent
         <ul id={listId} role="listbox" aria-labelledby={tabId(selectedGroup)} aria-busy={loading} className="menu-list chat-mention-results">
           {shown.map((entry, index) => <MentionOption key={entry.key} entry={entry} id={optionId(index)} active={index === active} onHover={() => setHighlight(index)} onPick={() => pick(entry, false)} />)}
         </ul>
-        {shown.length === 0 && <p className="chat-mention-empty" role="status">{loading ? t('ChatMentionMenu.searching') : selectedGroup === 'files' && !rootsKey ? t('ChatMentionMenu.noProject') : selectedGroup === 'profiles' && !query ? t('AgentProfiles.noAvailable') : t('ChatMentionMenu.noMatches')}</p>}
+        {shown.length === 0 && <p className="chat-mention-empty" role="status">{loading ? t('ChatMentionMenu.searching') : selectedGroup === 'files' && !rootsKey ? t('ChatMentionMenu.noProject') : t('ChatMentionMenu.noMatches')}</p>}
       </div>
       <div className="chat-mention-keys" aria-hidden="true">{tr('ChatMentionMenu.navigateReferenceOpenFolderClose', { value1: <kbd>↑↓</kbd>, value2: <kbd>Enter</kbd>, value3: <kbd>Tab</kbd>, value4: <kbd>Esc</kbd> })}</div>
     </div>

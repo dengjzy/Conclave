@@ -1,22 +1,21 @@
-import { agentToolsOverCore } from './mcp-agent-tools'
-import { bookmarkToolsOverCore } from './mcp-bookmark-tools'
-import { squadToolsOverCore, type SquadTools } from './mcp-squad-tools'
-import { todoToolsOverCore } from './mcp-todo-tools'
-import { managementToolsOverCore } from './mcp-management-tools'
 import readline from 'node:readline'
 import { stat } from 'node:fs/promises'
 import { extname, isAbsolute } from 'node:path'
 import { z } from 'zod'
 import { connectRpc, coreUrl, isPreviewImage, PREVIEW_EXTENSIONS, SHOW_PREVIEW_TOOL, type Conversation, type RpcConnection } from '@conclave/protocol'
-import { readCoreEndpoint, conclavePaths } from '@conclave/protocol/node'
-import { AttachmentStore } from './attachment-store'
-import { BROWSER_ARGUMENTS, BROWSER_TOOL_SPECS, browserToolsOverCore, type BrowserTools, type ToolOutcome } from './mcp-browser-tools'
+import { readCoreEndpoint } from '@conclave/protocol/node'
 import { HISTORY_ARGUMENTS, HISTORY_TOOL_SPECS, historyToolsOverCore, type HistoryTools } from './mcp-history-tools'
 import { TERMINAL_ARGUMENTS, TERMINAL_TOOL_SPECS, terminalToolsOverCore, type TerminalTools } from './mcp-terminal-tools'
 
+export type ToolOutcome = {
+  text: string
+  isError?: boolean
+  image?: { data: string; mimeType: string }
+}
+
 // A tools-only MCP server over stdio, giving an agent Conclave's own tools: showing a file it wrote in
-// the chat, the browser Conclave hosts, terminals of its own in the app's panel, and, unless the user
-// turned it off, reading their history in Conclave.
+// the chat, terminals of its own in the app's panel, and, unless the user turned it off, reading their
+// history in Conclave.
 // Messages are newline-delimited JSON-RPC 2.0; stdout is the channel, so logs go to stderr.
 
 const Message = z.object({
@@ -60,19 +59,10 @@ export type McpTools = {
   listed?: () => Promise<void>
   // Checks the file may be shown (it exists, and is a page, an SVG or a picture); throws with the reason if not.
   preview: (path: string) => Promise<void>
-  // The browser tools, there when the server was started for a conversation.
-  browser?: BrowserTools
-  // The user's bookmarks, there with the browser.
-  bookmarks?: ReturnType<typeof bookmarkToolsOverCore>
-  // Terminals of the conversation's own in the app's panel, there likewise.
+  // Terminals of the conversation's own in the app's panel.
   terminal?: TerminalTools
-  // The user's conversations, tasks and group chats, read-only; there unless turned off.
+  // The user's conversations and tasks, read-only; there unless turned off.
   history?: HistoryTools
-  agents?: ReturnType<typeof agentToolsOverCore>
-  squad?: SquadTools
-  management?: Awaited<ReturnType<typeof managementToolsOverCore>>
-  // The conversation's to-dos, there when the server was started for one.
-  todo?: ReturnType<typeof todoToolsOverCore>
 }
 
 export type McpResponse = {
@@ -101,7 +91,7 @@ const describe = (error: unknown) => (error instanceof Error ? error.message : S
 // arguments are the model's to fix, so they come back as a tool error it can read.
 type ToolEntry = { spec: object & { name: string }; run(args: Record<string, unknown>): Promise<McpResult> }
 
-function toolTable({ preview, browser, bookmarks, terminal, history, squad, agents, management, todo, planOnly }: McpTools): ToolEntry[] {
+function toolTable({ preview, terminal, history, planOnly }: McpTools): ToolEntry[] {
   const entries: ToolEntry[] = [
     {
       spec: PREVIEW_TOOL,
@@ -119,20 +109,6 @@ function toolTable({ preview, browser, bookmarks, terminal, history, squad, agen
       }
     }
   ]
-  if (browser) {
-    for (const { kind, ...spec } of BROWSER_TOOL_SPECS) {
-      if (planOnly && !spec.annotations.readOnlyHint) continue
-      entries.push({
-        spec,
-        run: async (raw) => {
-          const args = BROWSER_ARGUMENTS[kind].safeParse(raw)
-          if (!args.success) return textResult(`参数不对：${args.error.issues.map((issue) => `${issue.path.join('.') || '参数'} ${issue.message}`).join('；')}`, true)
-          return outcomeResult(await browser.call(kind, args.data))
-        }
-      })
-    }
-  }
-  if (bookmarks) entries.push(...bookmarks)
   if (terminal) {
     for (const { kind, ...spec } of TERMINAL_TOOL_SPECS) {
       if (planOnly && !spec.annotations.readOnlyHint) continue
@@ -158,11 +134,6 @@ function toolTable({ preview, browser, bookmarks, terminal, history, squad, agen
       })
     }
   }
-  if (squad) entries.push(...squad)
-  if (agents) entries.push(...agents)
-  if (management) entries.push(...management.filter((entry) => !planOnly || entry.spec.annotations.readOnlyHint))
-  // Conclave's list, not the checkout: a planning agent writes to it too.
-  if (todo) entries.push(...todo)
   return entries
 }
 
@@ -226,17 +197,16 @@ export async function checkPreviewFile(path: string): Promise<void> {
   if (!info?.isFile()) throw new Error(`文件不存在：${path}`)
 }
 
-// A group chat member only talks: like a read-only workspace it gets no tool that acts, and no to-dos,
-// since its findings go to the group's summary, not onto a list of the user's.
-export function conversationToolLimits(conversation: Pick<Conversation, 'workspaceReadOnly' | 'discussionId' | 'parentConversationId'>): { readOnly: boolean; todos: boolean } {
+// A group chat member only talks: like a read-only workspace it gets no tool that acts.
+export function conversationToolLimits(conversation: Pick<Conversation, 'workspaceReadOnly' | 'discussionId' | 'parentConversationId'>): { readOnly: boolean } {
   const member = Boolean(conversation.discussionId)
-  return { readOnly: Boolean(conversation.workspaceReadOnly) || member, todos: !member && !conversation.parentConversationId }
+  return { readOnly: Boolean(conversation.workspaceReadOnly) || member }
 }
 
-// A server started for a conversation has the browser tools, acting for that conversation alone;
+// A server started for a conversation has the terminal tools, acting for that conversation alone;
 // one without has the preview tool alone. `history` adds the tools that read the user's history.
 // Each call connects anew, so a core restart between calls is harmless.
-export async function serveMcp(home: string | undefined, conversationId?: string, planOnly = false, initialized?: () => Promise<void>, history = false, todos = true, listed?: () => Promise<void>): Promise<void> {
+export async function serveMcp(home: string | undefined, conversationId?: string, planOnly = false, initialized?: () => Promise<void>, history = false, listed?: () => Promise<void>): Promise<void> {
   const withCore = async <T>(work: (rpc: RpcConnection) => Promise<T>): Promise<T> => {
     const endpoint = await readCoreEndpoint(home)
     if (!endpoint) {
@@ -251,24 +221,21 @@ export async function serveMcp(home: string | undefined, conversationId?: string
   }
   const scope = conversationId ? await withCore(async (rpc) => {
     const conversation = await rpc.call('conversations.get', { id: conversationId })
-    const run = rpc.features.includes('squads') ? await rpc.call('squads.roster', { id: conversationId }) : null
-    return { ...conversationToolLimits(conversation), run, delegate: !run && rpc.features.includes('agent-profiles') && !conversation.parentConversationId && !conversation.discussionId && !conversation.squadRunId && !conversation.routineId && !conversation.helperOf }
+    const automated = Boolean(conversation.taskId || conversation.parentConversationId || conversation.discussionId || conversation.squadRunId || conversation.routineId)
+    return {
+      ...conversationToolLimits(conversation),
+      automated
+    }
   }) : null
   const handle = createMcpHandler({
     planOnly: planOnly || scope?.readOnly,
-    ...(conversationId ? { management: await managementToolsOverCore(withCore, conversationId, planOnly) } : {}),
-    ...(conversationId && scope?.run ? { squad: squadToolsOverCore(withCore, conversationId, scope.run) } : {}),
-    ...(conversationId && scope?.delegate ? { agents: agentToolsOverCore(withCore, conversationId) } : {}),
     initialized,
     ...(listed ? { listed } : {}),
     preview: checkPreviewFile,
     ...(conversationId ? {
-      browser: browserToolsOverCore(withCore, conversationId, new AttachmentStore(conclavePaths(home).attachments)),
-      bookmarks: bookmarkToolsOverCore(withCore),
-      terminal: terminalToolsOverCore(withCore, conversationId),
-      ...(todos && scope?.todos !== false ? { todo: todoToolsOverCore(withCore, conversationId) } : {})
+      terminal: terminalToolsOverCore(withCore, conversationId)
     } : {}),
-    ...(history ? { history: historyToolsOverCore(withCore, conversationId ?? null) } : {})
+    ...(history && !scope?.automated ? { history: historyToolsOverCore(withCore, conversationId ?? null) } : {})
   })
   const lines = readline.createInterface({ input: process.stdin, crlfDelay: Number.POSITIVE_INFINITY })
   for await (const line of lines) {

@@ -1,8 +1,6 @@
 import { t, tr } from '../i18n'
 import { useContext, useState } from 'react'
 import { isPreviewImage, type ChatItem } from '@conclave/protocol'
-import { openFileInBrowser } from '../browser-state'
-import { useBrowserSupported } from '../core-store'
 import { canRevealFile, revealFile } from '../desktop-bridge'
 import { previewUrl } from '../file-links'
 import { LocalImageViewer } from './ChatMarkdown'
@@ -46,9 +44,8 @@ function PreviewImage({ path, src, label }: { path: string; src: string; label: 
 // page of its own, with no way to the app around it or to the network (main's conclave-preview
 // protocol sets the policy), following the app's light or dark scheme; a picture is an image. It
 // reads the file as it stands now, so a later edit shows on refresh.
-export function ChatPreviewCard({ conversationId, item }: { conversationId: string; item: ToolItem }) {
+export function ChatPreviewCard({ item }: { conversationId?: string; item: ToolItem }) {
   const { path, title } = previewArgs(item)
-  const browsable = useBrowserSupported() && !isPreviewImage(path)
   const shorten = useContext(ChatPaths)
   const [generation, setGeneration] = useState(0)
   // A page's script may focus a field as it loads, which pulls the chat to the card every time the
@@ -67,9 +64,6 @@ export function ChatPreviewCard({ conversationId, item }: { conversationId: stri
         {title && <span className="chat-preview-path" title={path}>{shorten(path)}</span>}
         <span className="chat-preview-actions">
           <button type="button" className="tool-button" aria-label={t('ChatPreviewCard.reload')} data-tooltip={t('ChatPreviewCard.reload')} data-tooltip-side="top-end" onClick={() => setGeneration((n) => n + 1)}><RefreshIcon /></button>
-          {browsable && !refused && (
-            <button type="button" className="link-button" data-tooltip={t('ChatPreviewCard.openAtFullSizeInTheBuiltIn')} data-tooltip-side="top-end" onClick={() => void openFileInBrowser(path, conversationId)}>{t('ChatPreviewCard.openInBrowser')}</button>
-          )}
           {canRevealFile() && (
             <button type="button" className="link-button" onClick={() => void revealFile([path])}>{t('ChatPreviewCard.showFile')}</button>
           )}

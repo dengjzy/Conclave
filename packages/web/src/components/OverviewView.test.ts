@@ -4,8 +4,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StateCreator } from 'zustand'
 import { Conversation, Task, createRpcClient, type Routine, type RpcConnection, type ScheduledRun } from '@conclave/protocol'
 import { useCore } from '../core-store'
-import { useQuotes } from '../chat-quotes'
-import { receiveTodos } from '../conversation-todos'
 import { OverviewEntry } from './OverviewEntry'
 import { OverviewView } from './OverviewView'
 import { SchedulePicker } from './SchedulePicker'
@@ -197,60 +195,6 @@ describe('overview page', () => {
     expect(markup).toContain('下一个 13:00')
     expect(markup).toContain('都看过了')
     expect(markup).toContain('data-next=""')
-  })
-
-  it('gathers what is left to do, checks an item off and hands an agent\'s one to it', () => {
-    const { sent, rpc } = connect()
-    useCore.setState({ rpc: { ...rpc, features: ['todo-overview'] }, conversations: { [id(1)]: chat() } })
-    receiveTodos(id(1), [{ id: 'g', title: '上线前', note: '周五前', createdAt: now, updatedAt: now, items: [
-      { id: 'a', text: '通知运营', owner: 'user', done: false, createdAt: now, doneAt: null },
-      { id: 'b', text: '补测试', owner: 'agent', done: false, createdAt: now, doneAt: null },
-      { id: 'c', text: '改版本号', owner: 'user', done: true, createdAt: now, doneAt: now }
-    ] }])
-    const markup = render()
-    expect(markup).toContain('aria-label="待办 2"')
-    expect(markup).toContain('1 件归你 · 1 件 Agent 可接着做')
-    expect(markup).toContain('aria-label="待办"')
-    expect(markup).toContain('通知运营')
-    expect(markup).toContain('上线前 · 周五前')
-    expect(markup).not.toContain('改版本号')
-    const box = node('input', (props) => props['aria-label'] === '完成：通知运营')
-    if (typeof box.onChange !== 'function') throw new Error('missing check handler')
-    box.onChange()
-    expect(sent.at(-1)).toMatchObject({ method: 'todos.check', params: { id: id(1), groupId: 'g', itemId: 'a', done: true } })
-    click('交给 Agent：补测试')
-    expect(useQuotes(id(1))).toEqual([expect.objectContaining({ text: '补测试', note: '请处理这一项待办，做完后在待办里把它勾掉。' })])
-    expect(useCore.getState()).toMatchObject({ selectedConversationId: id(1), conversationInspectorOpen: true, conversationInspectorTab: 'todos' })
-  })
-
-  it('shows six to-do conversations and folds the rest', () => {
-    const { rpc } = connect()
-    const conversations: Record<string, ReturnType<typeof chat>> = {}
-    for (let n = 1; n <= 7; n++) {
-      conversations[id(n)] = chat({ id: id(n), title: `会话${n}` })
-      receiveTodos(id(n), [{ id: 'g', title: '待办', note: null, createdAt: now - n, updatedAt: now, items: [
-        { id: 'a', text: `事项${n}`, owner: 'user', done: false, createdAt: now - n, doneAt: null }
-      ] }])
-    }
-    useCore.setState({ rpc: { ...rpc, features: ['todo-overview'] }, conversations })
-    const folded = render()
-    for (let n = 1; n <= 6; n++) expect(folded).toContain(`会话${n}`)
-    expect(folded).not.toContain('会话7')
-    expect(folded).toContain('其余 1 个会话')
-    expect(folded).toContain('aria-expanded="false"')
-    click('其余 1 个会话')
-    const open = render()
-    expect(open).toContain('会话7')
-    expect(open).toContain('aria-expanded="true"')
-    click('其余 1 个会话')
-    expect(render()).not.toContain('会话7')
-  })
-
-  it('leaves to-dos out of the overview on a core that cannot gather them', () => {
-    connect()
-    useCore.setState({ conversations: { [id(1)]: chat() } })
-    receiveTodos(id(1), [{ id: 'g', title: 't', note: null, createdAt: now, updatedAt: now, items: [{ id: 'a', text: '通知运营', owner: 'user', done: false, createdAt: now, doneAt: null }] }])
-    expect(render()).not.toContain('待办')
   })
 
   it('restores the saved scroll when the overview mounts again', () => {

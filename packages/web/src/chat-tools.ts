@@ -1,6 +1,5 @@
 import { localized, t } from './i18n'
 import { BROWSER_HOST_TOOL, browserToolKind, isBrowserBookmarksTool, CODEX_IMAGE_GENERATION, historyToolKind, isPreviewTool, isTerminalRunTool, terminalToolKind, todoToolKind, type TodoToolKind, type BrowserToolKind, type ChatDiff, type ChatItem, type ChatToolStatus, type TerminalToolKind } from '@conclave/protocol'
-import { browserOperation } from './browser-activity'
 
 type ToolItem = Extract<ChatItem, { kind: 'tool' }>
 
@@ -99,10 +98,10 @@ const TOOL_ICONS: Record<string, ToolIconKind> = {
   read: 'read', search: 'search', fetch: 'browser', delete: 'edit', move: 'edit'
 }
 
-export function toolIconKind(name: string, display?: ToolDisplay | null): ToolIconKind {
+export function toolIconKind(name: string, _display?: ToolDisplay | null): ToolIconKind {
   if (isTerminalRunTool(name) || terminalToolKind(name)) return 'terminal'
   if (browserToolKind(name) === 'screenshot' || isPreviewTool(name)) return 'image'
-  if (browserOperation(name, display) !== null) return 'browser-control'
+  if (browserToolKind(name) !== null) return 'browser-control'
   const history = historyToolKind(name)
   if (history) return history === 'list' ? 'list' : 'read'
   if (todoToolKind(name) || isBrowserBookmarksTool(name)) return 'list'
@@ -141,7 +140,7 @@ const BROWSER_RUN = { kind: 'browser', say: (count: number) => t('chatTools.used
 export function runSummary(tools: readonly Pick<ToolItem, 'name' | 'display'>[]): string {
   const counts = new Map<string, { count: number; say: (count: number) => string }>()
   for (const tool of tools) {
-    const known = TOOL_KIND[tool.name] ?? (browserOperation(tool.name, tool.display) !== null ? BROWSER_RUN : undefined)
+    const known = TOOL_KIND[tool.name] ?? (browserToolKind(tool.name) !== null ? BROWSER_RUN : undefined)
     const kind = known?.kind ?? `tool:${tool.name}`
     const say = known?.say ?? ((count: number) => t('chatTools.times', { value1: toolLabel(tool.name, tool.display), count: count }))
     const current = counts.get(kind)

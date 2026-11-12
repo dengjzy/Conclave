@@ -1,21 +1,14 @@
 import { PullRequestPanel } from './PullRequestPanel'
-import { AgentCalls } from './AgentCalls'
-import { useAgentCalls, useAgentCallsSupported } from '../agent-calls'
 import { t, tr } from '../i18n'
-import { HelperPanel } from './HelperPanel'
-import { useHelper, useHelperSupported } from '../helper-conversations'
-import { SquadWorkPanel } from './SquadWorkPanel'
 import { FlowPanel } from './FlowPanel'
 import { GitInspector } from './GitInspector'
 import { useEffect, useState } from 'react'
-import { openTodoCount, type RepoChanges, type Task, type SquadRun } from '@conclave/protocol'
+import type { RepoChanges, Task } from '@conclave/protocol'
 import { pathShortener, type PlanItem } from '../chat-state'
 import { clearInspectorFile, setInspectorOpen, setTaskInspectorTab, showInspectorFile, showTaskPlan, useCore } from '../core-store'
 import { ProjectGroups, ProjectRow, useProjectHeads } from './BranchStatus'
 import { ChatPlanView } from './ChatPlan'
 import { ChangedFiles, CommitList, FileDiffView, GIT_TABS, InspectorPanel, type InspectorTab } from './Inspector'
-import { TodoPanel } from './TodoPanel'
-import { useConversationTodos, useTodosShown } from '../conversation-todos'
 import { projectName } from './ProjectPicker'
 import { WireLogView } from './WireLogView'
 import { DiffCommentConversation } from './DiffComments'
@@ -47,10 +40,8 @@ function ChangeList({ changes, onOpen }: { changes: RepoChanges[] | null; onOpen
 // review before accepting it.
 // A chat task's inspector also shows the plans its agent proposed, and has no git to show while the
 // task only plans.
-export function TaskInspector({ task, widthRatio, onWidthRatioChange, plans = [], planNote, wire = false, squadRuns = [], onMemberConversation }: {
+export function TaskInspector({ task, widthRatio, onWidthRatioChange, plans = [], planNote, wire = false }: {
   task: Task
-  squadRuns?: readonly SquadRun[]
-  onMemberConversation?: (id: string) => void
   widthRatio: number
   onWidthRatioChange: (ratio: number) => void
   plans?: readonly PlanItem[]
@@ -58,21 +49,12 @@ export function TaskInspector({ task, widthRatio, onWidthRatioChange, plans = []
   // The raw traffic with the task's chat agent (settings → 调试).
   wire?: boolean
 }) {
-  const conversationId = task.conversationId ?? ''
-  const parent = useCore((state) => state.conversations[conversationId])
-  const delegationSupported = useAgentCallsSupported(parent)
-  const { calls } = useAgentCalls(delegationSupported ? conversationId : null)
-  const helperSupported = useHelperSupported(parent)
-  const helper = useHelper(helperSupported ? conversationId : null)
-  const gitRevision = useCore((state) => state.gitRevision)
   const rpc = useCore((state) => state.rpc)
   const wanted = useCore((state) => state.taskInspectorTab)
   const selectedPlan = useCore((state) => state.taskInspectorPlan)
   const flowsSupported = useCore((state) => state.rpc?.features.includes('flows') ?? false)
   const worktree = task.repos.some((repo) => repo.worktreePath !== null)
-  const todosShown = useTodosShown() && task.conversationId !== null
-  const todos = useConversationTodos(todosShown ? task.conversationId : null)
-  const tabs: InspectorTab[] = [...(helper ? ['helper' as const] : []), ...(calls?.length ? ['delegation' as const] : []),...(squadRuns.length ? ['squad' as const] : []), ...(flowsSupported ? ['flow' as const] : []), ...(worktree ? GIT_TABS : []), ...(plans.length > 0 ? ['plan' as const] : []), ...(todosShown ? ['todos' as const] : []), ...(wire && task.conversationId ? ['wire' as const] : []), ...(task.conversationId ? ['pull-request' as const] : [])]
+  const tabs: InspectorTab[] = [...(flowsSupported ? ['flow' as const] : []), ...(worktree ? GIT_TABS : []), ...(plans.length > 0 ? ['plan' as const] : []), ...(wire && task.conversationId ? ['wire' as const] : []), ...(task.conversationId ? ['pull-request' as const] : [])]
   const tab = tabs.includes(wanted) ? wanted : (tabs[0] ?? 'changes')
   const [refreshCount, setRefreshCount] = useState(0)
   const [gitMaximized, setGitMaximized] = useState(false)
@@ -92,25 +74,15 @@ export function TaskInspector({ task, widthRatio, onWidthRatioChange, plans = []
       tabs={tabs}
       tab={tab}
       onTab={setTaskInspectorTab}
-      helperAwaiting={helper?.chat?.turn === 'awaiting'}
       fileCount={fileCount}
-      todoCount={openTodoCount(todos)}
       onRefresh={() => setRefreshCount((count) => count + 1)}
       onClose={() => setInspectorOpen(false)}
     >
       <DiffCommentConversation.Provider value={task.conversationId}>
         {tab === 'pull-request' && task.conversationId ? (
           <PullRequestPanel key={task.id} conversationId={task.conversationId} initialUrl={task.source?.provider === 'github' && /\/pull\/[1-9][0-9]*\/?$/.test(task.source.url) ? task.source.url : ''} />
-        ) : tab === 'helper' && parent ? (
-          <HelperPanel key={parent.id} parent={parent} />
-        ) : tab === 'delegation' && parent ? (
-          <AgentCalls key={parent.id} conversation={parent} />
-        ) : tab === 'squad' ? (
-          <SquadWorkPanel runs={squadRuns} onConversation={(id) => onMemberConversation?.(id)} />
         ) : tab === 'flow' ? (
           <FlowPanel task={task} />
-        ) : tab === 'todos' && task.conversationId ? (
-          <TodoPanel conversationId={task.conversationId} />
         ) : tab === 'wire' && task.conversationId ? (
           <WireLogView conversationId={task.conversationId} />
         ) : tab === 'plan' ? (

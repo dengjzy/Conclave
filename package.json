@@ -28,9 +28,7 @@
     "verify:plugin-sdk": "node scripts/verify-plugin-sdk.mjs",
     "test:dsh-runtime": "node --import tsx scripts/smoke-dsh-runtime.mjs",
     "self:smoke": "node --import tsx scripts/self-smoke.mjs",
-    "self:tests": "node scripts/self-test-policy.mjs",
-    "self:friction": "node scripts/self-friction.mjs",
-    "self:evolve": "node scripts/self-evolve.mjs"
+    "self:tests": "node scripts/self-test-policy.mjs"
   },
   "devDependencies": {
     "@types/node": "catalog:",

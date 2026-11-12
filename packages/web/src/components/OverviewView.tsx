@@ -1,23 +1,20 @@
 import { getLocale, localized, t, tr } from '../i18n'
-import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { ChatDecision } from '@conclave/protocol'
 import { quickApproval, type ActionableItem } from '../attention'
 import {
-  openAttentionItem, perform, refreshAttentionSummaries, selectConversation, selectTask, setConversationInspectorOpen,
-  setConversationInspectorTab, setInspectorOpen, setOverviewFilter, setOverviewScroll, setOverviewView, setRoutinesOpen,
-  setSchedulesOpen, setSettingsOpen, setTaskInspectorTab, showView, useDashboardSupported, useOverview, useCore, type OverviewFilter
+  openAttentionItem, perform, refreshAttentionSummaries, selectConversation, selectTask,
+  setOverviewFilter, setOverviewScroll, setOverviewView, setRoutinesOpen,
+  setSchedulesOpen, setSettingsOpen, showView, useDashboardSupported, useOverview, useCore, type OverviewFilter
 } from '../core-store'
 import { DashboardPanel } from './DashboardPanel'
 import { Segmented } from './SettingsControls'
-import { addQuote } from '../chat-quotes'
-import { useAllTodos, useTodoOverviewShown } from '../conversation-todos'
-import { overviewTodos, type TodoEntry, type TodoLine } from '../overview-todos'
 import { agentLabel, agoText, chatDayAndTime, timeOfDay } from '../labels'
 import { laterByDay, waitBreakdown, type OverviewRow } from '../overview'
 import { markRoutineAllSeen, runRoutineNow } from '../routines'
 import { rescheduleRun, runScheduleNow, scheduleTime } from '../schedules'
 import { primaryProjectName } from './ProjectPicker'
-import { conversationActivity, latestSquadRun, taskActivity, type WorkActivity } from '../work-activity'
+import { conversationActivity, taskActivity, type WorkActivity } from '../work-activity'
 import { SchedulePicker } from './SchedulePicker'
 import { WorkingSummary } from './WorkingSummary'
 import { AgentIcon, BoardIcon, ChatIcon, ClockIcon, RefreshIcon, SquadIcon } from './icons'
@@ -40,7 +37,6 @@ function openRow(row: OverviewRow): void {
     selectTask(taskId)
     if (row.conversationId) {
       showView('chat')
-      if (state.conversations[row.conversationId]?.squadRunId) useCore.setState({ taskMemberConversationId: row.conversationId })
     }
   } else if (row.conversationId && state.conversations[row.conversationId]) {
     selectConversation(row.conversationId)
@@ -59,12 +55,7 @@ function markSeen(row: OverviewRow): void {
       const taskId = row.key.slice('task:'.length)
       ids.add(state.tasks[taskId]?.conversationId ?? undefined)
       for (const conversation of Object.values(state.conversations)) {
-        if (conversation.taskId === taskId || (conversation.squadRunId && state.squadRuns[conversation.squadRunId]?.taskId === taskId)) ids.add(conversation.id)
-      }
-      for (const run of Object.values(state.squadRuns)) {
-        if (run.taskId !== taskId) continue
-        ids.add(run.leaderConversationId ?? undefined)
-        for (const work of run.works) ids.add(work.conversationId ?? undefined)
+        if (conversation.taskId === taskId) ids.add(conversation.id)
       }
     }
     return { unseen: Object.fromEntries(Object.entries(state.unseen).filter(([id]) => !ids.has(id))) }
@@ -121,25 +112,16 @@ function useRowActivity(row: OverviewRow): WorkActivity | null {
   const task = useCore((s) => (taskId ? s.tasks[taskId] : undefined))
   const conversation = useCore((s) => (row.conversationId ? s.conversations[row.conversationId] : undefined))
   const conversations = useCore((s) => s.conversations)
-  const runs = useCore((s) => s.squadRuns)
-  return useMemo(() => task ? taskActivity(task, conversations, runs)
-    : conversation ? conversationActivity(conversation, conversation.agent) : null, [task, conversation, conversations, runs, getLocale()])
+  return useMemo(() => task ? taskActivity(task, conversations)
+    : conversation ? conversationActivity(conversation, conversation.agent) : null, [task, conversation, conversations, getLocale()])
 }
 
-// A squad shows its members' agents, one of each; anything else the agent it runs on, or what it is.
 function Avatar({ row }: { row: OverviewRow }) {
-  const taskId = rowTaskId(row)
-  const squad = useCore((s) => {
-    const squadId = taskId ? s.tasks[taskId]?.squadId : null
-    return squadId ? s.squads[squadId] ?? (taskId ? latestSquadRun(taskId, s.squadRuns)?.squad : undefined) : undefined
-  })
-  const agents = squad ? [...new Set(squad.members.map((member) => member.agent))].slice(0, 3) : []
   const Kind = KIND_ICON[row.kind]
-  const label = [KIND_LABEL[row.kind], squad?.name ?? (row.agent ? agentLabel(row.agent) : '')].filter(Boolean).join(' · ')
+  const label = [KIND_LABEL[row.kind], row.agent ? agentLabel(row.agent) : ''].filter(Boolean).join(' · ')
   return (
     <span className="overview-avatar" role="img" aria-label={label}>
-      {agents.length > 1 ? <span className="overview-avatar-stack">{agents.map((agent) => <AgentIcon key={agent} agent={agent} />)}</span>
-        : agents[0] ?? row.agent ? <AgentIcon agent={agents[0] ?? row.agent} /> : <Kind />}
+      {row.agent ? <AgentIcon agent={row.agent} /> : <Kind />}
     </span>
   )
 }
@@ -252,73 +234,6 @@ function Rows({ rows, section }: { rows: OverviewRow[]; section: 'mine' | 'runni
   return <ul className="overview-rows">{rows.map((row) => <Row key={row.key} row={row} section={section} />)}</ul>
 }
 
-// Where a conversation's (or its task's) to-dos are: its chat, with the inspector on them.
-function openTodos(entry: TodoEntry): void {
-  if (entry.taskId) {
-    selectTask(entry.taskId)
-    showView('chat')
-    setInspectorOpen(true)
-    setTaskInspectorTab('todos')
-  } else {
-    selectConversation(entry.conversationId)
-    setConversationInspectorOpen(true)
-    setConversationInspectorTab('todos')
-  }
-}
-
-// Items checked off on this visit to the overview, kept on show (done) until the user leaves it.
-const KeepChecked = createContext<(itemId: string) => void>(() => {})
-
-// One item: checked off here as in its conversation, and unchecked again while it is still on show;
-// one its agent can take on is handed to it as the to-dos panel does, a quote waiting in that chat's
-// input for the user to send.
-function TodoLineView({ entry, line }: { entry: TodoEntry; line: TodoLine }) {
-  const [busy, setBusy] = useState(false)
-  const keep = useContext(KeepChecked)
-  const { done } = line.item
-  const check = async () => {
-    setBusy(true)
-    keep(line.item.id)
-    await perform((rpc) => rpc.call('todos.check', { id: entry.conversationId, groupId: line.groupId, itemId: line.item.id, done: !done }))
-    setBusy(false)
-  }
-  return (
-    <li className="overview-todo-line" data-owner={line.item.owner} data-done={done || undefined}>
-      <input type="checkbox" checked={done} disabled={busy} aria-label={`${done ? t('OverviewView.markIncomplete') : t('ChatSubagents.done')}：${line.item.text}`} onChange={() => void check()} />
-      <span className="overview-todo-text">{line.item.text}</span>
-      <span className="overview-todo-group">{line.group}{line.note ? ` · ${line.note}` : ''}</span>
-      {line.item.owner === 'agent' && !done && <span className="overview-actions overview-secondary">
-        <button type="button" className="button ghost" aria-label={t('OverviewView.assignToAgent_1297', { value1: line.item.text })} data-tooltip={t('OverviewView.openConversationAndPutThisInTheComposer')}
-          onClick={() => {
-            addQuote(entry.conversationId, null, line.item.text, t('OverviewView.pleaseHandleThisToDoAndMarkIt'))
-            openTodos(entry)
-          }}>{t('OverviewView.assignToAgent')}</button>
-      </span>}
-    </li>
-  )
-}
-
-const SHOWN_TODOS = 3
-const SHOWN_TODO_CONVERSATIONS = 6
-
-function TodoEntryView({ entry, now }: { entry: TodoEntry; now: number }) {
-  const more = entry.lines.length - SHOWN_TODOS
-  return (
-    <li className="overview-todo">
-      <button type="button" className="overview-todo-head" onClick={() => openTodos(entry)}>
-        <span className="overview-avatar" aria-hidden="true"><AgentIcon agent={entry.agent} /></span>
-        <span className="overview-todo-title">{entry.title}</span>
-        <span className="overview-count">{entry.mine + entry.agents > 0 ? t('OverviewView.items', { value1: entry.mine + entry.agents }) : t('OverviewView.allDone')}</span>
-        {entry.stale && <span className="overview-badge" title={chatDayAndTime(entry.updatedAt)}>{tr('OverviewView.inactiveForDays', { value1: Math.floor((now - entry.updatedAt) / 86_400_000) })}</span>}
-      </button>
-      <ul className="overview-todo-lines">
-        {entry.lines.slice(0, SHOWN_TODOS).map((line) => <TodoLineView key={line.item.id} entry={entry} line={line} />)}
-      </ul>
-      {more > 0 && <button type="button" className="link-button overview-todo-more" onClick={() => openTodos(entry)}>{tr('OverviewView.more_1303', { more: more })}</button>}
-    </li>
-  )
-}
-
 // Before there is any work here, the work already under way in a terminal, to go on with. Not while
 // the setup guide offers the same.
 function ResumablePanel() {
@@ -360,13 +275,6 @@ export function OverviewView() {
   const error = useCore((s) => s.attentionSummaryError)
   const tasks = useCore((s) => s.tasks)
   const conversations = useCore((s) => s.conversations)
-  const runs = useCore((s) => s.squadRuns)
-  const todosShown = useTodoOverviewShown()
-  const allTodos = useAllTodos()
-  const [withArchived, setWithArchived] = useState(false)
-  const [moreConversations, setMoreConversations] = useState(false)
-  const [kept, setKept] = useState<ReadonlySet<string>>(new Set())
-  const keep = useCallback((itemId: string) => setKept((current) => current.has(itemId) ? current : new Set(current).add(itemId)), [])
   const page = useRef<HTMLElement>(null)
   useLayoutEffect(() => {
     if (page.current) page.current.scrollTop = useCore.getState().overviewScroll
@@ -377,17 +285,12 @@ export function OverviewView() {
     const taskId = rowTaskId(row)
     const task = taskId ? tasks[taskId] : undefined
     const conversation = row.conversationId ? conversations[row.conversationId] : undefined
-    const activity = task ? taskActivity(task, conversations, runs) : conversation ? conversationActivity(conversation, conversation.agent) : null
+    const activity = task ? taskActivity(task, conversations) : conversation ? conversationActivity(conversation, conversation.agent) : null
     return activity?.workers ?? []
-  }), [data.running, tasks, conversations, runs, getLocale()])
-  // What is left to do across conversations: not waiting on anyone, so apart from 等我.
-  const todos = overviewTodos(allTodos, conversations, tasks, now, withArchived, kept)
-  const foldedConversations = Math.max(0, todos.entries.length - SHOWN_TODO_CONVERSATIONS)
-  const visibleTodos = moreConversations ? todos.entries : todos.entries.slice(0, SHOWN_TODO_CONVERSATIONS)
-  const counts = { ...data.counts, todos: todos.mine + todos.agents }
+  }), [data.running, tasks, conversations, getLocale()])
+  const counts = data.counts
   const ranges = [
     { value: 'mine', label: t('OverviewView.waitingOnMe') },
-    ...(todosShown ? [{ value: 'todos', label: t('chatTools.toDos') } as const] : []),
     { value: 'running', label: t('OverviewView.running') }, { value: 'next', label: t('OverviewView.upNext') }, { value: 'unread', label: t('OverviewView.unread') }
   ] as const
   const emptyConfirmed = connected && !loading && !error && mode !== null
@@ -397,7 +300,6 @@ export function OverviewView() {
   const latestUnread = data.unread.at(-1)
   const foot: Record<Exclude<OverviewFilter, null>, ReactNode> = {
     mine: data.counts.mine > 0 ? waitBreakdown(data.mine) : t('OverviewView.nothingWaitingOnYou'),
-    todos: counts.todos > 0 ? [todos.mine > 0 && t('OverviewView.itemsForYou', { value1: todos.mine }), todos.agents > 0 && t('OverviewView.itemsAgentCanContinue', { value1: todos.agents })].filter(Boolean).join(' · ') : t('OverviewView.noToDos'),
     running: working.length > 0
       ? <WorkingSummary activity={{ state: 'running', workers: working, detail: null }} detail={false} />
       : data.counts.running > 0 ? t('OverviewView.starting') : t('OverviewView.nothingRunning'),
@@ -405,15 +307,6 @@ export function OverviewView() {
     unread: latestUnread ? t('OverviewView.latest', { value1: agoText(latestUnread.at, now) }) : t('OverviewView.allRead')
   }
   const mine = shows('mine') && <Panel title={t('OverviewView.needsMe')} count={data.counts.mine}><Rows rows={data.mine} section="mine" /></Panel>
-  const todoPanel = todosShown && (!filter || filter === 'todos') && (todos.entries.length > 0 || todos.archived > 0) && <Panel title={t('chatTools.toDos')} count={counts.todos}>
-    {todos.entries.length > 0 && <KeepChecked.Provider value={keep}>
-      <ul className="overview-todos">{visibleTodos.map((entry) => <TodoEntryView key={entry.conversationId} entry={entry} now={now} />)}</ul>
-      {foldedConversations > 0 && <button type="button" className="overview-day overview-disclosure" aria-expanded={moreConversations}
-        onClick={() => setMoreConversations(!moreConversations)}>{t('OverviewView.remainingConversations', { value1: foldedConversations })}</button>}
-    </KeepChecked.Provider>}
-    {todos.archived > 0 && <button type="button" className="overview-day overview-disclosure" aria-expanded={withArchived}
-      onClick={() => setWithArchived(!withArchived)}>{tr('OverviewView.itemsInArchivedConversations', { value1: withArchived ? t('OverviewView.hide') : t('OverviewView.include'), value2: todos.archived })}</button>}
-  </Panel>
   const unread = shows('unread') && <Panel title={t('OverviewView.unread')} count={data.counts.unread}><Rows rows={data.unread} section="unread" /></Panel>
   const running = shows('running') && <Panel title={t('ChatTodos.inProgress')} count={data.counts.running}><Rows rows={data.running} section="running" /></Panel>
   const next = shows('next') && <Panel title={t('OverviewView.upNext')} count={data.counts.next}>
@@ -465,8 +358,8 @@ export function OverviewView() {
       </div>
       {/* What the user acts on to the left, what they only follow to the right; one column when
           only one side has anything, or when the pane is narrow. */}
-      <div className="overview-grid" data-columns={(mine || todoPanel || unread) && (running || next) ? 2 : 1}>
-        {(mine || todoPanel || unread) && <div className="overview-column">{mine}{todoPanel}{unread}</div>}
+      <div className="overview-grid" data-columns={(mine || unread) && (running || next) ? 2 : 1}>
+        {(mine || unread) && <div className="overview-column">{mine}{unread}</div>}
         {(running || next) && <div className="overview-column">{running}{next}</div>}
       </div>
       {empty && emptyConfirmed && <>
