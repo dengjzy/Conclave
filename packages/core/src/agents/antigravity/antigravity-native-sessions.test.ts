@@ -46,25 +46,25 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllEnvs(); rmSync(root, { recursive: true, force: true }) })
 
 describe('Antigravity native storage', () => {
-  it('captures the shared ACP root before a record exists and survives removing its account', async () => {
+  it('captures the shared CLI root before a record exists and survives removing its account', async () => {
     const account = path.join(root, 'account')
     await antigravityAccounts.prepare(account)
     const target = capture(account)
-    expect(target.home).toBe(path.join(own, 'antigravity-acp'))
+    expect(target.home).toBe(path.join(own, 'antigravity-cli'))
     expect(await support.resolve(target)).toMatchObject({ root: target.home, artifacts: target.artifacts })
     rmSync(account, { recursive: true, force: true })
     vi.stubEnv('GEMINI_HOME', path.join(root, 'replacement'))
-    history(path.join(own, 'antigravity-acp'), MAIN)
-    expect(await support.resolve(target)).toMatchObject({ root: path.join(own, 'antigravity-acp'), id: MAIN })
+    history(path.join(own, 'antigravity-cli'), MAIN)
+    expect(await support.resolve(target)).toMatchObject({ root: path.join(own, 'antigravity-cli'), id: MAIN })
     expect(await support.resolve({ providerSessionId: MAIN, cwd: '/project' })).toBeNull()
   })
 
   it('gives every account the same native identity and removes only the selected history', async () => {
     const a = path.join(root, 'a'), b = path.join(root, 'b')
     await antigravityAccounts.prepare(a); await antigravityAccounts.prepare(b)
-    const storage = path.join(own, 'antigravity-acp')
+    const storage = path.join(own, 'antigravity-cli')
     history(storage, MAIN); history(storage, OTHER)
-    for (const home of [own, a, b]) write(path.join(home, 'antigravity-acp', 'acp_token.json'), home)
+    for (const home of [own, a, b]) write(path.join(home, 'antigravity-cli', 'antigravity-oauth-token'), home)
     const sessions = await Promise.all([undefined, a, b].map((home) => support.resolve({ providerSessionId: MAIN, cwd: '/project', home })))
     const first = sessions[0]
     if (!first) throw new Error('missing default session')
@@ -72,30 +72,30 @@ describe('Antigravity native storage', () => {
     await support.remove(first, executor)
     for (const suffix of ['.db', '.db-wal', '.db-shm', '.meta']) expect(existsSync(path.join(storage, 'conversations', `${MAIN}${suffix}`))).toBe(false)
     expect(existsSync(path.join(storage, 'brain', MAIN))).toBe(false)
-    expect(existsSync(path.join(b, 'antigravity-acp', 'conversations', `${OTHER}.db`))).toBe(true)
-    for (const home of [own, a, b]) expect(readFileSync(path.join(home, 'antigravity-acp', 'acp_token.json'), 'utf8')).toBe(home)
+    expect(existsSync(path.join(b, 'antigravity-cli', 'conversations', `${OTHER}.db`))).toBe(true)
+    for (const home of [own, a, b]) expect(readFileSync(path.join(home, 'antigravity-cli', 'antigravity-oauth-token'), 'utf8')).toBe(home)
   })
 
   it('recovers an exact shared session from an account removed before its storage was captured', async () => {
     const account = path.join(root, 'account')
     await antigravityAccounts.prepare(account)
-    history(path.join(own, 'antigravity-acp'), MAIN)
+    history(path.join(own, 'antigravity-cli'), MAIN)
     rmSync(account, { recursive: true, force: true })
     const target = capture(account)
-    expect(target.home).toBe(path.join(own, 'antigravity-acp'))
-    expect(await support.resolve(target)).toMatchObject({ root: path.join(own, 'antigravity-acp'), id: MAIN })
+    expect(target.home).toBe(path.join(own, 'antigravity-cli'))
+    expect(await support.resolve(target)).toMatchObject({ root: path.join(own, 'antigravity-cli'), id: MAIN })
     expect(await support.resolve({ providerSessionId: OTHER, cwd: '/project', home: account })).toBeNull()
   })
 
-  it('keeps imported IDE history separate and gives an existing ACP session priority', async () => {
+  it('keeps imported IDE history separate and gives an existing CLI session priority', async () => {
     history(ide, MAIN)
     const imported = capture()
     expect(imported.home).toBe(ide)
     expect(await support.resolve(imported)).toMatchObject({ root: ide })
-    const storage = path.join(own, 'antigravity-acp')
+    const storage = path.join(own, 'antigravity-cli')
     history(storage, MAIN)
     const acp = await support.resolve({ providerSessionId: MAIN, cwd: '/project' })
-    if (!acp) throw new Error('missing ACP session')
+    if (!acp) throw new Error('missing CLI session')
     expect(acp.root).toBe(storage)
     await support.remove(acp, executor)
     expect(existsSync(path.join(ide, 'brain', MAIN))).toBe(true)
@@ -103,7 +103,7 @@ describe('Antigravity native storage', () => {
   })
 
   it('captures independent account artifacts separately from shared conversations', async () => {
-    const account = path.join(root, 'account', 'antigravity-acp')
+    const account = path.join(root, 'account', 'antigravity-cli')
     const first = path.join(root, 'first'), second = path.join(root, 'second')
     history(first, MAIN); history(second, MAIN)
     mkdirSync(account, { recursive: true })
@@ -121,7 +121,7 @@ describe('Antigravity native storage', () => {
     const a = path.join(root, 'a'), b = path.join(root, 'b')
     await antigravityAccounts.prepare(a); await antigravityAccounts.prepare(b)
     const firstTarget = capture(a), secondTarget = capture(b)
-    const storage = path.join(own, 'antigravity-acp')
+    const storage = path.join(own, 'antigravity-cli')
     history(storage, MAIN); history(storage, OTHER)
     const database = path.join(root, 'conclave.db')
     const tasks = new TaskStore(database), store = new ConversationStore(database)
@@ -148,12 +148,12 @@ describe('Antigravity native storage', () => {
   it('collects all account artifacts when the same conversation resumes on another account', async () => {
     const a = path.join(root, 'a'), b = path.join(root, 'b')
     await antigravityAccounts.prepare(a); await antigravityAccounts.prepare(b)
-    history(path.join(own, 'antigravity-acp'), MAIN)
+    history(path.join(own, 'antigravity-cli'), MAIN)
     for (const home of [a, b]) {
-      write(path.join(home, 'antigravity-acp', 'brain', MAIN, 'output.txt'))
-      write(path.join(home, 'antigravity-acp', 'brain', OTHER, 'unrelated.txt'))
-      write(path.join(home, 'antigravity-acp', 'brain', `.restore-${MAIN}-interrupted`, 'partial.txt'))
-      write(path.join(home, 'antigravity-acp', 'brain', `.restore-${OTHER}-unrelated`, 'partial.txt'))
+      write(path.join(home, 'antigravity-cli', 'brain', MAIN, 'output.txt'))
+      write(path.join(home, 'antigravity-cli', 'brain', OTHER, 'unrelated.txt'))
+      write(path.join(home, 'antigravity-cli', 'brain', `.restore-${MAIN}-interrupted`, 'partial.txt'))
+      write(path.join(home, 'antigravity-cli', 'brain', `.restore-${OTHER}-unrelated`, 'partial.txt'))
     }
     const database = path.join(root, 'conclave.db')
     const tasks = new TaskStore(database), store = new ConversationStore(database)
@@ -170,13 +170,13 @@ describe('Antigravity native storage', () => {
       const deletion = new ConversationDeletion(store, { quiesce: async () => {}, removeStopped: async (id) => { store.delete(id) }, changed: () => {} }, path.join(root, 'sessions'))
       deletion.configure({ adapter: () => support, executor, home: () => undefined })
       await deletion.delete(conversation.id)
-      for (const home of [own, a, b]) expect(existsSync(path.join(home, 'antigravity-acp', 'brain', MAIN))).toBe(false)
-      for (const home of [a, b]) expect(existsSync(path.join(home, 'antigravity-acp', 'brain', OTHER))).toBe(true)
+      for (const home of [own, a, b]) expect(existsSync(path.join(home, 'antigravity-cli', 'brain', MAIN))).toBe(false)
+      for (const home of [a, b]) expect(existsSync(path.join(home, 'antigravity-cli', 'brain', OTHER))).toBe(true)
       for (const home of [a, b]) {
-        expect(existsSync(path.join(home, 'antigravity-acp', 'brain', `.restore-${MAIN}-interrupted`))).toBe(false)
-        expect(existsSync(path.join(home, 'antigravity-acp', 'brain', `.restore-${OTHER}-unrelated`))).toBe(true)
+        expect(existsSync(path.join(home, 'antigravity-cli', 'brain', `.restore-${MAIN}-interrupted`))).toBe(false)
+        expect(existsSync(path.join(home, 'antigravity-cli', 'brain', `.restore-${OTHER}-unrelated`))).toBe(true)
       }
-      expect(existsSync(path.join(own, 'antigravity-acp', 'conversations', `${MAIN}.db`))).toBe(false)
+      expect(existsSync(path.join(own, 'antigravity-cli', 'conversations', `${MAIN}.db`))).toBe(false)
     } finally { store.close(); tasks.close() }
   })
 })

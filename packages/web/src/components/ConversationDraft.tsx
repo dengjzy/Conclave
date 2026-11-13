@@ -28,6 +28,7 @@ import { ProjectPicker } from './ProjectPicker'
 import { DraftBranchPicker, useProjectBranches } from './DraftBranchPicker'
 import { composerDraft, EMPTY_DRAFT, saveComposerDraft } from '../composer-drafts'
 import { inboxKey, rememberInvestigationProjects } from '../source-inboxes'
+import { agentCatalogScope } from '../agent-models'
 import { catalogKey, providerFor } from '../model-provider-choice'
 import { ProviderPicker } from './ProviderPicker'
 
@@ -89,7 +90,13 @@ export function ConversationDraft() {
   // The model provider picked, for whichever agent it serves; null is the agent's own account.
   const [providerId, setProviderId] = useState<string | null>(() => initial?.modelProvider ?? null)
   const providers = useCore((s) => s.modelProviders)
+  const accounts = useCore((s) => s.accounts)
+  const environment = useCore((s) => s.environment)
   const providerOf = (kind: AgentKind | null) => providerFor(providers, providerId, kind)
+  const keyFor = (kind: AgentKind) => {
+    const chosenProvider = providerOf(kind)
+    return catalogKey(kind, chosenProvider, chosenProvider ? null : agentCatalogScope(kind, accounts, environment))
+  }
   // Each agent's models (a provider's where it runs on one), asked for once it is picked; absent
   // while asking, null when core cannot say.
   const [catalogs, setCatalogs] = useState<Record<string, ChatCatalog | null>>({})
@@ -158,7 +165,7 @@ export function ConversationDraft() {
   const written = writtenMessage.text
 
   const provider = providerOf(agent)
-  const key = agent ? catalogKey(agent, provider) : null
+  const key = agent ? keyFor(agent) : null
   useEffect(() => {
     if (!agent || !key || !rpc || !optionsSupported || key in catalogs) return
     let current = true
@@ -187,7 +194,7 @@ export function ConversationDraft() {
   const canSend = !busy && !settingsLoading && attached.uploading === 0 && agent !== null && (issue !== null || text.trim() !== '' || attached.images.length > 0)
   // The model a start would run, as quota windows name models; unknown until its catalog is in.
   const modelFor = (kind: AgentKind) => {
-    const models = catalogs[catalogKey(kind, providerOf(kind))]?.models ?? []
+    const models = catalogs[keyFor(kind)]?.models ?? []
     const id = picks[kind]?.model ?? models.find((each) => each.isDefault)?.id
     return modelText(models.find((each) => each.id === id))
   }

@@ -145,4 +145,76 @@ describe('ACP account login', () => {
     await closed
     await expectPreviousLogin()
   })
+
+  it('stages agy 1.5+ --gemini-dir logins with a keyring bypass marker and publishes companion state', async () => {
+    const accountHome = path.join(root, 'cli-account')
+    const cliToken = path.join(accountHome, 'antigravity-cli', 'antigravity-oauth-token')
+    const fakeAgy = path.join(root, 'fake-agy.mjs')
+    await writeFile(fakeAgy, `import { createInterface } from 'node:readline'; import { existsSync, mkdirSync, writeFileSync } from 'node:fs'; import path from 'node:path';
+const idx = process.argv.indexOf('--gemini-dir');
+const geminiDir = idx >= 0 ? process.argv[idx + 1] : '';
+if (!geminiDir) throw new Error('expected --gemini-dir');
+const marker = path.join(geminiDir, 'antigravity-cli', 'cache', 'antigravity-keyring-unavailable');
+if (!existsSync(marker)) throw new Error('expected keyring bypass marker before spawn');
+createInterface({ input: process.stdin }).on('line', (line) => {
+  const frame = JSON.parse(line);
+  if (frame.method === 'initialize') {
+    console.log(JSON.stringify({ id: frame.id, result: { authMethods: [{ id: 'oauth-personal' }] } }));
+    return;
+  }
+  if (frame.method === 'authenticate') {
+    const cliDir = path.join(geminiDir, 'antigravity-cli');
+    mkdirSync(path.join(cliDir, 'cache'), { recursive: true });
+    writeFileSync(path.join(cliDir, 'antigravity-oauth-token'), 'cli-token-payload', { mode: 0o600 });
+    writeFileSync(path.join(cliDir, 'cache', 'default_project_id.txt'), 'proj-156', { mode: 0o600 });
+    writeFileSync(path.join(cliDir, 'cache', 'acp-auth-state.json'), '{"methodId":"oauth-personal"}', { mode: 0o600 });
+    console.log(JSON.stringify({ id: frame.id, result: {} }));
+  }
+});`)
+    await execute(process.execPath, [
+      entry,
+      JSON.stringify({
+        file: process.execPath,
+        args: [fakeAgy, 'acp', '--stdio'],
+        credentials: [cliToken, credentials],
+        geminiDir: true
+      })
+    ], { timeout: 10000 })
+
+    expect(await readFile(cliToken, 'utf8')).toBe('cli-token-payload')
+    expect(await readFile(path.join(accountHome, 'antigravity-cli', 'cache', 'default_project_id.txt'), 'utf8')).toBe('proj-156')
+    expect(await readFile(path.join(accountHome, 'antigravity-cli', 'cache', 'antigravity-keyring-unavailable'), 'utf8')).toBe('')
+    await expect(readFile(credentials, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('writes antigravity-keyring-unavailable for directDefault agy logins before spawning', async () => {
+    const defaultHome = path.join(root, 'direct-default')
+    const cliToken = path.join(defaultHome, 'antigravity-cli', 'antigravity-oauth-token')
+    const fakeAgy = path.join(root, 'fake-agy-default.mjs')
+    await writeFile(fakeAgy, `import { createInterface } from 'node:readline'; import { existsSync, mkdirSync, writeFileSync } from 'node:fs'; import path from 'node:path';
+if (process.argv.includes('--gemini-dir')) throw new Error('unexpected --gemini-dir for directDefault');
+const home = process.env.GEMINI_HOME;
+const marker = path.join(home, 'antigravity-cli', 'cache', 'antigravity-keyring-unavailable');
+if (!existsSync(marker)) throw new Error('expected keyring bypass marker before spawn');
+createInterface({ input: process.stdin }).on('line', (line) => {
+  const frame = JSON.parse(line);
+  if (frame.method === 'initialize') { console.log(JSON.stringify({ id: frame.id, result: { authMethods: [{ id: 'oauth-personal' }] } })); return; }
+  if (frame.method === 'authenticate') {
+    mkdirSync(path.join(home, 'antigravity-cli'), { recursive: true });
+    writeFileSync(path.join(home, 'antigravity-cli', 'antigravity-oauth-token'), 'default-cli-token', { mode: 0o600 });
+    console.log(JSON.stringify({ id: frame.id, result: {} }));
+  }
+});`)
+    await execute(process.execPath, [
+      entry,
+      JSON.stringify({
+        file: process.execPath,
+        args: [fakeAgy, 'acp', '--stdio'],
+        credentials: [cliToken],
+        directDefault: true
+      })
+    ], { timeout: 10000, env: { ...process.env, GEMINI_HOME: defaultHome } })
+    expect(await readFile(cliToken, 'utf8')).toBe('default-cli-token')
+    expect(await readFile(path.join(defaultHome, 'antigravity-cli', 'cache', 'antigravity-keyring-unavailable'), 'utf8')).toBe('')
+  })
 })

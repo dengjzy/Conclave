@@ -6,14 +6,15 @@ export const antigravity: AgentDescriptor = {
   translations: { en: {
     modes: {
       ask: { label: 'Default', description: "Antigravity's default review: asks before editing files and running commands" },
-      acceptEdits: { label: 'Auto Edit', description: 'Edits files without asking; still asks before running commands' },
-      bypass: { label: 'YOLO', description: 'Runs every tool without asking' }
+      acceptEdits: { label: 'Accept Edits', description: 'Edits files without asking; still asks before running commands' },
+      plan: { label: 'Plan', description: 'Plans carefully before executing a task' },
+      bypass: { label: 'Auto', description: 'Approves edits and safe commands automatically' }
     },
     environment: {
-      role: "Runs Google's Antigravity ACP server (the one behind its Zed and JetBrains extensions), which Conclave downloads into its own folder. Neither agy nor the Antigravity editor is needed.",
-      install: 'Download the Antigravity ACP server from Settings → Local agents',
-      signIn: 'Your first chat opens the Google sign-in page in the browser',
-      missing: { status: 'Not downloaded', hint: "Conclave runs Antigravity through Google's Antigravity ACP server, which it downloads first (110–340 MB). Neither agy nor the Antigravity editor is needed." }
+      role: 'Runs the official `agy acp --stdio` CLI directly (following `agy update` automatically).',
+      install: 'Install the `agy` CLI (`>= 1.5.0`) from Settings → Local agents',
+      signIn: 'Reuses your local `agy` login or opens Google sign-in in the browser on first chat',
+      missing: { status: 'Not installed', hint: 'Install the official `agy` CLI (`>= 1.5.0`) here or run its installer manually.' }
     },
     usageWhere: 'Send /usage in an Antigravity chat'
   } },
@@ -22,10 +23,11 @@ export const antigravity: AgentDescriptor = {
   setup: 'first-use',
   modes: {
     ask: { label: 'Default', description: 'Antigravity 默认的审批流程：修改文件和运行命令前先问你' },
-    acceptEdits: { label: 'Auto Edit', description: '直接修改文件，运行命令前仍先问你' },
-    bypass: { label: 'YOLO', description: '所有工具直接运行，什么都不问' }
+    acceptEdits: { label: 'Accept Edits', description: '直接修改文件，运行命令前仍先问你' },
+    plan: { label: 'Plan', description: '先仔细规划方案，确认后再执行' },
+    bypass: { label: 'Auto', description: '自动批准文件修改与常规命令' }
   },
-  startModes: ['ask', 'acceptEdits', 'bypass'],
+  startModes: ['ask', 'acceptEdits', 'plan', 'bypass'],
   defaultStartMode: 'ask',
   discussionMode: 'ask',
   readOnlyMode: 'ask',
@@ -33,10 +35,10 @@ export const antigravity: AgentDescriptor = {
   primaryOnlyFiles: true,
   capabilities: { unattended: false, bypass: true, autoMode: false, pathMentions: false, optionsWhileBusy: false, skills: false, userMcp: true, modelProviders: [], accounts: true },
   environment: {
-    role: '聊天界面运行 Google 的 Antigravity ACP 服务（Zed、JetBrains 扩展用的同一个），由 Conclave 下载到自己的目录；不需要 agy 或 Antigravity 编辑器。',
-    install: '在 设置 → 外部智能体 里下载 Antigravity ACP 服务',
-    signIn: '第一次对话时会在浏览器打开 Google 登录页',
-    missing: { status: '未下载', hint: 'Conclave 通过 Google 的 Antigravity ACP 服务运行 Antigravity，需要先下载它（110–340 MB）；不需要 agy 或 Antigravity 编辑器。' }
+    role: '直接运行官方 `agy acp --stdio` CLI（跟随 `agy update` 自动获得最新模型与能力）。',
+    install: '在 设置 → 外部智能体 安装 `agy` CLI（`>= 1.5.0`）',
+    signIn: '自动复用本机 `agy` 登录态，或首次对话时在浏览器打开 Google 登录页',
+    missing: { status: '未安装', hint: '请在此安装官方 `agy` CLI（`>= 1.5.0`，可通过 `agy update` 自动跟进最新能力）。' }
   },
   usageWhere: '在 Antigravity 会话里发送 /usage 查看'
 }

@@ -10,8 +10,8 @@ export interface AcpDialect {
   // Starts the id of every request Conclave sends. Logs keep the ids and replay matches on them, so
   // an agent's prefix never changes.
   readonly idPrefix: string
-  // The session mode the agent offers for each of Conclave's permission modes it has.
-  readonly modes: Partial<Record<ChatPermissionMode, string>>
+  // The session mode(s) the agent offers for each of Conclave's permission modes (newest release first).
+  readonly modes: Partial<Record<ChatPermissionMode, string | readonly string[]>>
   // A mode notification carried as an agent text chunk instead of current_mode_update.
   modeUpdate?(text: string): string | null
   // Some providers include cache reads in inputTokens rather than reporting them separately.
@@ -20,7 +20,7 @@ export interface AcpDialect {
   readonly clientMeta?: Record<string, unknown>
   // A runtime extension that must be present before a session is opened.
   initializeError?(result: unknown): string | null
-  startNote?(options: ChatStageOptions): string | null
+  startNote?(options: ChatStageOptions, capabilities?: { directories: boolean }): string | null
   // An actionable explanation for a known startup rejection; null preserves the original error.
   startupError?(message: string): string | null
   // Conclave's own MCP server reaches the agent on its command rather than in session/new: the agent

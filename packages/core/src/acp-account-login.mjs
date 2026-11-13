@@ -1,15 +1,23 @@
 import { spawn } from 'node:child_process'
-import { mkdir, mkdtemp, readdir, rename, rm } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { createInterface } from 'node:readline'
 
-const { file, args, credentials } = JSON.parse(process.argv[2])
-const loginRoot = path.join(path.dirname(credentials[0]), '.conclave-login')
+const { file, args, credentials, geminiDir, directDefault } = JSON.parse(process.argv[2])
+const targetDir = path.dirname(credentials[0])
+const loginRoot = path.join(targetDir, '.conclave-login')
 let home
 let child
 let finished = false
 let timer
 let cancelled
+
+async function moveIfPresent(from, into) {
+  const exists = await access(from).then(() => true, () => false)
+  if (!exists) return
+  await mkdir(path.dirname(into), { recursive: true, mode: 0o700 })
+  await rename(from, into)
+}
 
 async function finish(code) {
   if (finished) return
@@ -26,11 +34,27 @@ async function finish(code) {
     }
     code = cancelled ?? code
     if (code === 0) {
-      // The temporary home is on the same filesystem; a failed or interrupted login
-      // never removes the live token, and publishing it is one atomic replacement.
-      await rename(path.join(home, path.basename(path.dirname(credentials[0])), path.basename(credentials[0])), credentials[0])
-      committed = true
-      await Promise.all(credentials.slice(1).map((file) => rm(file, { force: true })))
+      if (directDefault) {
+        const saved = await Promise.all(credentials.map((entry) => access(entry).then(() => true, () => false)))
+        if (!saved.some(Boolean)) throw new Error('missing-default-credentials')
+        committed = true
+      } else {
+        await mkdir(targetDir, { recursive: true, mode: 0o700 })
+        // The temporary home is on the same filesystem; a failed or interrupted login
+        // never removes the live token, and publishing it is one atomic replacement.
+        await rename(path.join(home, path.basename(targetDir), path.basename(credentials[0])), credentials[0])
+        committed = true
+        if (geminiDir) {
+          const stagedCli = path.join(home, 'antigravity-cli')
+          for (const rel of ['jetski_state.pbtxt', path.join('cache', 'acp-auth-state.json'), path.join('cache', 'default_project_id.txt'), path.join('cache', 'onboarding.json')]) {
+            await moveIfPresent(path.join(stagedCli, rel), path.join(targetDir, rel)).catch(() => {})
+          }
+          const cacheDir = path.join(targetDir, 'cache')
+          await mkdir(cacheDir, { recursive: true, mode: 0o700 }).catch(() => {})
+          await writeFile(path.join(cacheDir, 'antigravity-keyring-unavailable'), '', { mode: 0o600 }).catch(() => {})
+        }
+        await Promise.all(credentials.slice(1).map((entry) => rm(entry, { force: true })))
+      }
       console.log('Google 账号登录成功，终端即将关闭。')
     }
   } catch {
@@ -64,7 +88,19 @@ try {
     throw new Error('login-busy')
   }
   if (cancelled) throw new Error('cancelled')
-  child = spawn(file, args, { env: { ...process.env, GEMINI_HOME: home }, stdio: ['pipe', 'pipe', 'inherit'], windowsHide: true })
+  if (geminiDir) {
+    const cacheDir = path.join(home, 'antigravity-cli', 'cache')
+    await mkdir(cacheDir, { recursive: true, mode: 0o700 })
+    await writeFile(path.join(cacheDir, 'antigravity-keyring-unavailable'), '', { mode: 0o600 })
+  }
+  if (directDefault) {
+    const cacheDir = path.join(targetDir, 'cache')
+    await mkdir(cacheDir, { recursive: true, mode: 0o700 })
+    await writeFile(path.join(cacheDir, 'antigravity-keyring-unavailable'), '', { mode: 0o600 })
+  }
+  const spawnArgs = geminiDir ? [...args, '--gemini-dir', home] : args
+  const spawnEnv = directDefault ? { ...process.env } : { ...process.env, GEMINI_HOME: home }
+  child = spawn(file, spawnArgs, { env: spawnEnv, stdio: ['pipe', 'pipe', 'inherit'], windowsHide: true })
   const send = (id, method, params) => child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`)
   child.once('error', () => { console.error('无法启动登录进程'); void finish(1) })
   child.once('close', () => { if (!finished) { console.error('登录进程提前退出'); void finish(1) } })

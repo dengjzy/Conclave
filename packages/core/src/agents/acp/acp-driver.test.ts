@@ -255,4 +255,42 @@ describe('ACP without a dialect of its own', () => {
       action: { kind: 'retryTurn' }
     })
   })
+
+  it('extracts per-model variant efforts from models.availableModels when configOptions lists base models', () => {
+    const driver = new AcpDriver(plain, 'stage-variants', OPTIONS)
+    due(driver)
+    receive(driver, { id: 'plain-init', result: { protocolVersion: 1 } })
+    due(driver)
+    receive(driver, {
+      id: 'plain-session',
+      result: {
+        sessionId: 'session',
+        modes,
+        models: {
+          currentModelId: 'gemini-3.1-pro-high',
+          availableModels: [
+            { modelId: 'gemini-3.1-pro-low', name: 'Gemini 3.1 Pro (Low)' },
+            { modelId: 'gemini-3.1-pro-high', name: 'Gemini 3.1 Pro (High)' },
+            { modelId: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' }
+          ]
+        },
+        configOptions: [
+          {
+            id: 'model',
+            name: 'Model',
+            category: 'model',
+            currentValue: 'claude-sonnet-4-6',
+            options: [
+              { value: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' },
+              { value: 'gemini-3.1-pro', name: 'Gemini 3.1 Pro' }
+            ]
+          }
+        ]
+      }
+    })
+    expect(items(driver, 'state').at(-1)?.models).toEqual([
+      { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6', description: null, efforts: [], isDefault: true },
+      { id: 'gemini-3.1-pro', label: 'Gemini 3.1 Pro', description: null, efforts: ['low', 'high'], isDefault: false }
+    ])
+  })
 })

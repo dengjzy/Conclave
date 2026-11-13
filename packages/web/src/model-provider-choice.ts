@@ -11,7 +11,9 @@ export function providerFor(providers: readonly ModelProvider[], id: string | nu
   return servingProviders(providers, agent).find((provider) => provider.id === id) ?? null
 }
 
-// What an agent's models are kept under: a provider offers its own, which an edit may change.
-export function catalogKey(agent: AgentKind, provider: ModelProvider | null): string {
-  return provider ? `${agent}|${provider.id}|${provider.revision}` : agent
+// What an agent's models are kept under: a provider offers its own, which an edit may change;
+// an agent's own account or CLI setup scopes its native catalog so switching reloads it.
+export function catalogKey(agent: AgentKind, provider: ModelProvider | null, scope?: string | null): string {
+  const base = provider ? `${agent}|${provider.id}|${provider.revision}` : agent
+  return scope ? `${base}|${scope}` : base
 }

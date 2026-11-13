@@ -109,6 +109,7 @@ export class AcpDriver implements ChatDriver {
   private modelsSent = false
   private modelsRead = false
   private models: ChatModel[] = []
+  private variantEfforts = new Map<string, string[]>()
   // Reasoning is per model and often absent from the session snapshot. The catalog names the option.
   private readonly thoughts = new Map<string, ThoughtLevel>()
   private setup = false
@@ -148,20 +149,39 @@ export class AcpDriver implements ChatDriver {
 
   private get name(): string { return this.dialect.name }
   private id(name: string): string { return `${this.dialect.idPrefix}-${name}` }
-  private conclaveMode(mode: string): ChatPermissionMode | null { return CHAT_PERMISSION_MODES.find((conclave) => this.dialect.modes[conclave] === mode) ?? null }
-  private nativeMode(mode: string): string {
+  private modeAliases(mode: ChatPermissionMode): readonly string[] {
+    const entry = this.dialect.modes[mode]
+    return typeof entry === 'string' ? [entry] : entry ?? []
+  }
+  private conclaveMode(mode: string): ChatPermissionMode | null {
+    return CHAT_PERMISSION_MODES.find((conclave) => this.modeAliases(conclave).includes(mode)) ?? null
+  }
+  private nativeMode(mode: string, offered?: readonly AcpOptionValue[]): string {
     const known = ChatPermissionMode.safeParse(mode)
-    return (known.success ? this.dialect.modes[known.data] : undefined) ?? mode
+    if (!known.success) return mode
+    const aliases = this.modeAliases(known.data)
+    if (offered?.length) {
+      const matched = aliases.find((candidate) => offered.some((entry) => entry.value === candidate))
+      if (matched) return matched
+    }
+    return aliases[0] ?? mode
   }
   private hasMode(mode: string): boolean {
     const known = ChatPermissionMode.safeParse(mode)
-    return known.success && this.dialect.modes[known.data] !== undefined
+    return known.success && this.modeAliases(known.data).length > 0
+  }
+  private modeOffered(mode: ChatPermissionMode): boolean {
+    if (!this.hasMode(mode)) return false
+    const modeConfig = this.config.find((entry) => entry.category === 'mode')
+    if (!modeConfig) return true
+    return valuesOf(modeConfig).some((entry) => this.conclaveMode(entry.value) === mode)
   }
   private get readOnlyMode(): ChatPermissionMode {
-    if (this.hasMode('readOnly')) return 'readOnly'
+    if (this.modeOffered('readOnly')) return 'readOnly'
     const preferred = this.options.preferred?.permissionMode
-    if (preferred && this.hasMode(preferred)) return preferred as ChatPermissionMode
-    return this.hasMode('plan') ? 'plan' : 'ask'
+    const parsedPreferred = ChatPermissionMode.safeParse(preferred)
+    if (parsedPreferred.success && this.modeOffered(parsedPreferred.data)) return parsedPreferred.data
+    return this.modeOffered('plan') ? 'plan' : 'ask'
   }
   private toolName(update: Pick<z.infer<typeof Update>, 'kind' | 'rawInput' | 'name' | 'title' | 'toolCallId'>, old: string | undefined): string {
     return this.dialect.toolName?.(update.rawInput, update.name, update.title, update.toolCallId) ?? (update.kind === 'execute' ? 'commandExecution' : update.kind === 'edit' ? 'fileChange' : old ?? update.kind ?? 'tool')
@@ -269,7 +289,7 @@ export class AcpDriver implements ChatDriver {
     const logged = rpc(this.id(`prompt-${this.turns + 1}`), 'session/prompt', base)
     // ACP has no system prompt, so the start note goes ahead of the process's first prompt, and
     // only on the wire: the chat, its search and its handoffs show the message alone.
-    const start = this.turns === 0 ? [startNote({ instructions: this.options.instructions, knowledgeBase: this.options.knowledgeBase }), this.dialect.startNote?.(this.options)].filter(Boolean).join('\n\n') : null
+    const start = this.turns === 0 ? [startNote({ instructions: this.options.instructions, knowledgeBase: this.options.knowledgeBase }), this.dialect.startNote?.(this.options, { directories: this.directories })].filter(Boolean).join('\n\n') : null
     const note = start ? `${start}\n\n` : ''
     const wire = rpc(this.id(`prompt-${this.turns + 1}`), 'session/prompt', { ...base, prompt: [{ type: 'text', text: `${note}${text}` }, ...images.map((image) => ({ type: 'image', mimeType: image.mime, data: Buffer.from(image.read()).toString('base64') }))] })
     return { wire, logged }
@@ -303,8 +323,8 @@ export class AcpDriver implements ChatDriver {
     if (option === 'effort') return this.changeEffort(value, id)
     const category = option === 'permissionMode' ? 'mode' : 'model'
     const config = this.config.find((entry) => entry.category === category)
-    const wanted = option === 'permissionMode' ? this.nativeMode(value) : value
     const offered = config && (category === 'model' ? this.offered(valuesOf(config)) : valuesOf(config))
+    const wanted = option === 'permissionMode' ? this.nativeMode(value, offered) : value
     if (!config || !offered?.some((entry) => entry.value === wanted)) throw new Rejection('chat-option-invalid', `${this.name} 没有提供 ${option}: ${value}`)
     if (option === 'permissionMode' && !this.hasMode(value)) throw new Rejection('chat-option-invalid', `${this.name} 不支持 ${value}`)
     if (this.modern.has(category)) return rpc(id, 'session/set_config_option', { sessionId: this.session, configId: config.id, value: wanted })
@@ -564,7 +584,8 @@ export class AcpDriver implements ChatDriver {
       if (!choice) return
       const { option, value } = choice
       // A resumed session keeps what it last ran with; setting it again costs a round trip.
-      if (this.current(option) === (option === 'permissionMode' ? this.nativeMode(value) : value)) continue
+      const modeOffered = option === 'permissionMode' ? valuesOf(this.config.find((entry) => entry.category === 'mode') ?? { id: 'mode', name: 'Mode', currentValue: '', options: [] }) : undefined
+      if (this.current(option) === (option === 'permissionMode' ? this.nativeMode(value, modeOffered) : value)) continue
       try {
         const requestId = this.id(`initial-${option}`)
         this.initial.set(keyOf(requestId), this.change(option, value, requestId))
@@ -608,7 +629,28 @@ export class AcpDriver implements ChatDriver {
     ]
     const next = [...config, ...legacy.filter((entry) => !config.some((one) => one.category === entry.category))]
     this.config = [...this.config.filter((entry) => !next.some((one) => one.id === entry.id || one.category === entry.category)), ...next]
+    this.rememberVariantEfforts(models)
     this.publishConfig()
+  }
+
+  private rememberVariantEfforts(models: z.infer<typeof Opened>['models']): void {
+    if (!models?.availableModels.length) return
+    const modelConfig = this.config.find((entry) => entry.category === 'model')
+    if (!modelConfig) return
+    const baseIds = valuesOf(modelConfig).map((entry) => entry.value).sort((a, b) => b.length - a.length)
+    const collected = new Map<string, string[]>()
+    for (const variant of models.availableModels) {
+      const baseId = baseIds.find((candidate) => variant.modelId.startsWith(`${candidate}-`))
+      if (!baseId) continue
+      const effort = variant.modelId.slice(baseId.length + 1)
+      if (!effort || effort.includes('/')) continue
+      const list = collected.get(baseId) ?? []
+      if (!list.includes(effort)) list.push(effort)
+      collected.set(baseId, list)
+    }
+    if (collected.size) {
+      this.variantEfforts = new Map([...this.variantEfforts, ...collected])
+    }
   }
 
   // An ack that only echoes the request still has to show the level just chosen.
@@ -639,7 +681,13 @@ export class AcpDriver implements ChatDriver {
       permissionMode: mode ? this.conclaveMode(mode.currentValue) : null,
       permissionModes: mode ? valuesOf(mode).flatMap((entry) => { const mapped = this.conclaveMode(entry.value); return mapped && (!this.options.planOnly || mapped === 'plan') && (!this.options.readOnly || mapped === this.readOnlyMode) ? [mapped] : [] }) : [],
       model: model?.currentValue ?? null,
-      models: model ? this.offered(valuesOf(model)).map((entry) => ({ id: entry.value, label: entry.name, description: entry.description ?? null, efforts: this.models.find((one) => one.id === entry.value)?.efforts ?? (entry.value === model.currentValue && effort ? valuesOf(effort).map((one) => one.value) : []), isDefault: entry.value === model.currentValue })) : [],
+      models: model ? this.offered(valuesOf(model)).map((entry) => {
+        const fromModels = this.models.find((one) => one.id === entry.value)?.efforts
+        const currentEfforts = entry.value === model.currentValue && effort ? valuesOf(effort).map((one) => one.value) : []
+        const variantEfforts = this.variantEfforts.get(entry.value) ?? []
+        const efforts = fromModels?.length ? fromModels : currentEfforts.length ? currentEfforts : variantEfforts
+        return { id: entry.value, label: entry.name, description: entry.description ?? null, efforts, isDefault: entry.value === model.currentValue }
+      }) : [],
       effort: effort?.currentValue ?? null
     })
     if (this.options.planOnly && mode && mode.currentValue !== 'plan' && this.setup && !this.initial.size && !this.initialChoices.length) this.startError = `${this.name} 离开了仅规划模式`

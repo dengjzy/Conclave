@@ -16,8 +16,8 @@ beforeEach(async () => {
   own = path.join(root, 'own'); account = path.join(root, 'account')
   vi.stubEnv('GEMINI_HOME', own)
   await antigravityAccounts.prepare(account)
-  writeFileSync(path.join(account, 'antigravity-acp', 'acp_token.json'), '{}')
-  vi.spyOn(runtime, 'requireAntigravity').mockResolvedValue('/test/agy_acp_server')
+  writeFileSync(path.join(account, 'antigravity-cli', 'antigravity-oauth-token'), '{}')
+  vi.spyOn(runtime, 'requireAntigravity').mockResolvedValue('/usr/local/bin/agy')
 })
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); rmSync(root, { recursive: true, force: true }) })
 
@@ -29,7 +29,7 @@ it.each([false, true])('registers and cleans the daemon probe in its selected ac
     acp: async () => { throw new Error('unexpected ACP cleanup command') },
     catalog: async (_driver, command, cwd, onSession) => {
       events.push('daemon-probe')
-      expect(command).toMatchObject({ command: '/test/agy_acp_server', env: { GEMINI_HOME: account, AGY_ACP_FORCE_FILE_STORAGE: '1' } })
+      expect(command).toMatchObject({ command: '/usr/local/bin/agy', args: ['acp', '--stdio', '--gemini-dir', account], env: { GEMINI_HOME: account } })
       expect(cwd).toBe(root)
       await onSession?.(ID, 'daemon-probe-session')
       if (fail) throw new Error('probe failed')
@@ -39,7 +39,7 @@ it.each([false, true])('registers and cleans the daemon probe in its selected ac
       events.push('register')
       expect(agent).toBe('antigravity')
       expect(daemonSessionId).toBe('daemon-probe-session')
-      expect(session).toMatchObject({ id: ID, root: path.join(own, 'antigravity-acp'), artifacts: [{ root: path.join(account, 'antigravity-acp', 'brain'), locator: path.join(account, 'antigravity-acp', 'brain', ID) }] })
+      expect(session).toMatchObject({ id: ID, root: path.join(own, 'antigravity-cli'), artifacts: [{ root: path.join(account, 'antigravity-cli', 'brain'), locator: path.join(account, 'antigravity-cli', 'brain', ID) }] })
       registered.push(session)
     },
     cleanup: async (agent, session) => {
@@ -52,7 +52,7 @@ it.each([false, true])('registers and cleans the daemon probe in its selected ac
   if (fail) await expect(result).rejects.toThrow('probe failed')
   else await expect(result).resolves.toEqual({ models: [] })
   expect(events).toEqual(['daemon-probe', 'register', 'cleanup'])
-  expect(existsSync(path.join(own, 'antigravity-acp', 'conversations', `${ID}.db`))).toBe(false)
+  expect(existsSync(path.join(own, 'antigravity-cli', 'conversations', `${ID}.db`))).toBe(false)
 })
 
 it('does not start a catalog probe without the daemon ownership and cleanup capabilities', async () => {

@@ -5,7 +5,7 @@ import path from 'node:path'
 import type { NativeArtifact, NativeSession, NativeSessions } from '../../native-session'
 import { missingSessionFile, storedSessionExists, storedSessionPath } from '../../native-session-files'
 import { antigravityBrainRoot } from './antigravity-transcripts'
-import { antigravityTokenFile } from './antigravity-runtime'
+import { antigravityCliTokenFile } from './antigravity-runtime'
 
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const tables = (db: DatabaseSync) => new Set(db.prepare("SELECT name FROM sqlite_master WHERE type IN ('table', 'view')").all().map((row) => String(row.name)))
@@ -34,22 +34,34 @@ function sharedRoot(root: string): string {
   return path.dirname(conversations)
 }
 
-const acpBrainRoot = () => path.join(path.dirname(antigravityTokenFile()), 'brain')
+const acpBrainRoot = () => path.join(path.dirname(antigravityCliTokenFile()), 'brain')
 
 export function antigravityNativeSessions(brain: () => string = acpBrainRoot, importedBrain: () => string = antigravityBrainRoot): NativeSessions {
   const artifact = (root: string, id: string): NativeArtifact => ({ root, locator: path.join(root, id) })
   const record = (root: string, id: string, cwd: string, artifacts: readonly NativeArtifact[]): NativeSession => ({ id, root, locator: path.join(root, 'conversations', `${id}.db`), cwd, artifacts: [...artifacts] })
   const storage = (id: string, home?: string): string => {
     if (!ID.test(id)) throw new Error('Antigravity 会话标识无效')
-    const own = path.dirname(brain())
+    const cli = path.dirname(brain())
+    const legacyOwn = path.join(path.dirname(cli), 'antigravity-acp')
     // Captured homes name the durable storage root; launch homes name GEMINI_HOME.
     if (home) {
-      if (home === own || hasSession(home, id)) return home
-      if (!existsSync(home) && hasSession(own, id)) return own
-      return path.join(home, 'antigravity-acp')
+      if (home === cli || home === legacyOwn || hasSession(home, id)) return home
+      const homeCli = path.join(home, 'antigravity-cli')
+      if (hasSession(homeCli, id) || existsSync(path.join(homeCli, 'antigravity-oauth-token'))) {
+        return homeCli
+      }
+      if (!existsSync(home)) {
+        if (hasSession(cli, id)) return cli
+        if (hasSession(legacyOwn, id)) return legacyOwn
+      }
+      const homeLegacy = path.join(home, 'antigravity-acp')
+      return hasSession(homeLegacy, id) ? homeLegacy : homeCli
     }
+    if (hasSession(cli, id)) return cli
+    if (hasSession(legacyOwn, id)) return legacyOwn
     const imported = path.dirname(importedBrain())
-    return hasSession(own, id) || !hasSession(imported, id) ? own : imported
+    if (hasSession(imported, id)) return imported
+    return cli
   }
   const scope = (id: string, home?: string, captured?: readonly NativeArtifact[]) => {
     const local = storage(id, home)
@@ -111,14 +123,19 @@ export function antigravityNativeSessions(brain: () => string = acpBrainRoot, im
         const file = await storedSessionPath(session.root, path.join(session.root, 'conversations', name))
         if (file) await rm(file, { force: true })
       }
-      const file = path.join(session.root, 'conversation_summaries.db')
-      if (!await storedSessionExists(file)) return
-      const db = new DatabaseSync(file)
-      try {
-        const available = tables(db)
-        if (available.has('conversation_summaries')) db.prepare('DELETE FROM conversation_summaries WHERE conversation_id = ?').run(session.id)
-        if (available.has('conversations_fts')) db.prepare('DELETE FROM conversations_fts WHERE conversation_id = ?').run(session.id)
-      } finally { db.close() }
+      const summaryDbs = new Set([
+        path.join(session.root, 'conversation_summaries.db'),
+        ...artifacts.map((entry) => path.join(path.dirname(entry.root), 'conversation_summaries.db'))
+      ])
+      for (const file of summaryDbs) {
+        if (!await storedSessionExists(file)) continue
+        const db = new DatabaseSync(file)
+        try {
+          const available = tables(db)
+          if (available.has('conversation_summaries')) db.prepare('DELETE FROM conversation_summaries WHERE conversation_id = ?').run(session.id)
+          if (available.has('conversations_fts')) db.prepare('DELETE FROM conversations_fts WHERE conversation_id = ?').run(session.id)
+        } finally { db.close() }
+      }
     }
   }
 }

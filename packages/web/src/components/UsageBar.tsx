@@ -220,7 +220,8 @@ function AccountList({ accounts, active, now }: { accounts: readonly AgentAccoun
       <div role="radiogroup" aria-label={t('AgentAccounts.title')}>
         {accounts.map((account) => {
           const usage = accountUsage(readings, account.agent, account.id)
-          const tightest = tightestWindow(usage?.windows.filter((window) => window.model === null) ?? [])
+          const general = usage?.windows.filter((window) => window.model === null) ?? []
+          const tightest = tightestWindow(general.length ? general : usage?.windows ?? [])
           const spent = quotaVerdict(usage, now).state === 'exhausted'
           const chosen = account.id === active
           return (
@@ -361,9 +362,11 @@ export function UsageCard({ usage, accounts, accountLabel, now, advice, alternat
   )
 }
 
-// Model-specific caps only take footer space once they are the ones about to bite.
-function inlineWindows(windows: readonly UsageWindow[]): UsageWindow[] {
-  return windows.filter((window) => window.model === null || usageLevel(window.usedPercent) !== 'normal')
+// Model-specific caps only take footer space once they are the ones about to bite,
+// unless an account only reports model-grouped windows.
+function inlineWindows(windows: readonly UsageWindow[]): readonly UsageWindow[] {
+  const shown = windows.filter((window) => window.model === null || usageLevel(window.usedPercent) !== 'normal')
+  return shown.length ? shown : windows
 }
 
 function UsageSegment({ usage, now }: { usage: AgentUsage; now: number }) {

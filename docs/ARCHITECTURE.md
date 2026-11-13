@@ -332,7 +332,7 @@ dsh 启动环境保留已有 `NODE_OPTIONS` 并追加 `--report-exclude-network`
 - **Claude Code**（`claude-transcripts.ts`）：`$CLAUDE_CONFIG_DIR/projects/*/<会话 id>.jsonl`（默认 `~/.claude`），会话 id 取文件名，目录取记录里的 `cwd`，不从目录名反推。从最后一条主线记录沿 `parentUuid` 往回走（压缩处接 `logicalParentUuid`），/rewind 丢掉的分支和 sidechain 不算；`isMeta`、压缩摘要和 CLI 自己注入的用户轮次（`<local-command-…>`、`<system-reminder>`、`<task-notification>` 等）跳过，斜杠命令显示成 `/命令 参数`。标题依次取 `custom-title`（用户 /rename 的，导入后锁定）、`ai-title`、`summary`、第一条提问。`<id>/subagents/` 不是会话。
 - **Codex**（`codex-transcripts.ts`）：`$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl`，旧的已压成 `.jsonl.zst`，两份都在时读没压的那份（Codex 还在写它）。第一行 `session_meta` 的 `source` 是对象（子 Agent、审查）、`thread_source` 不是 `user`，或 `originator` 是 Conclave 自己（`CODEX_CLIENT_NAME`）的线程不算。内容按回合读 `event_msg` 里的 `item_completed`，回合以 `task_complete` / `turn_aborted` 收尾；更早没有这些事件的 rollout 只显示消息。标题取 `session_index.jsonl` 的 `thread_name`，没有就用第一条提问。
 
-Claude 和 Codex 扫描会话文件头并缓存摘要；其他格式由各 adapter 处理。Pi 读取 `~/.pi/agent/sessions`（可由 Agent 配置覆盖），ZCode 读取本机 SQLite 会话库，Antigravity 读取 `~/.gemini/antigravity/brain` 及摘要数据库。隐藏的有：`conversation_stages` 里已有、却不是导入来的会话（Conclave 自己跑的），目录在 `CONCLAVE_HOME` 或临时目录下的。目录已不存在的列出但不能选，因为 Claude 只能在原目录恢复。
+Claude 和 Codex 扫描会话文件头并缓存摘要；其他格式由各 adapter 处理。Pi 读取 `~/.pi/agent/sessions`（可由 Agent 配置覆盖），ZCode 读取本机 SQLite 会话库，Antigravity 读取 `~/.gemini/antigravity/brain` 与 `~/.gemini/antigravity-cli/brain` 及摘要数据库。隐藏的有：`conversation_stages` 里已有、却不是导入来的会话（Conclave 自己跑的），目录在 `CONCLAVE_HOME` 或临时目录下的。目录已不存在的列出但不能选，因为 Claude 只能在原目录恢复。
 
 导入新会话时建一条不启动的会话（`create(..., deferStart)`，项目就是原目录，不建 worktree），再由 `ConversationService.importStage` 补一个已结束的 stage：`provider_session_id` 是原会话的 id，聊天记录写成 `item` 记录（各 driver 原样放进条目，不写 `exit`，否则会被当成没启动成功），用户消息和每轮最终回复写进 `conversation_messages`（Claude 恢复要先看到这些消息，标题、搜索、`history_read` 和移交也读它们）。之后和重启后继续一样：`startStage` 找到这个 stage，Claude 用 `--resume`，Codex 用 `thread/resume`；原会话不在了照常退回移交文件。
 
@@ -355,7 +355,7 @@ Claude 和 Codex 扫描会话文件头并缓存摘要；其他格式由各 adapt
 
 DeepSeek Harness 使用同一 ACP driver；`packages/dsh-runtime` 在官方导出的 ACP `apply` 上接入消息 stream，保留官方会话、模型、MCP 和取消实现，补充权限模式、提问及计划审批。服务商和技能作为启动覆盖层，文件与命令提供者按当前模式和项目范围实施限制；恢复会话先重设权限再交给 driver。插件随构建打包成 tarball，首次使用时准备 DSH 的专用 `conclave` profile，按内容摘要更新，不修改其他 profile。安装和兼容边界见 [DeepSeek Harness](DEEPSEEK.md)。
 
-Antigravity 也只是一份 dialect（`agents/antigravity/`）：`agy` 本身不说 ACP，跑的是 Google 发到 ACP registry 的 Antigravity ACP 服务。它没有安装器，Conclave 按版本钉住各平台压缩包的 SHA-256，用 adapter 的 `installation` 下载到 `~/.conclave/runtimes/antigravity-acp/<版本>/`；`installWithoutApplication` 让这条安装命令不必先检测到 Antigravity 应用。细节见 [Antigravity](ANTIGRAVITY.md)。ACP 恢复优先使用旧 Agent 已声明的 `loadSession`，仅声明 `resume` 时使用 `session/resume`。
+Antigravity 也只是一份 dialect（`agents/antigravity/`）：Conclave 直接调用官方 `agy acp --stdio`（`>= 1.5.0`），终端执行 `agy update` 后即可自动跟进最新模型、斜杠命令与原生能力；详见 [Antigravity](ANTIGRAVITY.md)。ACP 恢复优先使用已声明的 `loadSession`，仅声明 `resume` 时使用 `session/resume`。
 
 Gemini CLI 也复用通用 ACP driver（`agents/gemini/`）：文本模式通知、缺少 rawInput 的工具摘要、按文件路径审批的计划、缓存已包含在输入 token 的用量口径由 dialect 声明。计划正文从已完成工具 diff 保留的完整 newText 取，不读磁盘。adapter 的 `session.nativeResume: false` 让停止后继续和重启走历史移交，避免 CLI 的晚到历史重放混进新回合；其他 Agent 缺省沿用原生恢复。源码运行的 MCP 使用当前 Node 和 tsx；每日额度按模型读取 Code Assist API，客户端声明支持 daily 后才接收。细节见 [Gemini CLI](GEMINI.md)。
 

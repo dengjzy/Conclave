@@ -12,6 +12,10 @@ export function antigravityBrainRoot(): string {
   return path.join(homedir(), '.gemini', 'antigravity', 'brain')
 }
 
+export function antigravityCliBrainRoot(): string {
+  return path.join(homedir(), '.gemini', 'antigravity-cli', 'brain')
+}
+
 export function antigravitySummariesDb(brainRoot = antigravityBrainRoot()): string {
   return path.join(path.dirname(brainRoot), 'conversation_summaries.db')
 }
@@ -191,22 +195,36 @@ export function antigravityTranscript(lines: string[]): Transcript {
   return { entries, messages }
 }
 
-export function antigravityTranscripts(root: () => string = antigravityBrainRoot, summariesDb: () => string = () => antigravitySummariesDb(root())): TranscriptSource {
+export function antigravityTranscripts(root: () => string = antigravityBrainRoot, summariesDb?: () => string): TranscriptSource {
   const cache = new SummaryCache()
+  const brainSources = () => root === antigravityBrainRoot && !summariesDb
+    ? [
+        { brainDir: antigravityBrainRoot(), dbPath: antigravitySummariesDb(antigravityBrainRoot()) },
+        { brainDir: antigravityCliBrainRoot(), dbPath: antigravitySummariesDb(antigravityCliBrainRoot()) }
+      ]
+    : [{ brainDir: root(), dbPath: summariesDb ? summariesDb() : antigravitySummariesDb(root()) }]
+
   return {
     scan: async () => {
-      const dir = root()
-      const entries = await readdir(dir, { withFileTypes: true }).catch(() => [])
-      const dirs = entries.filter((e) => (e.isDirectory() || e.isSymbolicLink()) && UUID_DIR.test(e.name))
-      const metadata = readSummariesMetadata(summariesDb())
-      const summaries = await Promise.all(dirs.map(async (d) => {
-        const info = await stat(path.join(dir, d.name)).catch(() => null)
-        if (!info) return null
-        const meta = metadata.get(d.name)
-        if (meta?.isSubagent) return null
-        return cache.get({ file: path.join(dir, d.name), mtimeMs: info.mtimeMs, size: 0 }, () => summarizeAntigravitySession(dir, d.name, info.mtimeMs, meta))
-      }))
-      return summaries.flatMap((s) => (s ? [s] : []))
+      const bySession = new Map<string, TranscriptSummary>()
+      for (const { brainDir, dbPath } of brainSources()) {
+        const entries = await readdir(brainDir, { withFileTypes: true }).catch(() => [])
+        const dirs = entries.filter((e) => (e.isDirectory() || e.isSymbolicLink()) && UUID_DIR.test(e.name))
+        const metadata = readSummariesMetadata(dbPath)
+        const summaries = await Promise.all(dirs.map(async (d) => {
+          const info = await stat(path.join(brainDir, d.name)).catch(() => null)
+          if (!info) return null
+          const meta = metadata.get(d.name)
+          if (meta?.isSubagent) return null
+          return cache.get({ file: path.join(brainDir, d.name), mtimeMs: info.mtimeMs, size: 0 }, () => summarizeAntigravitySession(brainDir, d.name, info.mtimeMs, meta))
+        }))
+        for (const summary of summaries) {
+          if (!summary) continue
+          const prev = bySession.get(summary.sessionId)
+          if (!prev || summary.modifiedAt >= prev.modifiedAt) bySession.set(summary.sessionId, summary)
+        }
+      }
+      return [...bySession.values()]
     },
     read: async (file) => {
       const lines: string[] = []
@@ -217,7 +235,12 @@ export function antigravityTranscripts(root: () => string = antigravityBrainRoot
       return antigravityTranscript(lines)
     },
     delete: async (file) => {
-      const brainDir = root()
+      const matched = brainSources().find(({ brainDir }) => {
+        const rel = path.relative(brainDir, file)
+        return Boolean(rel) && !rel.startsWith('..') && !path.isAbsolute(rel)
+      })
+      if (!matched) return
+      const { brainDir, dbPath } = matched
       const parts = path.relative(brainDir, file).split(path.sep)
       const sessionId = parts[0]
       if (!sessionId || !UUID_DIR.test(sessionId)) return
@@ -233,7 +256,6 @@ export function antigravityTranscripts(root: () => string = antigravityBrainRoot
 
       // Clean up summaries and search index
       try {
-        const dbPath = summariesDb()
         const db = new DatabaseSync(dbPath)
         db.prepare('DELETE FROM conversation_summaries WHERE conversation_id = ?').run(sessionId)
         try {

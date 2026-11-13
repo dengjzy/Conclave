@@ -9,7 +9,7 @@ const Command = z.looseObject({ CommandLine: text, command_line: text, commandLi
 export const antigravityDialect: AcpDialect = {
   name: 'Antigravity',
   idPrefix: 'antigravity',
-  modes: { ask: 'default', acceptEdits: 'auto_edit', bypass: 'yolo' },
+  modes: { ask: 'default', acceptEdits: 'accept-edits', bypass: 'auto', plan: 'plan' },
   authMethod: 'oauth-personal',
   // A command arrives as { command_line, working_dir }: shown as the command any agent runs.
   toolInput: (rawInput) => {
@@ -18,8 +18,8 @@ export const antigravityDialect: AcpDialect = {
     const cwd = input?.Cwd ?? input?.working_dir ?? input?.workingDir ?? input?.cwd
     return command === undefined ? rawInput : { command, ...(cwd === undefined ? {} : { cwd }) }
   },
-  // Its session takes no additional directories.
-  startNote: (options) => options.extraDirs.length
+  // Modern agy (>= 1.5) accepts additionalDirectories natively in session/new; older 1.4.x servers do not.
+  startNote: (options, capabilities) => options.extraDirs.length && !capabilities?.directories
     ? `此会话还包含以下项目，请按绝对路径访问；命令分别指定各项目的工作目录：\n${options.extraDirs.map((dir) => `- ${dir}`).join('\n')}`
     : null
 }

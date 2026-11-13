@@ -1463,8 +1463,10 @@ export class ConversationService {
       return
     }
     const stage = this.store.stages(id).at(-1)
-    const state = stage?.agent === agent
-      ? this.chats.items(this.chatStage(conversation, stage)).findLast((item) => item.kind === 'state')
+    const stageItems = stage?.agent === agent ? this.chats.items(this.chatStage(conversation, stage)) : null
+    const stageValid = stageItems ? (adapterOf(agent).validStageCatalog?.(stageItems) ?? true) : false
+    const state = stageValid && stageItems
+      ? stageItems.findLast((item) => item.kind === 'state')
       : undefined
     const providerId = this.catalogProvider(conversation, agent)
     const catalog = await this.chatCatalog(agent, providerId)
@@ -1542,7 +1544,10 @@ export class ConversationService {
   private catalogFromStages(agent: AgentKind): ChatCatalog | null {
     const stage = this.store.latestChatStage(agent, this.accounts?.activeOf(agent) ?? DEFAULT_ACCOUNT)
     const conversation = stage ? this.store.get(stage.conversationId) : null
-    return stage && conversation ? catalogOf(this.chats.items(this.chatStage(this.withChat(conversation), stage))) : null
+    if (!stage || !conversation) return null
+    const items = this.chats.items(this.chatStage(this.withChat(conversation), stage))
+    if (adapterOf(agent).validStageCatalog?.(items) === false) return null
+    return catalogOf(items)
   }
 
   // Only keep models for the active account. An old stage can keep running after a switch.

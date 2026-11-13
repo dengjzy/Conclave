@@ -1,63 +1,141 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { ANTIGRAVITY_VERSION, antigravityInstallation, antigravityRuntimeDir, antigravitySignedIn, antigravityTokenFile, detectAntigravity, requireAntigravity } from './antigravity-runtime'
+import {
+  antigravityCliAuthStateFile,
+  antigravityCliTokenFile,
+  antigravityHomeSignedIn,
+  antigravityInstallation,
+  antigravitySignedIn,
+  decodeGoKeyringSecret,
+  detectAntigravity,
+  isSystemDefaultGeminiHome,
+  readAntigravityKeyringToken,
+  requireAntigravity
+} from './antigravity-runtime'
 
 const roots: string[] = []
-afterEach(async () => { vi.unstubAllEnvs(); await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))) })
+afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))) })
 async function home() {
   const root = await mkdtemp(path.join(tmpdir(), 'conclave-antigravity-'))
   roots.push(root)
   return root
 }
 
+async function writeFakeAgy(dir: string, versionOutput: string, helpOutput: string): Promise<string> {
+  if (process.platform === 'win32') {
+    const file = path.join(dir, 'agy.cmd')
+    const versionCmd = versionOutput ? `echo ${versionOutput}` : 'rem'
+    const helpCmd = helpOutput ? `echo ${helpOutput}` : 'rem'
+    await writeFile(file, `@echo off\r\nif "%~1"=="--version" (${versionCmd})\r\nif "%~1"=="--help" (${helpCmd})\r\n`)
+    return file
+  }
+  const file = path.join(dir, 'agy')
+  await writeFile(
+    file,
+    `#!/bin/sh\nif [ "$1" = "--help" ]; then\n  printf '%b' "${helpOutput}"\nelif [ "$1" = "--version" ]; then\n  printf '%b' "${versionOutput}"\nfi\n`
+  )
+  await chmod(file, 0o755)
+  return file
+}
+
 describe('Antigravity runtime', () => {
-  it('downloads the pinned archive, checks its hash and renames it into place', () => {
-    const host = { platform: 'darwin' as const, arch: 'arm64', home: "/Users/o'neil/.conclave" }
-    const install = antigravityInstallation('darwin', host)
-    expect(install?.shell).toBe('bash')
-    expect(install?.command).toContain(`curl -fL --progress-bar 'https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-${ANTIGRAVITY_VERSION}-darwin-arm64.zip'`)
-    expect(install?.command).toContain('f9bdd68291ae78c38d2141e63bc86b84e6cc7b9f60f71652c68435a7943deb17  $z" | shasum -a 256 -c')
-    expect(install?.command).toContain(`d='/Users/o'\\''neil/.conclave/runtimes/antigravity-acp/${ANTIGRAVITY_VERSION}'`)
-    expect(install?.command).toMatch(/unzip -q "\$z" -d "\$d\.partial" && rm -rf "\$d" && mv "\$d\.partial" "\$d"/)
-    expect(antigravityInstallation('linux', { ...host, platform: 'linux', arch: 'x64' })?.command).toContain('| sha256sum -c')
-    expect(antigravityInstallation('freebsd', { ...host, platform: 'freebsd' })).toBeNull()
+  it('offers the official agy CLI installer on macOS, Linux, and Windows', () => {
+    expect(antigravityInstallation('darwin')).toEqual({
+      agent: 'antigravity',
+      shell: 'bash',
+      command: 'curl -fsSL https://antigravity.google/cli/install.sh | bash'
+    })
+    expect(antigravityInstallation('linux')).toEqual({
+      agent: 'antigravity',
+      shell: 'bash',
+      command: 'curl -fsSL https://antigravity.google/cli/install.sh | bash'
+    })
+    expect(antigravityInstallation('win32')).toEqual({
+      agent: 'antigravity',
+      shell: 'powershell',
+      command: 'irm https://antigravity.google/cli/install.ps1 | iex'
+    })
+    expect(antigravityInstallation('freebsd')).toBeNull()
   })
 
-  it('is found only once its server and harness are both in place', async () => {
-    const host = { platform: 'darwin' as const, arch: 'arm64', home: await home() }
-    expect(await detectAntigravity('', 'darwin', host)).toEqual({ status: 'missing', version: null, path: null, signedIn: null })
-    await expect(requireAntigravity(host)).rejects.toThrow(/未安装/)
-    const dir = antigravityRuntimeDir(host)
-    await mkdir(dir, { recursive: true })
-    const server = path.join(dir, 'agy_acp_server.par')
-    await writeFile(server, '')
-    await chmod(server, 0o755)
-    expect((await detectAntigravity('', 'darwin', host)).status).toBe('missing')
-    await writeFile(path.join(dir, 'localharness_external'), '')
-    expect(await detectAntigravity('', 'darwin', host)).toMatchObject({ status: 'ok', version: ANTIGRAVITY_VERSION, path: server })
-    expect(await requireAntigravity(host)).toBe(server)
-    await expect(requireAntigravity({ ...host, arch: 'ia32' })).rejects.toThrow(/不支持/)
-  })
-
-  it('does not mistake the interactive agy CLI for an ACP server', async () => {
+  it('reports missing when agy is absent or does not advertise the acp subcommand', async () => {
     const root = await home()
-    const cli = path.join(root, process.platform === 'win32' ? 'agy.cmd' : 'agy')
-    await writeFile(cli, process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\nexit 0\n')
-    await chmod(cli, 0o755)
-    vi.stubEnv('PATH', root)
-    const host = { platform: process.platform, arch: process.arch, home: root }
+    const host = { platform: process.platform, arch: process.arch, home: root, pathEnv: root }
+    expect(await detectAntigravity('', process.platform, host)).toEqual({ status: 'missing', version: null, path: null, signedIn: null })
+    await expect(requireAntigravity(host)).rejects.toThrow(/未安装/)
+
+    await writeFakeAgy(root, '', '')
     expect(await detectAntigravity(root, process.platform, host)).toEqual({ status: 'missing', version: null, path: null, signedIn: null })
     await expect(requireAntigravity(host)).rejects.toThrow(/未安装/)
   })
 
-  it('reads a sign-in kept in its token file', async () => {
+  it('flags agy versions older than 1.5.0 as incompatible', async () => {
+    const root = await home()
+    const cli = await writeFakeAgy(root, 'agy version 1.4.1', '')
+    const host = { platform: process.platform, arch: process.arch, home: root, pathEnv: root }
+    expect(await detectAntigravity(root, process.platform, host)).toEqual({
+      status: 'unknown',
+      version: '1.4.1',
+      path: cli,
+      signedIn: null,
+      problem: 'incompatible-version'
+    })
+    await expect(requireAntigravity(host)).rejects.toMatchObject({ reason: 'antigravity-incompatible' })
+  })
+
+  it('detects and requires agy CLI (>= 1.5.0) supporting acp', async () => {
+    const root = await home()
+    const cli = await writeFakeAgy(
+      root,
+      'agy version 1.5.6\\n',
+      process.platform === 'win32' ? '  acp         Run the Agent Client Protocol server' : 'Available Commands:\\n  acp         Run the Agent Client Protocol server\\n  update      Update agy\\n'
+    )
+    const host = { platform: process.platform, arch: process.arch, home: root, pathEnv: root }
+    expect(await detectAntigravity(root, process.platform, host)).toMatchObject({ status: 'ok', version: '1.5.6', path: cli })
+    expect(await requireAntigravity(host)).toBe(cli)
+  })
+
+  it('reads sign-in state from antigravity-cli token and default auth-state files', async () => {
     const gemini = await home()
-    const file = antigravityTokenFile(gemini)
+    const file = antigravityCliTokenFile(gemini)
     expect(await antigravitySignedIn(file)).toBe(false)
-    await mkdir(path.dirname(file))
+    expect(await antigravityHomeSignedIn(gemini)).toBe(false)
+    await mkdir(path.dirname(file), { recursive: true })
     await writeFile(file, '{}')
     expect(await antigravitySignedIn(file)).toBe(true)
+    expect(await antigravityHomeSignedIn(gemini)).toBe(true)
+
+    const authState = antigravityCliAuthStateFile(path.join(gemini, 'other'))
+    expect(await antigravityHomeSignedIn(path.dirname(path.dirname(authState)))).toBe(false)
+  })
+
+  it('decodes go-keyring secrets and reads default-home credentials on macOS and Linux keyrings', async () => {
+    const payload = '{"token":{"refresh_token":"rt"}}'
+    expect(decodeGoKeyringSecret(`  ${payload}\n`)).toBe(payload)
+    expect(decodeGoKeyringSecret(`go-keyring-base64:${Buffer.from(payload, 'utf8').toString('base64')}`)).toBe(payload)
+
+    const darwinCalls: { file: string; args: readonly string[] }[] = []
+    expect(await readAntigravityKeyringToken('darwin', async (file, args) => {
+      darwinCalls.push({ file, args })
+      return `go-keyring-base64:${Buffer.from(payload, 'utf8').toString('base64')}`
+    })).toBe(payload)
+    expect(darwinCalls).toEqual([{ file: 'security', args: ['find-generic-password', '-s', 'gemini', '-a', 'antigravity', '-w'] }])
+
+    const linuxCalls: { file: string; args: readonly string[] }[] = []
+    expect(await readAntigravityKeyringToken('linux', async (file, args) => {
+      linuxCalls.push({ file, args })
+      return payload
+    })).toBe(payload)
+    expect(linuxCalls).toEqual([{ file: 'secret-tool', args: ['lookup', 'service', 'gemini', 'username', 'antigravity'] }])
+
+    expect(await readAntigravityKeyringToken('win32', async () => payload)).toBeNull()
+    expect(await readAntigravityKeyringToken('linux', async () => { throw new Error('missing') })).toBeNull()
+
+    expect(isSystemDefaultGeminiHome(undefined, {}, '/home/alice')).toBe(true)
+    expect(isSystemDefaultGeminiHome('/home/alice/.gemini', {}, '/home/alice')).toBe(true)
+    expect(isSystemDefaultGeminiHome('/tmp/isolated-account', {}, '/home/alice')).toBe(false)
+    expect(isSystemDefaultGeminiHome(undefined, { GEMINI_HOME: '/tmp/test-gemini' }, '/home/alice')).toBe(false)
   })
 })

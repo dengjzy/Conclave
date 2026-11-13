@@ -1,4 +1,4 @@
-import type { AgentCliInstallation, AgentKind, ChatCatalog, ChatModel, ChatPermissionMode, EnvironmentCheck, KnowledgeBase } from '@conclave/protocol'
+import type { AgentCliInstallation, AgentKind, ChatCatalog, ChatItem, ChatModel, ChatPermissionMode, EnvironmentCheck, KnowledgeBase } from '@conclave/protocol'
 import type { AgentCommand, AgentMcpServer, McpServer } from '../agent-command'
 import type { ChatDriver, ChatPreferences, ChatStageOptions } from '../chat-driver'
 import type { ResetCreditUse, UsageSource } from '../usage-source'
@@ -122,6 +122,8 @@ export interface AgentAdapter {
   readonly warmup?: { probe: QuickCommand; args(printed: string): string[] }
   // Its models without a chat to read them from; without it, a probe of its chat protocol.
   catalog?(cwd: string, executor?: NativeSessionExecutor, env?: Record<string, string>): Promise<ChatCatalog | null>
+  // Whether a prior stage's chat items are still valid to cache a catalog from.
+  validStageCatalog?(items: readonly ChatItem[]): boolean
   // How the environment check finds it; without it, its kind on PATH, asked for --version.
   detect?(pathEnv: string, platform: NodeJS.Platform): Promise<AgentDetection>
   signedIn?(home?: string): Promise<boolean>

@@ -138,4 +138,33 @@ describe('monetary balances', () => {
     expect(card).toContain('Topped up ¥10.25')
     expect(card).toContain('disabled="">Refreshing…')
   })
+
+  it('falls back to model-grouped windows in both the status bar and account switcher when no general window exists', () => {
+    const modelOnly: AgentUsage = {
+      ...reading('antigravity'),
+      account: 'default',
+      windows: [{ kind: 'weekly', model: 'Claude and GPT models', usedPercent: 15, windowMinutes: 10_080, resetsAt: null }]
+    }
+    const ownOnly: AgentUsage = {
+      ...reading('antigravity'),
+      account: 'own',
+      windows: [{ kind: 'weekly', model: 'Claude and GPT models', usedPercent: 5, windowMinutes: 10_080, resetsAt: null }]
+    }
+    useCore.setState({ usage: { antigravity: modelOnly }, accountUsage: [modelOnly, ownOnly] })
+    expect(render()).toContain('Claude and GPT models 本周 15%')
+
+    const accounts = [
+      { id: 'default', agent: 'antigravity' as const, label: null, email: 'a@example.com', plan: null, createdAt: 0, signedIn: true },
+      { id: 'own', agent: 'antigravity' as const, label: 'own', email: 'b@example.com', plan: null, createdAt: 1, signedIn: true }
+    ]
+    const card = renderToStaticMarkup(createElement(UsageCard, {
+      usage: modelOnly, accounts, accountLabel: 'a@example.com', now: Date.now(), advice: [], alternative: null, showPace: false,
+      anchor: { x: 20, y: 760, width: 100, height: 24, top: 760, bottom: 784, left: 20, right: 120, toJSON: () => ({}) },
+      id: 'model-only-card', cardRef: createRef<HTMLDivElement>(), onEnter() {}, onLeave() {}, onRefresh() {},
+      refreshing: false, spending: null, onSpend() {}, onSpendingChange() {}
+    }))
+    expect(card).toContain('Claude and GPT models 本周 15%')
+    expect(card).toContain('Claude and GPT models 本周 5%')
+    expect(card).not.toContain('还没有额度数据')
+  })
 })

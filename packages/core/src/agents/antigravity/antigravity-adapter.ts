@@ -1,29 +1,47 @@
 import type { ChatCatalog } from '@conclave/protocol'
+import type { AgentCommand } from '../../agent-command'
 import type { AgentAdapter } from '../agent-adapter'
 import type { NativeSession, NativeSessionExecutor } from '../../native-session'
 import { AcpDriver } from '../acp/acp-driver'
 import { antigravityDialect } from './antigravity-dialect'
-import { antigravityAccounts, antigravityAccountToken, antigravityArgs, prepareAntigravitySession } from './antigravity-account'
+import { antigravityAccounts, antigravityDefaultHome, antigravityLaunchArgs, markAntigravityKeyringBypass, prepareAntigravitySession } from './antigravity-account'
 import { readAntigravityUsage } from './antigravity-usage'
 import { antigravityTranscripts } from './antigravity-transcripts'
 import { antigravityNativeSessions } from './antigravity-native-sessions'
-import { antigravityInstallation, antigravityServer, antigravitySignedIn, detectAntigravity, requireAntigravity } from './antigravity-runtime'
+import { antigravityHomeSignedIn, antigravityInstallation, detectAntigravity, requireAntigravity } from './antigravity-runtime'
 
-// Its sign-in goes to a file Conclave can read for usage (antigravity-usage.ts), not the keychain.
-const command = (env?: Record<string, string>) => ({ command: antigravityServer() ?? 'agy_acp_server', args: antigravityArgs(), env: { PYTHONUNBUFFERED: '1', AGY_ACP_FORCE_FILE_STORAGE: '1', ...env } })
+const command = (env?: Record<string, string>): AgentCommand => ({
+  command: 'agy',
+  args: [],
+  env: { ...env }
+})
+
+async function prepareServerLaunch(geminiHome?: string): Promise<{ command: string; args: string[] }> {
+  const server = await requireAntigravity()
+  if (geminiHome && geminiHome !== antigravityDefaultHome()) {
+    await markAntigravityKeyringBypass(geminiHome)
+  }
+  return { command: server, args: antigravityLaunchArgs(geminiHome) }
+}
 
 // Its models come only with a session, which needs its Google sign-in: signed out, a probe would
 // open the sign-in page in the browser with nobody having asked.
 async function antigravityCatalog(cwd: string, executor?: NativeSessionExecutor, env?: Record<string, string>): Promise<ChatCatalog | null> {
-  if (!executor?.catalog || !executor.register || !executor.cleanup || !await antigravitySignedIn(antigravityAccountToken(env?.GEMINI_HOME))) return null
+  if (!executor?.catalog || !executor.register || !executor.cleanup || !await antigravityHomeSignedIn(env?.GEMINI_HOME)) return null
   const native = antigravityNativeSessions()
   const captured: { session: NativeSession | null } = { session: null }
+  const resolved = await prepareServerLaunch(env?.GEMINI_HOME)
   try {
-    return await executor.catalog(new AcpDriver(antigravityDialect, 'catalog', { cwd, extraDirs: [], resume: null }), { ...command(env), command: await requireAntigravity() }, cwd, async (id, processSessionId) => {
-      const initial = { providerSessionId: id, cwd, home: env?.GEMINI_HOME }
-      captured.session = await native.resolve(native.capture?.(initial) ?? initial)
-      if (captured.session) await executor.register?.('antigravity', captured.session, processSessionId)
-    })
+    return await executor.catalog(
+      new AcpDriver(antigravityDialect, 'catalog', { cwd, extraDirs: [], resume: null }),
+      { ...command(env), ...resolved },
+      cwd,
+      async (id, processSessionId) => {
+        const initial = { providerSessionId: id, cwd, home: env?.GEMINI_HOME }
+        captured.session = await native.resolve(native.capture?.(initial) ?? initial)
+        if (captured.session) await executor.register?.('antigravity', captured.session, processSessionId)
+      }
+    )
   } finally {
     if (captured.session) await executor.cleanup('antigravity', captured.session)
   }
@@ -34,16 +52,14 @@ export const antigravity: AgentAdapter = {
   maintenance: {
     native: {
       roots: {
-        darwin: ['.gemini/antigravity', '.conclave/runtimes/antigravity-acp'],
-        linux: ['.gemini/antigravity', '.conclave/runtimes/antigravity-acp'],
-        win32: ['AppData/Local/Google/Antigravity']
+        darwin: ['.local/bin', '/usr/local/bin'],
+        linux: ['.local/bin', '/usr/local/bin'],
+        win32: ['AppData/Local/agy/bin']
       },
-      args: []
+      args: ['update']
     }
   },
   createDriver: (stageId, options) => new AcpDriver(antigravityDialect, stageId, options),
-  // Conclave's MCP servers and the user's go in session/new; extra projects ride in the first
-  // prompt's note, as its session takes no additional directories.
   command: (launch) => command(launch.account?.env),
   permissionModes: Object.keys(antigravityDialect.modes),
   fallbackMode: 'ask',
@@ -52,7 +68,8 @@ export const antigravity: AgentAdapter = {
   startTimeoutMs: 360_000,
   mcpApproval: 'conclave',
   accounts: antigravityAccounts,
-  signedIn: (home) => antigravitySignedIn(antigravityAccountToken(home)),
+  signedIn: (home) => antigravityHomeSignedIn(home),
+  validStageCatalog: (items) => Boolean(items.findLast((item) => item.kind === 'state')?.permissionModes.includes('plan')),
   catalog: antigravityCatalog,
   detect: detectAntigravity,
   usage: readAntigravityUsage,
@@ -63,8 +80,11 @@ export const antigravity: AgentAdapter = {
   launch: {
     mcp: (server) => server,
     prepare: async (_stage, _mcp, launch) => {
-      if (launch.resume && launch.providerSessionId) await prepareAntigravitySession(launch.account?.env.GEMINI_HOME, launch.providerSessionId, launch.sessionArtifacts)
-      return { command: await requireAntigravity() }
+      const geminiHome = launch.account?.env.GEMINI_HOME
+      if (launch.resume && launch.providerSessionId) {
+        await prepareAntigravitySession(geminiHome, launch.providerSessionId, launch.sessionArtifacts)
+      }
+      return prepareServerLaunch(geminiHome)
     },
     ready: async () => {}
   },

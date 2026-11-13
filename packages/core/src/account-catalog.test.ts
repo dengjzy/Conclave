@@ -82,3 +82,61 @@ it('does not spawn with an account removed after its home was selected but befor
   expect(existsSync(path.join(root, 'accounts/antigravity/work'))).toBe(true)
   expect(service.stages(conversation.id)).toEqual([])
 })
+
+it('ignores a retired Antigravity stage lacking plan mode and re-probes antigravity.catalog', async () => {
+  vi.spyOn(antigravity.launch!, 'prepare').mockResolvedValue({ command: 'agy', args: ['acp', '--stdio'] })
+  service.setNativeDeletion({ adapter: () => undefined, executor: { command: async () => '', acp: async () => null }, home: () => undefined }, async () => {})
+  daemon.deliver = (event) => {
+    if (event.event === 'data') service.handleData(event)
+    else if (event.event === 'exit') service.handleExit(event.sessionId, event.exitCode)
+    else service.handleStderr(event.sessionId, event.data)
+  }
+  daemon.answerInit = false
+  const originalRequest = daemon.request
+  let spawnedId = ''
+  daemon.request = async (method, params) => {
+    const result = await originalRequest(method, params)
+    if (method === 'spawnPipe' && result && typeof result === 'object' && 'sessionId' in result && typeof result.sessionId === 'string') {
+      spawnedId = result.sessionId
+    }
+    if (method === 'write' && params && typeof params === 'object' && 'sessionId' in params && 'data' in params && typeof params.sessionId === 'string' && typeof params.data === 'string') {
+      const targetId = params.sessionId
+      for (const line of params.data.split('\n').filter(Boolean)) {
+        const req = JSON.parse(line)
+        if (req && typeof req === 'object' && req.method === 'initialize') {
+          queueMicrotask(() => daemon.emit(targetId, { id: req.id, result: { protocolVersion: 1, authMethods: [] } }))
+        } else if (req && typeof req === 'object' && req.method === 'session/new') {
+          queueMicrotask(() => daemon.emit(targetId, {
+            id: req.id,
+            result: {
+              sessionId: 'legacy-session',
+              modes: { currentModeId: 'default', availableModes: [{ id: 'default', name: 'Default' }] },
+              models: { currentModelId: 'stale-legacy-model', availableModels: [{ modelId: 'stale-legacy-model', name: 'Stale Legacy' }] }
+            }
+          }))
+        }
+      }
+    }
+    return result
+  }
+
+  const conversation = await service.create('antigravity', [], false)
+  await vi.waitFor(() => {
+    const stage = service.stages(conversation.id).at(-1)
+    const items = stage ? service.stageChatItems(conversation.id, stage.id) : []
+    expect(items.some((item) => item.kind === 'state' && item.models.some((m) => m.id === 'stale-legacy-model'))).toBe(true)
+  })
+  daemon.exit(spawnedId, 0)
+  await vi.waitFor(() => expect(service.stages(conversation.id).at(-1)?.endedAt).not.toBeNull())
+
+  // Simulate restart without in-memory catalog cache.
+  const reloaded = new ConversationService(store, daemon, path.join(root, 'sessions'), () => {}, projects, new AttachmentStore(path.join(root, 'attachments')), null, path.join(root, 'worktrees'))
+  reloaded.setNativeDeletion({ adapter: () => undefined, executor: { command: async () => '', acp: async () => null }, home: () => undefined }, async () => {})
+  const catalogSpy = vi.spyOn(antigravity, 'catalog').mockResolvedValue({
+    models: [{ id: 'gemini-3.1-pro', label: 'Gemini 3.1 Pro', description: null, efforts: ['low', 'high'], isDefault: true }]
+  })
+
+  const fresh = await reloaded.chatCatalog('antigravity')
+  expect(catalogSpy).toHaveBeenCalledOnce()
+  expect(fresh?.models.map((m) => m.id)).toEqual(['gemini-3.1-pro'])
+})

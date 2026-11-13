@@ -119,10 +119,10 @@ export function ChatOptionsBar({ conversation, state, compact = false }: { conve
   const idle = !running || conversation.chat?.turn === 'idle'
   const set = (option: ChatOption, value: string) => void perform((rpc) => rpc.call('conversations.setOption', { id, option, value }))
 
-  // Models list: prefer catalog for this agent if available, fallback to activeState.models
-  const availableModels = catalog?.models && catalog.models.length > 0
-    ? catalog.models
-    : (activeState?.models ?? [])
+  // Prefer live stage state while running; otherwise prefer fresh catalog over prior stage state.
+  const availableModels = (running && activeState && activeState.models.length > 0)
+    ? activeState.models
+    : (catalog?.models && catalog.models.length > 0 ? catalog.models : (activeState?.models ?? []))
 
   // Resolve modelId:
   let modelId = (running && activeState) ? activeState.model : (next?.model ?? activeState?.model)
@@ -137,9 +137,11 @@ export function ChatOptionsBar({ conversation, state, compact = false }: { conve
   }
 
   const descriptor = agentDescriptor(agent)
-  const offered = (running && activeState || conversation.planOnly
-    ? (activeState?.permissionModes ?? startModes(agent, currentModel))
-    : [...(activeState?.permissionModes ?? startModes(agent, currentModel)).filter((mode) => mode !== 'bypass'), ...(descriptor.capabilities.bypass ? ['bypass'] : [])]
+  const offered = (running && activeState
+    ? activeState.permissionModes
+    : conversation.planOnly
+      ? ['plan' as const]
+      : startModes(agent, currentModel)
   ).filter((mode) => !isHelper(conversation) || helperAllowsMode(mode))
 
   const permissionMode = (running && activeState)
