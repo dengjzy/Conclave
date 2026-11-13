@@ -36,7 +36,7 @@ export function detectedPlatform(): string {
 
 export async function appVersion(): Promise<string | null> {
   const version = await window.conclave?.appVersion?.().catch(() => null)
-  return typeof version === 'string' && version ? version : '0.0.1'
+  return typeof version === 'string' && version ? version : '0.2.0'
 }
 
 export function canPickFolder(): boolean {
